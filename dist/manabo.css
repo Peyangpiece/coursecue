@@ -10,4 +10,4 @@ body{font-family:'Open Sans','Hiragino Kaku Gothic Pro','ヒラギノ角ゴ Pro 
 
 .directory-list .folder-icon{width:34px;height:28px}.brand img{width:200px;height:auto}@media(max-width:760px){.brand img{width:180px}}
 
-.directory-list .folder-icon{transform:translateY(-2px)}
+.directory-list .folder-icon{transform:translateY(-5px)}
