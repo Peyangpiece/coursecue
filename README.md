@@ -41,4 +41,4 @@ Codex生成は短い検証問題で実行確認済み。実際のmanaboのログ
 `npm run deploy:cloudflare` / `npm run deploy:firebase`。
 専用Firebase project: `coursecue-2026`。Firebase SDKは初期化済み。実データ同期はCloudflare D1を使用。
 
-現在、新バックエンドの公開は承認待ち。公開UIからの実データ同期・操作は、その公開とMacの初回設定後に有効になる。
+認証付きバックエンドを公開済み。Macサービスが同期・自動ログイン・下書き生成・提出を実行する。初回はMac設定画面で認証情報を保存し、CourseCueを接続する。
