@@ -5,3 +5,7 @@ preview-*.jpg
 .env
 .env.*
 node_modules/
+
+.wrangler/
+.firebase/
+*-debug.log

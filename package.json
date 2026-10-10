@@ -1,0 +1,14 @@
+{
+  "name": "coursecue",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preview": "python3 -m http.server 8765 --bind 127.0.0.1 --directory dist",
+    "deploy:cloudflare": "wrangler deploy",
+    "deploy:firebase": "firebase deploy --only hosting --project coursecue-2026"
+  },
+  "devDependencies": {
+    "wrangler": "4.149.0",
+    "firebase-tools": "15.33.0"
+  }
+}

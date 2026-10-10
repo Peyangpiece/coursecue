@@ -1,21 +1,19 @@
-# CourseCue（コースキュー）
+# CourseCue
 
-授業の先に、次の一歩。
+授業別の課題・提出状況・要対応タスクを管理するUI。
 
-## UIの範囲
-ホーム、11授業の一覧・詳細、課題一覧、本人対応リスト、課題詳細、回答編集・ローカル保存、下書きダウンロード、ログイン設定の案内、レスポンシブ表示。
+## 公開先
+- Cloudflare: https://coursecue.hrk-6888.workers.dev
+- Firebase Hosting: https://coursecue-2026.web.app
+- Firebase project: coursecue-2026
 
-## 起動
-`python3 -m http.server 8765 --bind 127.0.0.1 --directory dist`
-ブラウザで http://127.0.0.1:8765 を開く。
+## 開発・公開
+`npm install` 後、`npm run preview` でローカル表示。
+`npm run deploy:cloudflare` / `npm run deploy:firebase` で各サービスに公開。
+公式CLIのログイン済みアカウントを使用。認証トークンはリポジトリに保存しない。
 
-## データ
-画面確認用サンプルです。実際の提出状況を示しません。本人の補足・設定はブラウザのlocalStorageに保存します。認証情報は保存・送信しません。
-
-## 次の実装
-- 毎日16:30の確認記録からデータを読み込むローカルAPI
-- macOSキーチェーンで認証情報を扱うローカル側の接続機能
-- manaboの提出確認と履歴を同期
-- 本人対応の完了・通知・状態更新
-
-外部公開は未実施。登録済みSitesプロジェクトは未デプロイ。
+## 現在の範囲
+課題・授業一覧、検索、状態フィルター、要対応リスト、下書き編集・ダウンロード、設定UI、Firebase SDKの初期化。
+表示データはサンプル。編集内容と設定はブラウザ内保存。
+Firebase Auth・データベース同期、manaboの自動ログイン・回答・提出、Macキーチェーン連携は未実装。
+パスワードは保存・送信しない。実際の授業資料や本人の経験は公開データに含めない。
