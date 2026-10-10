@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {chooseContent} from '../local/content-resolution.js';
+test('imported report resolves to correct board with alternate title',()=>{const entries=[{url:'https://manabo.cnc.chukyo-u.ac.jp/content/10/board/token/',title:'第2回事後課題'},{url:'https://manabo.cnc.chukyo-u.ac.jp/content/11/quiz/token/',title:'第1回課題'}];assert.equal(chooseContent(entries,{title:'第2回課題',round:2}).url,entries[0].url)});
+test('ambiguous same-round assignments are not guessed',()=>assert.equal(chooseContent([{url:'https://example.com/content/1/board/',title:'第2回課題A'},{url:'https://example.com/content/2/board/',title:'第2回課題B'}],{title:'第2回課題',round:2}),null));
