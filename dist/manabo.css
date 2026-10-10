@@ -7,3 +7,5 @@ body{font-family:'Open Sans','Hiragino Kaku Gothic Pro','ヒラギノ角ゴ Pro 
 .brand{padding:8px 0}.brand img{display:block;width:190px;height:auto;max-width:100%}@media(max-width:760px){.brand img{width:170px}}
 
 .directory-list .folder-icon{width:28px;height:24px;object-fit:contain;vertical-align:middle;flex-shrink:0;margin-right:3px}
+
+.directory-list .folder-icon{width:34px;height:28px}.brand img{width:200px;height:auto}@media(max-width:760px){.brand img{width:180px}}
