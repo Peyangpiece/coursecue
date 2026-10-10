@@ -49,3 +49,8 @@ Codex生成は短い検証問題で実行確認済み。実際のmanaboのログ
 専用Firebase project: `coursecue-2026`。Firebase SDKは初期化済み。実データ同期はCloudflare D1を使用。
 
 認証付きバックエンドを公開済み。Macサービスが同期・自動ログイン・下書き生成・提出を実行する。初回はMac設定画面で認証情報を保存し、saboroを接続する。
+
+## 自動修正・自動公開（GitHub）
+- **修正:** Issue や PR のコメントに `@claude 〜を直して` と書くと、Claude Code GitHub Action が修正して PR を作る（リポジトリ所有者のコメントのみ反応）。必要なシークレット：`ANTHROPIC_API_KEY`
+- **公開:** `main` に入るとテスト（`npm test`）を実行し、成功したら Cloudflare に公開する（`.github/workflows/deploy.yml`）。PR でもテストだけ実行する。必要なシークレット：`CLOUDFLARE_API_TOKEN`
+- **Mac サービスの更新:** 公開に成功したコミットは `deployed` ブランチに記録される。Mac サービスは10分ごとに確認し、そこまで早送りで更新して再起動する。ローカルに変更がある・履歴が分岐している場合は更新しない。`package-lock.json` が変わったときは `npm ci` を実行し、失敗したら元に戻す。`COURSECUE_AUTO_UPDATE=0` で無効
