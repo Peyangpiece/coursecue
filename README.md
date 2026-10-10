@@ -1,4 +1,4 @@
-# CourseCue
+# saboro
 
 授業・課題・提出状況・本人対応タスクを管理するアプリ。
 
@@ -20,7 +20,7 @@ manabo自動連携は現状、登録済みMacと接続キーを使用する個�
 3. `npm run seed`（既存課題・資料の記録をローカルへ取り込む）
 4. `npm start` または `npm run install:agent`
 5. http://127.0.0.1:8766/setup で本人がmanaboのIDとパスワードを入力
-6. 「CourseCueを接続」でこのブラウザを接続（接続キーはURLフラグメントから読み、直ちに削除）
+6. 「saboroを接続」でこのブラウザを接続（接続キーはURLフラグメントから読み、直ちに削除）
 7. 設定画面で授業日を確認。日付が分からない回は走査しない
 
 ## 実装範囲・提出制御
@@ -45,4 +45,4 @@ Codex生成は短い検証問題で実行確認済み。実際のmanaboのログ
 `npm run deploy:cloudflare` / `npm run deploy:firebase`。
 専用Firebase project: `coursecue-2026`。Firebase SDKは初期化済み。実データ同期はCloudflare D1を使用。
 
-認証付きバックエンドを公開済み。Macサービスが同期・自動ログイン・下書き生成・提出を実行する。初回はMac設定画面で認証情報を保存し、CourseCueを接続する。
+認証付きバックエンドを公開済み。Macサービスが同期・自動ログイン・下書き生成・提出を実行する。初回はMac設定画面で認証情報を保存し、saboroを接続する。
