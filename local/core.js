@@ -1,0 +1,10 @@
+import { createHash } from 'node:crypto';
+export const LMS='https://manabo.cnc.chukyo-u.ac.jp';
+export const COURSES=[['人材マネジメントⅡ','103578'],['コーポレートファイナンスⅡ','103901'],['国際ビジネス戦略','103576'],['サービス・マーケティング','103573'],['意思決定論','103889'],['管理会計Ⅱ','103904'],['マーケティング戦略','103572'],['ボランティア','103736'],['経営科学Ⅱ','103887'],['経済言論Ⅱ','103914'],['言葉と文化','104493']];
+export const hash=v=>createHash('sha256').update(v).digest('hex');
+export const validLms=v=>{const u=new URL(v,LMS);if(u.origin!==LMS)throw Error('許可されていないURL');return u.href};
+export const attendance=s=>/出席.{0,12}(コード|番号|確認)|attendance.{0,12}code/i.test(s);
+export function lectureDate(title,schedule,round){const m=title.match(/(?:(20\d{2})[年/.-])?(\d{1,2})[月/.-](\d{1,2})日?/);if(m){const year=Number(m[1]||2026)+(Number(m[2])<4&&!m[1]?1:0);return `${year}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`}return schedule?.[round]||null}
+export const inWindow=(date,now=new Date())=>{if(!date)return false;const today=new Date(now).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});return Math.abs(new Date(date+'T00:00:00Z')-new Date(today+'T00:00:00Z'))<=7*86400000};
+export function deadline(text){const m=[...text.matchAll(/(?:(20\d{2})年)?(\d{1,2})月(\d{1,2})日[^\d]{0,8}(\d{1,2}):(\d{2})/g)].at(-1);if(!m)return null;let y=Number(m[1]||2026)+(Number(m[2])<4&&!m[1]?1:0),h=Number(m[4]);return new Date(Date.UTC(y,Number(m[2])-1,Number(m[3]),h-9,Number(m[5]))).toISOString()}
+export function submissionGate(task,generation,questions){if(task.status==='done')return 'already_submitted';if(task.submissionIntent)return 'result_unknown';if(questions.some(q=>attendance(q.text)))return 'attendance';if(!generation||!generation.grounded||generation.needsUser.length)return 'needs_user';if(task.dueAt&&new Date(task.dueAt)<new Date())return 'expired';for(const q of questions.filter(q=>q.type!=='hidden')){const a=generation.answers.find(a=>a.name===q.name);if(!a||!a.evidence.trim())return 'missing_answer';if(q.type==='radio'&&!q.options.some(o=>o.value===a.value))return 'invalid_answer';if(q.type==='checkbox'&&a.values.some(v=>!q.options.some(o=>o.value===v)))return 'invalid_answer'}return 'ok'}

@@ -9,3 +9,6 @@ node_modules/
 .wrangler/
 .firebase/
 *-debug.log
+
+local/keychain
+node_modules/

@@ -1,0 +1,18 @@
+const origins=['https://coursecue.hrk-6888.workers.dev','https://coursecue-2026.web.app'];
+const json=(data,status=200,origin='')=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Access-Control-Allow-Origin':origins.includes(origin)?origin:origins[0],'Access-Control-Allow-Headers':'Authorization,Content-Type','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Vary':'Origin'}});
+async function equal(a,b){if(!a||!b)return false;const hash=async v=>new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)));const x=await hash(a),y=await hash(b);let d=0;for(let i=0;i<x.length;i++)d|=x[i]^y[i];return d===0}
+export default {async fetch(req,env){const u=new URL(req.url),origin=req.headers.get('Origin')||'';
+if(!u.pathname.startsWith('/api/'))return env.ASSETS.fetch(req);
+if(origin&&!origins.includes(origin))return json({error:'origin_denied'},403,origin);
+if(req.method==='OPTIONS')return json({},200,origin);
+const key=req.headers.get('Authorization')?.replace(/^Bearer /,'');const agent=await equal(key,env.DEVICE_TOKEN),owner=await equal(key,env.OWNER_TOKEN);
+if(!agent&&!owner)return json({error:'unauthorized'},401,origin);
+try{
+if(u.pathname==='/api/state'&&req.method==='GET'){const row=await env.DB.prepare('SELECT value FROM state WHERE id=?').bind('dashboard').first();return json(row?JSON.parse(row.value):{tasks:[],materials:[],connection:'not_configured'},200,origin)}
+if(u.pathname==='/api/state'&&req.method==='POST'&&agent){const value=await req.text();if(value.length>2000000)return json({error:'too_large'},413,origin);JSON.parse(value);await env.DB.prepare('INSERT INTO state(id,value) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value').bind('dashboard',value).run();return json({ok:true},200,origin)}
+if(u.pathname==='/api/jobs'&&req.method==='POST'&&owner){const data=await req.json();if(!['sync','generate','submit','supplement','settings'].includes(data.kind)||JSON.stringify(data).length>100000)return json({error:'invalid_job'},400,origin);const id=crypto.randomUUID(),now=new Date().toISOString();await env.DB.prepare('INSERT INTO jobs(id,kind,task,payload,created,updated) VALUES(?,?,?,?,?,?)').bind(id,data.kind,data.task||null,JSON.stringify(data.payload||{}),now,now).run();return json({id,status:'pending'},202,origin)}
+if(u.pathname==='/api/jobs'&&req.method==='GET'){const rows=await env.DB.prepare('SELECT id,kind,task,status,result,created,updated FROM jobs ORDER BY created DESC LIMIT 50').all();return json(rows.results,200,origin)}
+if(u.pathname==='/api/agent/claim'&&req.method==='POST'&&agent){const row=await env.DB.prepare("UPDATE jobs SET status='running',updated=? WHERE id=(SELECT id FROM jobs WHERE status='pending' ORDER BY created LIMIT 1) AND status='pending' RETURNING *").bind(new Date().toISOString()).first();return json(row?{...row,payload:JSON.parse(row.payload)}:null,200,origin)}
+if(u.pathname==='/api/agent/finish'&&req.method==='POST'&&agent){const d=await req.json();if(!['done','failed','waiting'].includes(d.status))return json({error:'invalid'},400,origin);await env.DB.prepare("UPDATE jobs SET status=?,result=?,updated=? WHERE id=? AND status='running'").bind(d.status,JSON.stringify(d.result||{}),new Date().toISOString(),d.id).run();return json({ok:true},200,origin)}
+return json({error:'not_found'},404,origin)
+}catch{return json({error:'request_failed'},500,origin)}}};

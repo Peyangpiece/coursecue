@@ -1,0 +1,11 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {submissionGate,lectureDate,inWindow,validLms,deadline} from '../local/core.js';import worker from '../server/worker.js';
+const answer={grounded:true,needsUser:[],answers:[{name:'q1',value:'b',values:[],evidence:'資料に根拠'}]};const q=[{name:'q1',type:'radio',text:'設問',options:[{value:'a'},{value:'b'}]}];
+test('出席コードがあれば提出を止める',()=>assert.equal(submissionGate({},answer,[...q,{name:'attendance',text:'出席コードを選択',type:'select'}]),'attendance'));
+test('重複提出と結果不明の再送を止める',()=>{assert.equal(submissionGate({status:'done'},answer,q),'already_submitted');assert.equal(submissionGate({submissionIntent:{}},answer,q),'result_unknown')});
+test('根拠・本人情報・選択肢の不足を止める',()=>{assert.equal(submissionGate({}, {...answer,grounded:false},q),'needs_user');assert.equal(submissionGate({}, {...answer,needsUser:['経験']},q),'needs_user');assert.equal(submissionGate({}, {...answer,answers:[]},q),'missing_answer');assert.equal(submissionGate({}, {...answer,answers:[{...answer.answers[0],value:'z'}]},q),'invalid_answer')});
+test('根拠があり全問回答済みの場合のみ提出可',()=>assert.equal(submissionGate({},answer,q),'ok'));
+test('日程不明は推測せず期間外を除外',()=>{assert.equal(lectureDate('第3回',{},3),null);assert.equal(lectureDate('第3回 10/13',{},3),'2026-10-13');assert(inWindow('2026-10-13',new Date('2026-10-10')));assert(!inWindow('2026-10-27',new Date('2026-10-10')))});
+test('正規のmanabo以外のURLは禁止',()=>assert.throws(()=>validLms('https://example.com/login')));
+test('24時の締切を翌日に変換',()=>assert.equal(deadline('10月12日（月）24:00'),'2026-10-12T15:00:00.000Z'));
+test('未認証ユーザーは実データへアクセス不可',async()=>{const r=await worker.fetch(new Request('https://coursecue.hrk-6888.workers.dev/api/state'),{OWNER_TOKEN:'owner',DEVICE_TOKEN:'device'});assert.equal(r.status,401)});
+test('他サイトからの要求を拒否',async()=>{const r=await worker.fetch(new Request('https://coursecue.hrk-6888.workers.dev/api/state',{headers:{Origin:'https://evil.example',Authorization:'Bearer owner'}}),{OWNER_TOKEN:'owner',DEVICE_TOKEN:'device'});assert.equal(r.status,403)});

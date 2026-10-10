@@ -1,0 +1,5 @@
+import {spawn,execFileSync} from 'node:child_process';import {randomBytes} from 'node:crypto';import {dirname,join} from 'node:path';import {fileURLToPath} from 'node:url';
+const repo=dirname(dirname(fileURLToPath(import.meta.url)));
+const binary=join(repo,'local/keychain');execFileSync('/usr/bin/swiftc',[join(repo,'local/keychain.swift'),'-o',binary]);
+function vault(op,name,value){try{return execFileSync(binary,[],{input:JSON.stringify({op,name,value}),stdio:['pipe','pipe','pipe']}).toString()}catch{return null}}
+for(const [name,secret] of [['owner','OWNER_TOKEN'],['device','DEVICE_TOKEN']]){let token=vault('get',name);if(!token){token=randomBytes(32).toString('hex');if(vault('set',name,token)===null)throw Error('キーチェーンに保存できませんでした')}await new Promise((resolve,reject)=>{const p=spawn(join(repo,'node_modules/.bin/wrangler'),['secret','put',secret],{cwd:repo,stdio:['pipe','ignore','pipe']});let err='';p.stderr.on('data',b=>err+=b);p.stdin.end(token+'\n');p.on('exit',c=>c===0?resolve():reject(Error('Cloudflareの認証設定に失敗')))});console.log(secret+' configured')}

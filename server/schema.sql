@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS state (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, task TEXT, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', result TEXT, created TEXT NOT NULL, updated TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status, created);
