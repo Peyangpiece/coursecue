@@ -11,7 +11,7 @@ manabo自動連携は現状、登録済みMacと接続キーを使用する個�
 - 認証付き同期API・処理キュー: Cloudflare Worker + D1
 - Macエージェント: `local/bridge.js`（15秒ごとにキュー確認、毎日16:30に同期）
 - manabo操作: Playwrightの専用ブラウザ。大学の正規のログインフォームを利用
-- 課題生成: 資料テキストを根拠に構造化出力で生成。Codex CLI → Claude Code（`claude -p`）→ Claude API（`claude-opus-5-5`）の順に試し、未インストール・未ログイン・利用枠超過・形式不正などで失敗したら次へ進む。使った手段は課題詳細の「生成」に表示
+- 課題生成: 資料テキストを根拠に構造化出力で生成。Codex CLI → Claude Code（`claude -p`）→ Claude API（`claude-sonnet-5-5`）の順に試し、未インストール・未ログイン・利用枠超過・形式不正などで失敗したら次へ進む。使った手段は課題詳細の「生成」に表示
   - Claude APIを使う場合は `npm run setup:claude-api` でAPIキーをキーチェーンに保存し、Macサービスを再起動
   - CLIの場所は自動で探す。見つからない場合は `COURSECUE_CODEX` / `COURSECUE_CLAUDE` で指定。モデルは `COURSECUE_CLAUDE_MODEL`（Claude Code）/ `COURSECUE_CLAUDE_API_MODEL`（Claude API）で変更可
 - 認証情報・接続キー: macOSキーチェーン。平文パスワードはクラウドへ送信しない。公開設定はRSA-OAEP + AES-GCMで暗号化し、登録Macだけが復号する
