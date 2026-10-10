@@ -1,0 +1,28 @@
+name: Claude
+# Issue や PR のコメントで @claude と書くと、Claude が修正して PR を作る（リポジトリ所有者のコメントのみ）
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened]
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude') && github.event.issue.author_association == 'OWNER') ||
+      (github.event_name != 'issues' && contains(github.event.comment.body, '@claude') && github.event.comment.author_association == 'OWNER')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

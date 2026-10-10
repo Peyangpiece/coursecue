@@ -11,7 +11,9 @@ manabo自動連携は現状、登録済みMacと接続キーを使用する個�
 - 認証付き同期API・処理キュー: Cloudflare Worker + D1
 - Macエージェント: `local/bridge.js`（15秒ごとにキュー確認、毎日16:30に同期）
 - manabo操作: Playwrightの専用ブラウザ。大学の正規のログインフォームを利用
-- 課題生成: ログイン済みCodex CLIの構造化出力。資料テキストを根拠に生成
+- 課題生成: 資料テキストを根拠に構造化出力で生成。Codex CLI → Claude Code（`claude -p`）→ Claude API（`claude-sonnet-5-5`）の順に試し、未インストール・未ログイン・利用枠超過・形式不正などで失敗したら次へ進む。使った手段は課題詳細の「生成」に表示
+  - Claude APIを使う場合は `npm run setup:claude-api` でAPIキーをキーチェーンに保存し（入力は * で表示。`pbpaste | npm run setup:claude-api` でクリップボードからも可）、Macサービスを再起動
+  - CLIの場所は自動で探す。見つからない場合は `COURSECUE_CODEX` / `COURSECUE_CLAUDE` で指定。モデルは `COURSECUE_CLAUDE_MODEL`（Claude Code）/ `COURSECUE_CLAUDE_API_MODEL`（Claude API）で変更可
 - 認証情報・接続キー: macOSキーチェーン。平文パスワードはクラウドへ送信しない。公開設定はRSA-OAEP + AES-GCMで暗号化し、登録Macだけが復号する
 
 ## セットアップ
@@ -24,7 +26,8 @@ manabo自動連携は現状、登録済みMacと接続キーを使用する個�
 7. 設定画面で授業日を確認。日付が分からない回は走査しない
 
 ## 実装範囲・提出制御
-- 対象期間は実行日の前後7日。授業タイトルの日付または設定済み日程を使う
+- 新しい課題の検出は実行日の前後7日の授業回が対象。授業タイトルの日付または設定済み日程を使う
+- 登録済みで未提出の課題は、対象期間や授業日の設定に関係なく毎回の同期で提出状況を確認する
 - 一覧の提出済みチェックは提出済み。下書きと提出済みを区別
 - 新規課題は資料から生成。根拠引用が資料と一致しない場合は自動提出しない
 - 本人の経験が足りない場合は要対応。補足入力後に生成できる
@@ -46,3 +49,8 @@ Codex生成は短い検証問題で実行確認済み。実際のmanaboのログ
 専用Firebase project: `coursecue-2026`。Firebase SDKは初期化済み。実データ同期はCloudflare D1を使用。
 
 認証付きバックエンドを公開済み。Macサービスが同期・自動ログイン・下書き生成・提出を実行する。初回はMac設定画面で認証情報を保存し、saboroを接続する。
+
+## 自動修正・自動公開（GitHub）
+- **修正:** Issue や PR のコメントに `@claude 〜を直して` と書くと、Claude Code GitHub Action が修正して PR を作る（リポジトリ所有者のコメントのみ反応）。必要なシークレット：`ANTHROPIC_API_KEY`
+- **公開:** `main` に入るとテスト（`npm test`）を実行し、成功したら Cloudflare に公開する（`.github/workflows/deploy.yml`）。PR でもテストだけ実行する。必要なシークレット：`CLOUDFLARE_API_TOKEN`
+- **Mac サービスの更新:** 公開に成功したコミットは `deployed` ブランチに記録される。Mac サービスは10分ごとに確認し、そこまで早送りで更新して再起動する。ローカルに変更がある・履歴が分岐している場合は更新しない。`package-lock.json` が変わったときは `npm ci` を実行し、失敗したら元に戻す。`COURSECUE_AUTO_UPDATE=0` で無効
