@@ -29,6 +29,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # deployed ブランチを早送りで進めるには履歴が必要（既定の1件だけでは push が拒否される）
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
