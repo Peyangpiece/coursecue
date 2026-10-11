@@ -5,6 +5,10 @@ const norm=s=>String(s||'').normalize('NFKC').replace(/\s+/g,'');
 export function quoteSource(evidence,materials){const q=norm(evidence);if(q.length<4)return null;return materials.find(m=>norm(m.text).includes(q))?.file||null}
 // AI の出力から、資料に根拠がある値だけを残す
 export function verifyCourseInfo(raw,materials){const out={};for(const [k,{value,evidence}] of Object.entries(raw||{})){if(typeof value!=='string'||!value.trim())continue;const file=quoteSource(evidence,materials);if(!file)continue;let v=value.trim();if(k==='mode'&&!MODES.slice(0,3).includes(v))continue;if(k==='absenceLimit'){const n=Number(v.normalize('NFKC'));if(!Number.isInteger(n)||n<0||n>15)continue;v=n}if(typeof v==='string')v=v.slice(0,200);out[k]={value:v,evidence:evidence.trim().slice(0,300),file}}return out}
+// 回ごとの授業形式：引用が資料に実在し、引用の中に回番号と形式（の言い方）が書かれているものだけを残す
+const modeWords={'対面':/対面|教室/,'オンライン':/オンライン|zoom|teams|webex|同時双方向|リアルタイム|ライブ/i,'オンデマンド':/オンデマンド|録画|動画配信/};
+const hasNumber=(text,n)=>new RegExp(`(^|[^0-9])0?${n}([^0-9]|$)`).test(text);
+export function verifySessions(list,materials){const out=[];for(const r of Array.isArray(list)?list:[]){const {from,to,mode,evidence}=r||{};if(!Number.isInteger(from)||!Number.isInteger(to)||from<1||to>30||from>to)continue;if(!MODES.slice(0,3).includes(mode)||typeof evidence!=='string')continue;const file=quoteSource(evidence,materials);if(!file)continue;const q=evidence.normalize('NFKC');if(!modeWords[mode].test(q)||!hasNumber(q,from)||(to!==from&&!hasNumber(q,to)))continue;out.push({from,to,mode,evidence:evidence.trim().slice(0,300),file})}return out}
 // 画面からの変更（job.kind==='timetable'）を検証して state に反映する。dist/timetable.js の applyTimetable と同じ規則
 const courseKeys={weekday:v=>v===''||WEEKDAYS.includes(v),period:v=>v===null||(Number.isInteger(v)&&v>=1&&v<=7),room:v=>typeof v==='string'&&v.length<=50,mode:v=>v===''||MODES.slice(0,3).includes(v),limit:v=>v===null||(Number.isInteger(v)&&v>=0&&v<=15)};
 const sessionKeys={mode:v=>v===''||MODES.includes(v),room:v=>typeof v==='string'&&v.length<=50,attendance:v=>v===''||MARKS.includes(v),note:v=>typeof v==='string'&&v.length<=200};
