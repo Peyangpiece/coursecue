@@ -19,4 +19,4 @@ async function tick(){if(running)return;try{const job=await api('/api/agent/clai
 // 公開に成功したコミットまで自動更新し、launchd に再起動させる。COURSECUE_AUTO_UPDATE=0 で無効
 async function autoUpdate(){if(running||process.env.COURSECUE_AUTO_UPDATE==='0')return;try{const r=updateToDeployed({repo});if(r==='updated'){console.error('saboro: 公開版に更新しました。再起動します');process.exit(0)}if(r.startsWith('skipped:'))console.error('saboro: 自動更新しません（'+r.slice(8)+'）');return r}catch(e){console.error('saboro: 自動更新を確認できません',String(e.message).split('\n')[0]);return 'error'}}
 try{state.version=execFileSync('git',['rev-parse','HEAD'],{cwd:repo}).toString().trim()}catch{}
-await save().catch(()=>{});setInterval(tick,5000);setInterval(autoUpdate,10*60*1000);await tick();await autoUpdate();
+await lms.trashDuplicates().catch(e=>console.error('saboro: 複製の整理に失敗',String(e.message)));await save().catch(()=>{});setInterval(tick,5000);setInterval(autoUpdate,10*60*1000);await tick();await autoUpdate();
