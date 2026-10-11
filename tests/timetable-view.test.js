@@ -9,3 +9,4 @@ assert.equal(cfg['国際ビジネス戦略'].mode,'','対応づけに失敗し�
 assert.equal(cfg['経済言論Ⅱ'].mode,'','枠はあるが教室がない場合は推定しない');
 assert.equal(cfg['言葉と文化'].mode,'対面');assert.equal(cfg['言葉と文化'].modeFrom,'');assert.equal(cfg['言葉と文化'].autoMode,'オンデマンド');
 run(`state.cubics=null`);assert.equal(run(`courseConfig(courses.indexOf('意思決定論')).mode`),'','CUBICS を読んでいなければ推定しない')});
+test('回ごとの授業形式：自分の記録 → CUBICS の休講 → 資料・シラバスの回ごとの形式 → 授業の既定',()=>{const run=boot();run(`key='k';courses=ownerCourses;state.cubics=null;state.courseInfo={'経営科学Ⅱ':{mode:{value:'対面',evidence:'x',file:'f'},sessions:[{from:2,to:4,mode:'オンデマンド',evidence:'第2回〜第4回（オンデマンド）',file:'シラバス'},{from:4,to:4,mode:'オンライン',evidence:'第4回 Zoom',file:'第1回.pdf'}]}};state.sessions={'経営科学Ⅱ':{3:{mode:'対面'}}}`);const m=r=>run(`sessionInfo(courses.indexOf('経営科学Ⅱ'),${r}).mode`);assert.equal(m(1),'対面');assert.equal(m(2),'オンデマンド');assert.equal(m(3),'対面','自分の記録が優先');assert.equal(m(4),'オンライン','後の記載を優先');assert.equal(m('5'),'対面')});
