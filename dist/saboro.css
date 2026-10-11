@@ -320,3 +320,10 @@ details summary{cursor:pointer}
   .table-stack td.num{display:inline-block;width:50%;padding:2px 0;text-align:left}
   .table-stack .warn-row{background:#fff6f6;margin:0 -15px;padding:8px 15px}
 }
+
+/* ドロワー：折りたたみの区画と、下に固定する操作ボタン */
+.drawer-section{margin:20px 0 8px;border-top:1px solid #ddd;padding-top:8px}
+.drawer-section>summary{font-weight:700;cursor:pointer}
+.drawer-section>summary label{cursor:pointer}
+.drawer-section>summary+*{margin-top:8px}
+.drawer .actions.sticky{position:sticky;bottom:0;z-index:1;margin:15px -15px 0;padding:10px 15px;background:#fff;border-top:1px solid #ddd;box-shadow:0 -4px 10px rgba(0,0,0,.05)}
