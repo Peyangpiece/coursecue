@@ -53,7 +53,7 @@ svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 input::placeholder,textarea::placeholder{color:#767676}
 
 /* 2カラム（ディレクトリ / 本文） */
-.row{display:flex;align-items:flex-start;gap:15px;padding:0 15px 30px}
+.row{display:flex;align-items:flex-start;gap:15px;max-width:1500px;margin:0 auto;padding:0 15px 30px}
 .col-side{flex:0 0 23.7%;min-width:0}
 .col-main{flex:1 1 0;min-width:0}
 .col-full{flex:1 1 100%;min-width:0}
@@ -113,6 +113,7 @@ input::placeholder,textarea::placeholder{color:#767676}
 .table-default th{width:30%;background:var(--th-bg)}
 .table-default thead th{width:auto;font-size:12px;color:#555}
 .table-default .num{width:90px;text-align:right}
+.table-default tbody tr:hover>td{background:#f7fafd}
 .attn{color:var(--amber);font-weight:700}
 
 /* 課題一覧 */
@@ -137,6 +138,7 @@ input::placeholder,textarea::placeholder{color:#767676}
 .tab{margin-bottom:-1px;margin-right:2px;padding:6px 12px;border:1px solid transparent;border-radius:4px 4px 0 0;color:var(--link)}
 .tab:hover{background:#eee;border-color:#eee #eee #ddd}
 .tab.active{color:#555;background:#fff;border-color:#ddd #ddd transparent}
+.tab .count{margin-left:4px;font-size:11px;color:var(--muted)}
 
 /* alert */
 .alert{margin-bottom:15px;padding:10px;border:1px solid transparent;border-radius:4px}
@@ -195,7 +197,10 @@ details summary{cursor:pointer}
 .modal-body{margin:0;padding:15px;overflow-wrap:anywhere}
 .modal-footer{display:flex;justify-content:flex-end;gap:8px;padding:0 15px 15px}
 
-.toast{position:fixed;left:50%;bottom:25px;z-index:50;display:none;max-width:90%;padding:10px 15px;transform:translateX(-50%);color:#fff;background:#333;border-radius:4px;box-shadow:0 5px 15px rgba(0,0,0,.3)}
+.toast{position:fixed;left:50%;bottom:25px;z-index:50;display:none;max-width:90%;padding:10px 15px;transform:translateX(-50%);color:#fff;background:#333;border-radius:4px;box-shadow:0 5px 15px rgba(0,0,0,.3);cursor:pointer}
+
+/* 印刷：ヘッダーの操作・ディレクトリ・ドロワーを省く */
+@media print{body{border:0}.nav1,.crumbbar .search,.col-side,.overlay,.dialog,.toast,.btn,.tabs{display:none!important}.screen{border:0}.row{display:block;padding:0}.panel{box-shadow:none;break-inside:avoid}}
 
 /* 時間割・出席 */
 .label.mode-face{background:var(--blue)}
