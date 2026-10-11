@@ -37,7 +37,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx wrangler deploy
+      # 公開したコミットを Worker に持たせる。Mac は処理の確認（5秒ごと）のついでにこれを見て、違えばすぐ更新する
+      - run: npx wrangler deploy --var DEPLOYED_SHA:${{ github.sha }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - name: Record deployed commit
