@@ -3,7 +3,7 @@ export const LMS='https://manabo.cnc.chukyo-u.ac.jp';
 export const COURSES=[['人材マネジメントⅡ','103578'],['コーポレートファイナンスⅡ','103901'],['国際ビジネス戦略','103576'],['サービス・マーケティング','103573'],['意思決定論','103889'],['管理会計Ⅱ','103904'],['マーケティング戦略','103572'],['ボランティア','103736'],['経営科学Ⅱ','103887'],['経済言論Ⅱ','103914'],['言葉と文化','104493']];
 export const hash=v=>createHash('sha256').update(v).digest('hex');
 export const validLms=v=>{const u=new URL(v,LMS);if(u.origin!==LMS)throw Error('許可されていないURL');return u.href};
-export const roundOf=s=>Number(String(s||'').normalize('NFKC').match(/第\s*(\d+)\s*回/)?.[1]||0);
+export const roundOf=s=>{const t=String(s||'').normalize('NFKC');const m=t.match(/第\s*(\d+)\s*[回講]/)||t.match(/(\d+)\s*回目/);return Number(m?.[1]||0)};
 export const contentType=url=>/\/quiz\//.test(url)?'クイズ':/\/board\//.test(url)?'掲示板':'レポート';
 export const attendance=s=>/出席.{0,12}(コード|番号|確認)|attendance.{0,12}code/i.test(s);
 export function lectureDate(title,schedule,round){const m=title.match(/(?:(20\d{2})[年/.-])?(\d{1,2})[月/.-](\d{1,2})日?/);if(m){const year=Number(m[1]||2026)+(Number(m[2])<4&&!m[1]?1:0);return `${year}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`}return schedule?.[round]||null}
