@@ -235,3 +235,5 @@ details summary{cursor:pointer}
 .tt-off{padding:4px 6px;font-size:12px;color:var(--muted)}
 .tt-off small{display:block;font-size:11px}
 .warn-row td{background:#fff6f6}
+.label.mode-makeup{background:#2e7d32}
+.tt-session.makeup{background:#eef7ee;border-color:#bfe0c0}
