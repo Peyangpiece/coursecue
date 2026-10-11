@@ -1,0 +1,11 @@
+// 時間割・出席の記録と、ガイダンス資料から読み取った授業情報の検証
+const MODES=['対面','オンライン','オンデマンド','休講'],MARKS=['出席','遅刻','欠席','公欠'],WEEKDAYS=['月','火','水','木','金','土'];
+const norm=s=>String(s||'').normalize('NFKC').replace(/\s+/g,'');
+// 引用が資料の本文に実在するか（空白・全角半角の違いは無視）。見つかった資料のファイル名を返す
+export function quoteSource(evidence,materials){const q=norm(evidence);if(q.length<4)return null;return materials.find(m=>norm(m.text).includes(q))?.file||null}
+// AI の出力から、資料に根拠がある値だけを残す
+export function verifyCourseInfo(raw,materials){const out={};for(const [k,{value,evidence}] of Object.entries(raw||{})){if(typeof value!=='string'||!value.trim())continue;const file=quoteSource(evidence,materials);if(!file)continue;let v=value.trim();if(k==='mode'&&!MODES.slice(0,3).includes(v))continue;if(k==='absenceLimit'){const n=Number(v.normalize('NFKC'));if(!Number.isInteger(n)||n<0||n>15)continue;v=n}if(typeof v==='string')v=v.slice(0,200);out[k]={value:v,evidence:evidence.trim().slice(0,300),file}}return out}
+// 画面からの変更（job.kind==='timetable'）を検証して state に反映する。dist/timetable.js の applyTimetable と同じ規則
+const courseKeys={weekday:v=>v===''||WEEKDAYS.includes(v),period:v=>v===null||(Number.isInteger(v)&&v>=1&&v<=7),room:v=>typeof v==='string'&&v.length<=50,mode:v=>v===''||MODES.slice(0,3).includes(v),limit:v=>v===null||(Number.isInteger(v)&&v>=0&&v<=15)};
+const sessionKeys={mode:v=>v===''||MODES.includes(v),room:v=>typeof v==='string'&&v.length<=50,attendance:v=>v===''||MARKS.includes(v),note:v=>typeof v==='string'&&v.length<=200};
+export function applyTimetablePatch(state,patch,courses){const {course,round,values}=patch||{};if(!courses.includes(course))throw Error('授業が見つかりません');if(round!==undefined&&!(Number.isInteger(round)&&round>=1&&round<=30))throw Error('回数が不正です');const rules=round===undefined?courseKeys:sessionKeys;if(!values||typeof values!=='object')throw Error('内容が不正です');for(const [k,v] of Object.entries(values))if(!rules[k]||!rules[k](v))throw Error(`${k} が不正です`);const set=(obj)=>{const cur={...obj};for(const [k,v] of Object.entries(values)){if(v===''||v===null)delete cur[k];else cur[k]=v}return cur};if(round===undefined){state.timetable={...state.timetable,[course]:set(state.timetable?.[course])}}else{const all={...state.sessions?.[course]},cur=set(all[round]);if(Object.keys(cur).length)all[round]=cur;else delete all[round];state.sessions={...state.sessions,[course]:all}}}

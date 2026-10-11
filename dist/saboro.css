@@ -210,3 +210,28 @@ details summary{cursor:pointer}
   .course-edit{flex-wrap:wrap}
   .course-edit .form-control{flex:1 1 100%}
 }
+
+/* 時間割・出席 */
+.label.mode-face{background:var(--blue)}
+.label.mode-online{background:var(--green)}
+.label.mode-demand{background:var(--amber)}
+.label.mode-off{background:var(--red)}
+.week-nav{display:inline-flex;gap:4px}
+.tt-wrap{overflow-x:auto}
+.timetable{width:100%;min-width:640px;border-collapse:collapse;table-layout:fixed;border-top:2px solid var(--blue);border-bottom:2px solid var(--blue)}
+.timetable th,.timetable td{padding:4px;border:1px solid var(--th-line);vertical-align:top;font-weight:400}
+.timetable thead th{background:var(--th-bg);font-size:12px;color:#555}
+.timetable tbody th{width:44px;background:var(--th-bg);font-size:12px;color:#555;text-align:center}
+.timetable td{height:64px}
+.timetable .today{background:#fffde8}
+.timetable thead .today{background:#f7f0c6;color:var(--text);font-weight:700}
+.tt-session{display:flex;flex-direction:column;gap:2px;width:100%;margin-bottom:4px;padding:4px 6px;border:1px solid #d6e2ef;border-radius:3px;background:#f3f8fd;text-align:left}
+.tt-session:hover{border-color:var(--link)}
+.tt-session.cancelled{background:#fdf0f1;border-color:#f2c4c8}
+.tt-session.cancelled .tt-name{text-decoration:line-through}
+.tt-name{color:var(--link);font-size:13px;font-weight:700;overflow-wrap:anywhere}
+.tt-labels{display:flex;flex-wrap:wrap;gap:3px}
+.tt-labels .label{font-size:11px}
+.tt-off{padding:4px 6px;font-size:12px;color:var(--muted)}
+.tt-off small{display:block;font-size:11px}
+.warn-row td{background:#fff6f6}
