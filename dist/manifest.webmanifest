@@ -1,0 +1,16 @@
+{
+  "name": "saboro — 課題管理",
+  "short_name": "saboro",
+  "description": "授業・課題・提出状況・出席を管理する。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "lang": "ja",
+  "background_color": "#ffffff",
+  "theme_color": "#005bac",
+  "icons": [
+    { "src": "/saboro-logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
