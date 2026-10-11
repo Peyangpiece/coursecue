@@ -6,12 +6,6 @@
       "**/.*",
       "**/node_modules/**"
     ],
-    "rewrites": [
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ],
     "headers": [
       {
         "source": "**",
@@ -29,6 +23,13 @@
             "value": "DENY"
           }
         ]
+      }
+    ],
+    "redirects": [
+      {
+        "regex": "^/(?P<path>.*)$",
+        "destination": "https://coursecue.hrk-6888.workers.dev/:path",
+        "type": 301
       }
     ]
   }

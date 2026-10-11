@@ -45,8 +45,8 @@ manabo自動連携は現状、登録済みMacと接続キーを使用する個�
 Codex生成は短い検証問題で実行確認済み。実際のmanaboのログイン・課題提出は、本人の認証情報入力後に検証が必要。
 
 ## 公開
-`npm run deploy:cloudflare` / `npm run deploy:firebase`。
-専用Firebase project: `coursecue-2026`。Firebase SDKは初期化済み。実データ同期はCloudflare D1を使用。
+公開先は Cloudflare（https://coursecue.hrk-6888.workers.dev ）。`main` に入ると自動で公開される。
+旧URL（https://coursecue-2026.web.app ）は Cloudflare へ転送するだけにしてある（`firebase.json`）。転送設定を変えたときだけ `npm run deploy:firebase` を手動で実行する。実データ同期はCloudflare D1を使用。
 
 認証付きバックエンドを公開済み。Macサービスが同期・自動ログイン・下書き生成・提出を実行する。初回はMac設定画面で認証情報を保存し、saboroを接続する。
 
