@@ -6,7 +6,7 @@ const courseIds=['103578','103901','103576','103573','103889','103904','103572',
 const statuses={ready:['未着手','ready'],answered:['本人の提出待ち','wait'],wait:['要確認','wait'],code:['出席コード待ち','wait'],draft:['下書き','draft'],done:['提出済み','done'],unknown:['提出結果不明','alert']};const taskTypes=['課題','レポート','クイズ'];
 // 前回の同期にかかった時間（Mac の記録）。ヘッダーには出さず、ホームの概要の下に表示する
 const sec=ms=>`${Math.max(1,Math.round(ms/1000))}秒`;
-function syncTimingText(){const t=state.syncTiming;if(!t?.total)return '';const slow=Object.entries(t.courses||{}).sort((a,b)=>b[1]-a[1])[0];return `${sec(t.total)}（CUBICS ${sec(t.cubics||0)}・授業 ${sec(Object.values(t.courses||{}).reduce((a,b)=>a+b,0))}${slow?`［最長 ${slow[0]} ${sec(slow[1])}］`:''}${t.generated?`・回答生成 ${t.generated}件 ${sec(t.generate)}`:''}）`}
+function syncTimingText(){const t=state.syncTiming;if(!t?.total)return '';const slow=Object.entries(t.courses||{}).sort((a,b)=>b[1]-a[1])[0];return `${sec(t.total)}（CUBICS ${t.cubicsSkipped?'1時間以内に確認済みのため省略':sec(t.cubics||0)}・授業 ${sec(t.classes??Object.values(t.courses||{}).reduce((a,b)=>a+b,0))}${slow?`［最長 ${slow[0]} ${sec(slow[1])}］`:''}${t.generated?`・回答生成 ${t.generated}件 ${sec(t.generate)}`:''}）`}
 const views={home:'ホーム',courses:'授業',timetable:'時間割',tasks:'課題',attendance:'出席',needs:'要対応',settings:'設定'};
 // メニューに出す画面。授業はディレクトリから、要対応はホームの概要から開く
 // 使う順に並べる。課題一覧の既定は「未提出」（やることが先に見える）
