@@ -1,5 +1,8 @@
-import {homedir} from 'node:os';import {resolve,relative,sep,join} from 'node:path';
+import {homedir} from 'node:os';import {execFile} from 'node:child_process';import {existsSync} from 'node:fs';import {resolve,relative,sep,join} from 'node:path';
 // 資料のダウンロード先（画面の設定欄から変更できる）。ホームフォルダ内の、隠しフォルダ・ライブラリ以外に限る
 export function checkDownloadDir(input,home=homedir()){const raw=String(input??'').trim();if(!raw)return '';if(raw.length>500)throw Error('フォルダのパスが長すぎます');const expanded=raw==='~'?home:raw.startsWith('~/')?join(home,raw.slice(2)):raw;if(!expanded.startsWith('/'))throw Error('フォルダは /Users/… または ~/… の形で入力してください');const full=resolve(expanded),rel=relative(home,full);if(rel.startsWith('..')||resolve(home,rel)!==full)throw Error('ホームフォルダの中のフォルダを指定してください');const parts=rel?rel.split(sep):[];if(parts.some(p=>p.startsWith('.')))throw Error('隠しフォルダは指定できません');if(parts[0]==='Library')throw Error('ライブラリフォルダは指定できません');return full}
 // path が root の中にあるか
 export const inside=(path,root)=>{const rel=relative(root,String(path||''));return !!path&&!rel.startsWith('..')&&!rel.startsWith(sep)&&rel!==''};
+// Mac の「フォルダを選択」画面を出し、選んだフォルダのパスを返す（取り消したら null）。パスは引数で渡し、スクリプトに埋め込まない
+const chooseScript=['on run argv','activate','set p to choose folder with prompt "saboro：資料のダウンロード先のフォルダを選んでください" default location (POSIX file (item 1 of argv))','return POSIX path of p','end run'];
+export function pickFolder(current,{run=execFile,home=homedir(),timeout=300000}={}){const start=current&&existsSync(current)?current:home;return new Promise((resolve,reject)=>run('osascript',[...chooseScript.flatMap(l=>['-e',l]),start],{timeout},(err,stdout)=>{if(err){if(/-128|User canceled|キャンセル/.test(String(err.message)+String(err.stderr||'')))return resolve(null);if(err.killed)return reject(Error('フォルダの選択が時間切れになりました。もう一度押してください'));return reject(Error('フォルダの選択画面を開けませんでした'))}resolve(String(stdout).trim().replace(/\/$/,'')||null)}))}
