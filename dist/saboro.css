@@ -332,3 +332,6 @@ details summary{cursor:pointer}
 .material{display:inline-flex}
 .material .btn:first-child{border-radius:3px 0 0 3px}
 .material .btn-alt{margin-left:-1px;border-radius:0 3px 3px 0;color:var(--muted);font-size:11px}
+
+.notes{margin:0;padding-left:1.4em}
+.notes li{margin:4px 0}
