@@ -42,7 +42,5 @@ async function start(){tray=new Tray(nativeImage.createFromPath(join(repo,'dist/
 Object.assign(process.env,{COURSECUE_ROOT:root,COURSECUE_WORK:work,COURSECUE_AUTO_UPDATE:'0',COURSECUE_VERSION:app.getVersion(),PLAYWRIGHT_BROWSERS_PATH:browsers,COURSECUE_API:apiBase});
 try{await stopOldAgent();await ensureBrowser();showStatus('サービスを起動しています…');await waitPort();await import(join(repo,'local/bridge.js'));ready=true;showStatus('動作中');app.setLoginItemSettings({openAtLogin:true});openWindow(home())}catch(e){showStatus('起動に失敗：'+String(e.message).slice(0,120));dialog.showErrorBox('saboro を起動できません',String(e.message))}
 try{const {default:updater}=await import('electron-updater');updater.autoUpdater.logger=null;updater.autoUpdater.checkForUpdatesAndNotify().catch(()=>{});setInterval(()=>updater.autoUpdater.checkForUpdatesAndNotify().catch(()=>{}),6*3600*1000)}catch{}}
-app.on('second-instance',focusWindow);
-app.on('window-all-closed',()=>{});
-app.on('activate',focusWindow);
-app.whenReady().then(start);
+// 2 つ目に起動したときは、1 つ目の画面を前に出すだけで終わる（app.quit() はすぐには終わらないため、その間に start が動くと、1 つ目が使っているポートで「起動に失敗」と出る）
+if(single){app.on('second-instance',focusWindow);app.on('window-all-closed',()=>{});app.on('activate',focusWindow);app.whenReady().then(start)}
