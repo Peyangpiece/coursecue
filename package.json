@@ -79,7 +79,7 @@
         }
       ],
       "icon": "dist/icon-512.png",
-      "identity": null,
+      "identity": "-",
       "hardenedRuntime": false
     },
     "win": {

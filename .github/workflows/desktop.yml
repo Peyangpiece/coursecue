@@ -28,6 +28,7 @@ jobs:
         run: |
           gh api repos/${{ github.repository }}/releases --paginate --jq '.[] | select(.tag_name=="${{ steps.version.outputs.tag }}") | .id' | while read -r id; do gh api -X DELETE "repos/${{ github.repository }}/releases/$id"; done
           git push --delete origin "${{ steps.version.outputs.tag }}" 2>/dev/null || true
+      # Mac は ad-hoc 署名（package.json の mac.identity: "-"）。署名がないと Apple シリコンでは「壊れているため開けません」になる
       - name: Build (macOS + Windows)
         run: npx electron-builder --mac --win --publish never
         env:
@@ -35,4 +36,4 @@ jobs:
       - name: Create the release with every installer
         run: |
           ls -la release
-          gh release create "${{ steps.version.outputs.tag }}" --target "${{ github.sha }}" --latest --title "saboro ${{ steps.version.outputs.tag }}" --notes "Mac は .dmg（Apple シリコンは arm64、Intel は x64）、Windows は .exe を入れてください。署名していないため、Mac は初回に右クリック → 開く、Windows は SmartScreen の「詳細情報 → 実行」が必要です。" release/*.dmg release/*.zip release/*.blockmap release/*.exe release/latest*.yml
+          gh release create "${{ steps.version.outputs.tag }}" --target "${{ github.sha }}" --latest --title "saboro ${{ steps.version.outputs.tag }}" --notes "Mac は .dmg（Apple シリコンは arm64、Intel は x64）、Windows は .exe を入れてください。Apple の署名がないため、Mac は初回に開こうとして止められたあと「システム設定 → プライバシーとセキュリティ」の「このまま開く」、Windows は SmartScreen の「詳細情報 → 実行」が必要です。" release/*.dmg release/*.zip release/*.blockmap release/*.exe release/latest*.yml
