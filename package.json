@@ -44,6 +44,7 @@
       "desktop/**",
       "local/**",
       "dist/icon-512.png",
+      "dist/academic-calendar.json",
       "dist/saboro-logo.svg",
       "package.json",
       "!local/keychain",
