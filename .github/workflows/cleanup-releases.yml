@@ -10,6 +10,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - uses: actions/checkout@v4
       - name: Delete drafts and releases without installers
         run: |
           latest=$(gh api repos/${{ github.repository }}/releases/latest --jq .id 2>/dev/null || echo "")
@@ -17,5 +18,5 @@ jobs:
             if [ "$id" = "$latest" ]; then echo "keep latest $tag"; continue; fi
             echo "delete $tag (id $id, draft=$draft)"
             gh api -X DELETE "repos/${{ github.repository }}/releases/$id"
-            if [ "$draft" = "false" ]; then git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" --delete "$tag" 2>/dev/null || true; fi
+            if [ "$draft" = "false" ]; then git push origin --delete "$tag" 2>/dev/null || true; fi
           done
