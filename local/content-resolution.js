@@ -27,5 +27,6 @@ export const regularOnly=entries=>entries.some(e=>!isLate(e))?entries.filter(e=>
 export function regularFor(late,entries){const type=u=>/\/quiz\//.test(u)?'クイズ':/\/board\//.test(u)?'掲示板':'レポート';const c=entries.filter(e=>!isLate(e)&&type(e.url)===type(late.url));return c.length===1?c[0]:null}
 // 期限後提出用・やむを得ない事情のみの予備の提出先（予備の課題フォルダ）。課題として扱わない
 export const SPARE=/期限後|やむを得ない|遅延提出|遅れて提出|再提出用/;
-// manabo から集めた課題のうち、題名が予備の提出先のものを外す（手で追加した課題は残す）。外したものは archived に返す
-export function dropSpareTasks(tasks){const kept=[],archived=[];for(const t of tasks||[])(SPARE.test(t.title||'')&&/\/content\//.test(t.url||'')?archived:kept).push(t);return {tasks:kept,archived}}
+// manabo から集めた課題のうち、題名（または教材 ID）が予備の提出先のものを外す（手で追加した課題は残す）。外したものは archived に返す
+// spareIds：manabo で予備の提出先と分かった教材 ID（題名がボタンの文字などになっている課題も外せるように）
+export function dropSpareTasks(tasks,spareIds=new Set()){const id=t=>String(t.url||'').match(/\/content\/(\d+)\//)?.[1];const kept=[],archived=[];for(const t of tasks||[])((SPARE.test(t.title||'')||spareIds.has(id(t)))&&/\/content\//.test(t.url||'')?archived:kept).push(t);return {tasks:kept,archived}}
