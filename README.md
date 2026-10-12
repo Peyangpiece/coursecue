@@ -16,14 +16,17 @@ manabo自動連携は、各自の Mac に入れたサービスと接続キーで
   - CLIの場所は自動で探す。見つからない場合は `COURSECUE_CODEX` / `COURSECUE_CLAUDE` で指定。モデルは `COURSECUE_CLAUDE_MODEL`（Claude Code）/ `COURSECUE_CLAUDE_API_MODEL`（Claude API）で変更可
 - 認証情報・接続キー: macOSキーチェーン。平文パスワードはクラウドへ送信しない。公開設定はRSA-OAEP + AES-GCMで暗号化し、登録Macだけが復号する
 
-## セットアップ
-1. `npm ci` / `npx playwright install chromium`
-2. `npm run setup`（Keychainバイナリのコンパイル・APIキーの設定）
-3. `npm run seed`（既存課題・資料の記録をローカルへ取り込む）
-4. `npm start` または `npm run install:agent`
-5. http://127.0.0.1:8766/setup で本人がmanaboのIDとパスワードを入力
-6. 「saboroを接続」でこのブラウザを接続（接続キーはURLフラグメントから読み、直ちに削除）
-7. 設定画面で授業日を確認。日付が分からない回は走査しない
+## セットアップ（Mac）
+ターミナルで次を実行すると、`~/saboro/app` にアプリを置き、必要なもの（Node.js 22・manabo 用ブラウザ・Mac サービス）を入れて、設定画面を開く。資料は `~/saboro/<授業名>/` に保存される。
+```
+curl -fsSL https://coursecue.hrk-6888.workers.dev/install.sh | bash
+```
+開いた設定画面（http://127.0.0.1:8766/setup ）で済ませるのは 3 つだけ：
+1. manabo のログイン ID とパスワードを保存する（この Mac のキーチェーンにだけ保存。保存と同時に manabo への接続を確認）
+2. AI との連携を確認する。Codex（ChatGPT アプリ）または Claude Code にログイン済みならそのまま使える。どちらもなければ Claude API のキーを入れる（キーはその場で使えるか確認してからキーチェーンに保存）
+3. 「saboroを接続」でこのブラウザを saboro に接続する（接続キーは URL フラグメントから読み、直ちに削除）
+
+授業の一覧・授業日・課題・締切・資料は接続後の同期で manabo から自動で集める。セットアップは `npm run setup` で、利用者の登録（接続キーと Mac の鍵を作ってクラウドに登録）・ブラウザの用意・Mac サービスの登録を行う。手元で開発するときは `npm ci` のあと `npm run setup -- --no-agent` と `npm start`。既存の課題フォルダの記録を取り込むには `npm run seed`（最初の利用者向け）
 
 ## 実装範囲・提出制御
 - 新しい課題の検出は実行日の前後7日の授業回が対象。授業タイトルの日付、設定済み日程、または大学の学年暦（`dist/academic-calendar.json`、2026秋学期）を使う。学年暦は授業ページの「（金曜／2限）」表記から曜日を読み、祝日・休講日を除いた第1〜15回の日付を未設定の回に入れる
