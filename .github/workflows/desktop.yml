@@ -1,5 +1,6 @@
 name: Desktop app
-# デスクトップアプリ（macOS・Windows）のインストーラーを作り、GitHub Release に載せる。
+# デスクトップアプリ（macOS・Windows）のインストーラーを 1 つのジョブで作り、GitHub Release（公開）に載せる。
+# 2 つのジョブに分けると Release の下書きが 2 つできてしまうため、macOS の環境で両方を作る（Windows 向けは NSIS で作れる）。
 # タグ desktop-v* を押すか、手動で実行する。アプリは Release の最新版を自動で確認して更新する。
 on:
   push:
@@ -7,11 +8,7 @@ on:
   workflow_dispatch:
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
     permissions:
       contents: write
     steps:
@@ -21,8 +18,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Build and publish
-        run: npm run desktop:release
+      - name: Build and publish (macOS + Windows)
+        run: npx electron-builder --mac --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
