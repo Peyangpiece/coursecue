@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto';
 export const LMS='https://manabo.cnc.chukyo-u.ac.jp';
-export const COURSES=[['人材マネジメントⅡ','103578'],['コーポレートファイナンスⅡ','103901'],['国際ビジネス戦略','103576'],['サービス・マーケティング','103573'],['意思決定論','103889'],['管理会計Ⅱ','103904'],['マーケティング戦略','103572'],['ボランティア','103736'],['経営科学Ⅱ','103887'],['経済言論Ⅱ','103914'],['言葉と文化','104493']];
+export const COURSES=[['人材マネジメントⅡ','103578'],['コーポレートファイナンスⅡ','103901'],['国際ビジネス戦略','103576'],['サービス・マーケティング','103573'],['意思決定論','103889'],['管理会計Ⅱ','103904'],['マーケティング戦略','103572'],['ボランティア','103736'],['経営科学Ⅱ','103887'],['経済言論Ⅱ','103914'],['言葉と文化','104493'],['ゼミナールⅣ','']];
+// manabo の授業 ID が未設定（''）の授業は、同期のときに manabo の授業一覧から名前で探して state.courseIds に記録する
+export const courseIdOf=(i,state)=>COURSES[i]?.[1]||state?.courseIds?.[COURSES[i]?.[0]]||'';
+// 授業の既定の曜日・時限・教室（本人が時間割で設定していないときだけ入れる）
+export const COURSE_DEFAULTS={'ゼミナールⅣ':{weekday:'月',period:4,room:'521'}};
+// 授業一覧のリンクの文字から授業を探す（全角半角・ローマ数字・空白の違いは無視）
+const nameKey=s=>String(s||'').normalize('NFKC').replace(/\s+/g,'').replace(/II/g,'Ⅱ').replace(/IV/g,'Ⅳ').replace(/III/g,'Ⅲ');
+export function findClassLinks(links,names){const out={};for(const name of names){const k=nameKey(name);const hit=links.filter(l=>nameKey(l.text).includes(k)).map(l=>String(l.href||'').match(/\/class\/(\d+)/)?.[1]).filter(Boolean);if(new Set(hit).size===1)out[name]=hit[0]}return out}
 export const hash=v=>createHash('sha256').update(v).digest('hex');
 export const validLms=v=>{const u=new URL(v,LMS);if(u.origin!==LMS)throw Error('許可されていないURL');return u.href};
 // 漢数字の回（第二回・第十二回）を算用数字に直す（1〜19）
