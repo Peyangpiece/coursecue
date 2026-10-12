@@ -1,0 +1,21 @@
+name: Clean up releases
+# 不要な Release を消す（手動実行）：下書きと、配布物（.dmg / .exe）のない Release。最新の公開版は消さない。
+on:
+  workflow_dispatch:
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Delete drafts and releases without installers
+        run: |
+          latest=$(gh api repos/${{ github.repository }}/releases/latest --jq .id 2>/dev/null || echo "")
+          gh api repos/${{ github.repository }}/releases --paginate --jq '.[] | select(.draft or ([.assets[].name | select(test("\\.(dmg|exe)$"))] | length) == 0) | "\(.id) \(.tag_name) \(.draft)"' | while read -r id tag draft; do
+            if [ "$id" = "$latest" ]; then echo "keep latest $tag"; continue; fi
+            echo "delete $tag (id $id, draft=$draft)"
+            gh api -X DELETE "repos/${{ github.repository }}/releases/$id"
+            if [ "$draft" = "false" ]; then git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" --delete "$tag" 2>/dev/null || true; fi
+          done
