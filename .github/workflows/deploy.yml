@@ -48,6 +48,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       # 公開したコミットを Worker に持たせる。Mac は処理の確認（5秒ごと）のついでにこれを見て、違えばすぐ更新する
       # D1 の表を用意する（IF NOT EXISTS だけなので何度実行しても同じ）
       - run: npx wrangler d1 execute coursecue-private --remote --file server/schema.sql

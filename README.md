@@ -16,17 +16,21 @@ manabo自動連携は、各自の Mac に入れたサービスと接続キーで
   - CLIの場所は自動で探す。見つからない場合は `COURSECUE_CODEX` / `COURSECUE_CLAUDE` で指定。モデルは `COURSECUE_CLAUDE_MODEL`（Claude Code）/ `COURSECUE_CLAUDE_API_MODEL`（Claude API）で変更可
 - 認証情報・接続キー: macOSキーチェーン。平文パスワードはクラウドへ送信しない。公開設定はRSA-OAEP + AES-GCMで暗号化し、登録Macだけが復号する
 
-## セットアップ（Mac）
-ターミナルで次を実行すると、`~/saboro/app` にアプリを置き、必要なもの（Node.js 22・manabo 用ブラウザ・Mac サービス）を入れて、設定画面を開く。資料は `~/saboro/<授業名>/` に保存される。
+## セットアップ（デスクトップアプリ：Mac・Windows）
+GitHub の Release（https://github.com/Peyangpiece/coursecue/releases/latest ）から自分の OS 用を入れる（Mac は `.dmg`、Windows は `.exe`）。起動すると常駐し（メニューバー／タスクトレイ）、ログイン時に自動で立ち上がる。初回は manabo 用のブラウザ（Chromium）を取り込む（数分）。その後に開く「はじめの設定」で済ませるのは 3 つだけ：
+1. manabo のログイン ID とパスワードを保存する（このパソコンの中だけに暗号化して保存。Mac はキーチェーン、Windows は DPAPI。保存と同時に manabo への接続を確認）
+2. AI との連携を確認する。Codex（ChatGPT アプリ）または Claude Code にログイン済みならそのまま使える。どちらもなければ Claude API のキーを入れる（その場で使えるか確認してから保存）
+3. 「saboroを接続」でアプリ内の画面を saboro に接続する
+
+授業の一覧・授業日・課題・締切・資料は接続後の同期で manabo から自動で集める。資料は「書類（Documents）/saboro/<授業名>/」に保存する。アプリは Release の最新版を自動で確認して更新する（Mac は署名がないため自動更新が効かず、新しい版を入れ直す。Apple Developer の署名を CI の `CSC_LINK` に設定すれば自動更新が有効になる）。配布物は署名していないので、Mac では初回に「右クリック → 開く」、Windows では SmartScreen の「詳細情報 → 実行」が必要
+- アプリの作り：`desktop/main.js`（Electron）。OS 固有の処理（秘密の保存・ファイルを開く・ゴミ箱・フォルダ選択・再起動）は `local/platform.js` の組を `globalThis.saboroPlatform` で差し替える。アプリ本体は `local/bridge.js` をそのまま動かし、`COURSECUE_ROOT`（資料の場所）・`COURSECUE_WORK`（作業場所）・`PLAYWRIGHT_BROWSERS_PATH` を渡す。git による自動更新はアプリでは無効
+- 配布物の作成：`.github/workflows/desktop.yml`（タグ `desktop-v*` または手動）で macOS・Windows のインストーラーを作り Release に載せる。手元では `npm run desktop`（起動）／`npm run desktop:build`
+
+### コマンドラインでの導入（Mac、開発者向け）
 ```
 curl -fsSL https://coursecue.hrk-6888.workers.dev/install.sh | bash
 ```
-開いた設定画面（http://127.0.0.1:8766/setup ）で済ませるのは 3 つだけ：
-1. manabo のログイン ID とパスワードを保存する（この Mac のキーチェーンにだけ保存。保存と同時に manabo への接続を確認）
-2. AI との連携を確認する。Codex（ChatGPT アプリ）または Claude Code にログイン済みならそのまま使える。どちらもなければ Claude API のキーを入れる（キーはその場で使えるか確認してからキーチェーンに保存）
-3. 「saboroを接続」でこのブラウザを saboro に接続する（接続キーは URL フラグメントから読み、直ちに削除）
-
-授業の一覧・授業日・課題・締切・資料は接続後の同期で manabo から自動で集める。セットアップは `npm run setup` で、利用者の登録（接続キーと Mac の鍵を作ってクラウドに登録）・ブラウザの用意・Mac サービスの登録を行う。手元で開発するときは `npm ci` のあと `npm run setup -- --no-agent` と `npm start`。既存の課題フォルダの記録を取り込むには `npm run seed`（最初の利用者向け）
+`~/saboro/app` にアプリを置き、Node.js 22・manabo 用ブラウザ・Mac サービス（launchd）を入れて、同じ設定画面（http://127.0.0.1:8766/setup ）を開く。`npm run setup` は利用者の登録（接続キーと Mac の鍵を作ってクラウドに登録）・ブラウザの用意・Mac サービスの登録を行う。手元で開発するときは `npm ci` のあと `npm run setup -- --no-agent` と `npm start`。既存の課題フォルダの記録を取り込むには `npm run seed`（最初の利用者向け）。Windows でコマンドラインから動かすときは秘密を DPAPI で暗号化したファイルに保存し、ごみ箱・フォルダ選択は PowerShell で行う
 
 ## 実装範囲・提出制御
 - 新しい課題の検出は実行日の前後7日の授業回が対象。授業タイトルの日付、設定済み日程、または大学の学年暦（`dist/academic-calendar.json`、2026秋学期）を使う。学年暦は授業ページの「（金曜／2限）」表記から曜日を読み、祝日・休講日を除いた第1〜15回の日付を未設定の回に入れる
