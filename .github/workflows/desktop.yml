@@ -1,0 +1,28 @@
+name: Desktop app
+# デスクトップアプリ（macOS・Windows）のインストーラーを作り、GitHub Release に載せる。
+# タグ desktop-v* を押すか、手動で実行する。アプリは Release の最新版を自動で確認して更新する。
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build and publish
+        run: npm run desktop:release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
