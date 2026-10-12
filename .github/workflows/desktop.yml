@@ -1,7 +1,7 @@
 name: Desktop app
 # デスクトップアプリ（macOS・Windows）のインストーラーを 1 つのジョブで作り、GitHub Release に載せて公開する。
-# electron-builder は Release を下書きとして作る（公開済みとして作ろうとすると、タグがまだないため 422 になる）。
-# 配布物が揃ってから gh で下書きを公開し、最新版にする。
+# electron-builder の公開機能は使わない（配布物ごとに Release を作ろうとして同じ版の Release が複数できる）。
+# 作った配布物を gh release create で 1 回でまとめて載せる（タグの作成・公開・最新版の指定まで一度に行う）。
 # タグ desktop-v* を押すか、手動で実行する。アプリは Release の最新版を自動で確認して更新する。
 on:
   push:
@@ -28,9 +28,11 @@ jobs:
         run: |
           gh api repos/${{ github.repository }}/releases --paginate --jq '.[] | select(.tag_name=="${{ steps.version.outputs.tag }}") | .id' | while read -r id; do gh api -X DELETE "repos/${{ github.repository }}/releases/$id"; done
           git push --delete origin "${{ steps.version.outputs.tag }}" 2>/dev/null || true
-      - name: Build and upload (macOS + Windows)
-        run: npx electron-builder --mac --win --publish always
+      - name: Build (macOS + Windows)
+        run: npx electron-builder --mac --win --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      - name: Publish the release
-        run: gh release edit "${{ steps.version.outputs.tag }}" --draft=false --latest --title "saboro ${{ steps.version.outputs.tag }}" --notes "Mac は .dmg（Apple シリコンは arm64、Intel は x64）、Windows は .exe を入れてください。署名していないため、Mac は初回に右クリック → 開く、Windows は SmartScreen の「詳細情報 → 実行」が必要です。"
+      - name: Create the release with every installer
+        run: |
+          ls -la release
+          gh release create "${{ steps.version.outputs.tag }}" --target "${{ github.sha }}" --latest --title "saboro ${{ steps.version.outputs.tag }}" --notes "Mac は .dmg（Apple シリコンは arm64、Intel は x64）、Windows は .exe を入れてください。署名していないため、Mac は初回に右クリック → 開く、Windows は SmartScreen の「詳細情報 → 実行」が必要です。" release/*.dmg release/*.zip release/*.blockmap release/*.exe release/latest*.yml
