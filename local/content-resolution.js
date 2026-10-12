@@ -25,3 +25,7 @@ export const isLate=e=>LATE.test(e.title||e.name||'');
 export const regularOnly=entries=>entries.some(e=>!isLate(e))?entries.filter(e=>!isLate(e)):entries;
 // 別枠に結びついた課題を戻す先：同じ種類（レポート・クイズ・掲示板）の通常の提出先が 1 つだけならそれ
 export function regularFor(late,entries){const type=u=>/\/quiz\//.test(u)?'クイズ':/\/board\//.test(u)?'掲示板':'レポート';const c=entries.filter(e=>!isLate(e)&&type(e.url)===type(late.url));return c.length===1?c[0]:null}
+// 期限後提出用・やむを得ない事情のみの予備の提出先（予備の課題フォルダ）。課題として扱わない
+export const SPARE=/期限後|やむを得ない|遅延提出|遅れて提出|再提出用/;
+// manabo から集めた課題のうち、題名が予備の提出先のものを外す（手で追加した課題は残す）。外したものは archived に返す
+export function dropSpareTasks(tasks){const kept=[],archived=[];for(const t of tasks||[])(SPARE.test(t.title||'')&&/\/content\//.test(t.url||'')?archived:kept).push(t);return {tasks:kept,archived}}
