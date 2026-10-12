@@ -1,5 +1,5 @@
 name: Clean up releases
-# 不要な Release を消す（手動実行）：下書きと、配布物（.dmg / .exe）のない Release。最新の公開版は消さない。
+# 配布用リポジトリ Peyangpiece/SaBoRo の不要な Release を消す（手動実行）：下書きと、配布物（.dmg / .exe）のない Release。最新の公開版は消さない。
 on:
   workflow_dispatch:
 jobs:
@@ -8,15 +8,15 @@ jobs:
     permissions:
       contents: write
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.SABORO_RELEASE_TOKEN }}
+      DIST_REPO: Peyangpiece/SaBoRo
     steps:
-      - uses: actions/checkout@v4
       - name: Delete drafts and releases without installers
         run: |
-          latest=$(gh api repos/${{ github.repository }}/releases/latest --jq .id 2>/dev/null || echo "")
-          gh api repos/${{ github.repository }}/releases --paginate --jq '.[] | select(.draft or ([.assets[].name | select(test("\\.(dmg|exe)$"))] | length) == 0) | "\(.id) \(.tag_name) \(.draft)"' | while read -r id tag draft; do
+          latest=$(gh api repos/$DIST_REPO/releases/latest --jq .id 2>/dev/null || echo "")
+          gh api repos/$DIST_REPO/releases --paginate --jq '.[] | select(.draft or ([.assets[].name | select(test("\\.(dmg|exe)$"))] | length) == 0) | "\(.id) \(.tag_name) \(.draft)"' | while read -r id tag draft; do
             if [ "$id" = "$latest" ]; then echo "keep latest $tag"; continue; fi
             echo "delete $tag (id $id, draft=$draft)"
-            gh api -X DELETE "repos/${{ github.repository }}/releases/$id"
-            if [ "$draft" = "false" ]; then git push origin --delete "$tag" 2>/dev/null || true; fi
+            gh api -X DELETE "repos/$DIST_REPO/releases/$id"
+            if [ "$draft" = "false" ]; then gh api -X DELETE "repos/$DIST_REPO/git/refs/tags/$tag" 2>/dev/null || true; fi
           done

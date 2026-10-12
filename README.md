@@ -17,7 +17,7 @@ manabo自動連携は、各自の Mac に入れたサービスと接続キーで
 - 認証情報・接続キー: macOSキーチェーン。平文パスワードはクラウドへ送信しない。公開設定はRSA-OAEP + AES-GCMで暗号化し、登録Macだけが復号する
 
 ## セットアップ（デスクトップアプリ：Mac・Windows）
-GitHub の Release（https://github.com/Peyangpiece/coursecue/releases/latest ）から自分の OS 用を入れる（Mac は `.dmg`、Windows は `.exe`）。起動すると常駐し（メニューバー／タスクトレイ）、ログイン時に自動で立ち上がる。初回は manabo 用のブラウザ（Chromium）を取り込む（数分）。その後に開く「はじめの設定」で済ませるのは 3 つだけ：
+GitHub の Release（https://github.com/Peyangpiece/SaBoRo/releases/latest ）から自分の OS 用を入れる（Mac は `.dmg`、Windows は `.exe`）。起動すると常駐し（メニューバー／タスクトレイ）、ログイン時に自動で立ち上がる。初回は manabo 用のブラウザ（Chromium）を取り込む（数分）。その後に開く「はじめの設定」で済ませるのは 3 つだけ：
 1. manabo のログイン ID とパスワードを保存する（このパソコンの中だけに暗号化して保存。Mac はキーチェーン、Windows は DPAPI。保存と同時に manabo への接続を確認）
 2. AI との連携を確認する。Codex（ChatGPT アプリ）または Claude Code にログイン済みならそのまま使える。どちらもなければ Claude API のキーを入れる（その場で使えるか確認してから保存）
 3. 「saboroを接続」でアプリ内の画面を saboro に接続する

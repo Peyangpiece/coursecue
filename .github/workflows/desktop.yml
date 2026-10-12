@@ -1,5 +1,7 @@
 name: Desktop app
-# デスクトップアプリ（macOS・Windows）のインストーラーを 1 つのジョブで作り、GitHub Release に載せて公開する。
+# デスクトップアプリ（macOS・Windows）のインストーラーを 1 つのジョブで作り、配布用の公開リポジトリ Peyangpiece/SaBoRo の Release に載せる。
+# このリポジトリは非公開で、ログインしていない人には Release が 404 になるため、配布物だけを公開リポジトリに置く。
+# 別のリポジトリに書き込むので、SaBoRo の Contents に書き込める個人アクセストークンを secrets.SABORO_RELEASE_TOKEN に入れておく。
 # electron-builder の公開機能は使わない（配布物ごとに Release を作ろうとして同じ版の Release が複数できる）。
 # 作った配布物を gh release create で 1 回でまとめて載せる（タグの作成・公開・最新版の指定まで一度に行う）。
 # タグ desktop-v* を押すか、手動で実行する。アプリは Release の最新版を自動で確認して更新する。
@@ -13,7 +15,8 @@ jobs:
     permissions:
       contents: write
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.SABORO_RELEASE_TOKEN }}
+      DIST_REPO: Peyangpiece/SaBoRo
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,8 +29,8 @@ jobs:
       # 同じ版の作りかけ（下書き・配布物のない Release）が残っていれば消してから作る
       - name: Remove stale release for this version
         run: |
-          gh api repos/${{ github.repository }}/releases --paginate --jq '.[] | select(.tag_name=="${{ steps.version.outputs.tag }}") | .id' | while read -r id; do gh api -X DELETE "repos/${{ github.repository }}/releases/$id"; done
-          git push --delete origin "${{ steps.version.outputs.tag }}" 2>/dev/null || true
+          gh api repos/$DIST_REPO/releases --paginate --jq '.[] | select(.tag_name=="${{ steps.version.outputs.tag }}") | .id' | while read -r id; do gh api -X DELETE "repos/$DIST_REPO/releases/$id"; done
+          gh api -X DELETE "repos/$DIST_REPO/git/refs/tags/${{ steps.version.outputs.tag }}" 2>/dev/null || true
       # Mac は ad-hoc 署名（package.json の mac.identity: "-"）。署名がないと Apple シリコンでは「壊れているため開けません」になる
       - name: Build (macOS + Windows)
         run: npx electron-builder --mac --win --publish never
@@ -36,4 +39,4 @@ jobs:
       - name: Create the release with every installer
         run: |
           ls -la release
-          gh release create "${{ steps.version.outputs.tag }}" --target "${{ github.sha }}" --latest --title "saboro ${{ steps.version.outputs.tag }}" --notes "Mac は .dmg（Apple シリコンは arm64、Intel は x64）、Windows は .exe を入れてください。Apple の署名がないため、Mac は初回に開こうとして止められたあと「システム設定 → プライバシーとセキュリティ」の「このまま開く」、Windows は SmartScreen の「詳細情報 → 実行」が必要です。" release/*.dmg release/*.zip release/*.blockmap release/*.exe release/latest*.yml
+          gh release create "${{ steps.version.outputs.tag }}" --repo "$DIST_REPO" --latest --title "saboro ${{ steps.version.outputs.tag }}" --notes "Mac は .dmg（Apple シリコンは arm64、Intel は x64）、Windows は .exe を入れてください。Apple の署名がないため、Mac は初回に開こうとして止められたあと「システム設定 → プライバシーとセキュリティ」の「このまま開く」、Windows は SmartScreen の「詳細情報 → 実行」が必要です。" release/*.dmg release/*.zip release/*.blockmap release/*.exe release/latest*.yml
