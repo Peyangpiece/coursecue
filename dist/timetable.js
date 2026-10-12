@@ -8,7 +8,7 @@ const addDays=(iso,n)=>{const d=new Date(iso+'T00:00:00Z');d.setUTCDate(d.getUTC
 const dayLabel=iso=>{const d=new Date(iso+'T00:00:00Z');return `${d.getUTCMonth()+1}/${d.getUTCDate()}(${'日月火水木金土'[d.getUTCDay()]})`};
 // 日曜は翌週（これからの授業）を表示する
 const weekStart=()=>{const t=todayISO(),day=new Date(t+'T00:00:00Z').getUTCDay();return addDays(t,(day===0?1:-(day-1))+7*weekOffset)};
-const courseId=i=>key?courseIds[i]:null;
+const courseId=i=>key?(courseIdOf(i)||null):null;
 // 授業ごとの設定（曜日・時限は manabo から自動取得したものを既定にする）
 // 優先順：自分で設定した値 → CUBICS（大学の時間割） → ガイダンス資料から読み取った値（根拠あり） → manabo の表記
 // 授業形式は 自分で設定した値 → 資料 → CUBICS からの推定。CUBICS で教室が割り当てられていれば対面、
