@@ -6,7 +6,7 @@ const userData=app.getPath('userData'),docs=app.getPath('documents');
 const root=join(docs,'saboro'),work=join(userData,'work'),browsers=join(userData,'pw-browsers');
 const apiBase=process.env.COURSECUE_API||'https://coursecue.hrk-6888.workers.dev';
 const single=app.requestSingleInstanceLock();if(!single)app.quit();
-let win=null,tray=null,status='起動中…',ready=false;
+let win=null,tray=null,status='起動中…',ready=false,newer=null;
 // 暗号化した秘密の保存（safeStorage：macOS はキーチェーン、Windows は DPAPI）
 const secretsFile=join(userData,'secrets.json');
 function loadSecrets(){try{return JSON.parse(readFileSync(secretsFile,'utf8'))}catch{return {}}}
@@ -24,7 +24,7 @@ function home(){return !ready?page(`<h1>saboro</h1><p>${status}</p>`):secrets.ge
 function focusWindow(){if(!app.isReady())return;if(win&&!win.isDestroyed()){if(win.isMinimized())win.restore();win.show();win.focus()}else openWindow(home())}
 function openWindow(url){if(win&&!win.isDestroyed()){win.loadURL(url);win.show();win.focus();return}win=new BrowserWindow({width:1100,height:820,title:'saboro',webPreferences:{contextIsolation:true,sandbox:true}});win.webContents.setWindowOpenHandler(openLink);win.loadURL(url);win.on('closed',()=>{win=null})}
 function showStatus(text){status=text;if(win&&!win.isDestroyed()&&win.webContents.getURL().startsWith('data:'))win.loadURL(page(`<h1>saboro</h1><p>${text}</p>`));refreshTray()}
-function refreshTray(){if(!tray)return;tray.setContextMenu(Menu.buildFromTemplate([{label:'saboro を開く',click:()=>openWindow(home())},{label:'設定',click:()=>openWindow('http://127.0.0.1:8766/setup')},{label:'資料のフォルダを開く',click:()=>shell.openPath(root)},{type:'separator'},{label:status,enabled:false},{type:'separator'},{label:'終了',click:()=>app.exit(0)}]));tray.setToolTip('saboro：'+status)}
+function refreshTray(){if(!tray)return;tray.setContextMenu(Menu.buildFromTemplate([{label:'saboro を開く',click:()=>openWindow(home())},{label:'設定',click:()=>openWindow('http://127.0.0.1:8766/setup')},{label:'資料のフォルダを開く',click:()=>shell.openPath(root)},...(newer?[{type:'separator'},{label:`新しい版 ${newer} をダウンロード`,click:()=>shell.openExternal(releasePage)}]:[]),{type:'separator'},{label:status,enabled:false},{type:'separator'},{label:'終了',click:()=>app.exit(0)}]));tray.setToolTip('saboro：'+status)}
 // 新しいウィンドウで開くリンク：「はじめの設定」はこの画面で開き、それ以外（ダウンロード・manabo・「ブラウザで開く」など）は既定のブラウザで開く
 function openLink({url}){if(url==='http://127.0.0.1:8766/setup')openWindow(url);else if(/^https?:\/\//.test(url))shell.openExternal(url);return {action:'deny'}}
 // 以前に入れた Mac サービス（launchd の jp.coursecue.bridge）や手で動かしたサービス（npm start）が同じポート（8766）を使っていると起動できないため、確認してから止める
@@ -41,6 +41,11 @@ function ensureBrowser(){return new Promise((resolve,reject)=>{const marker=join
 async function start(){tray=new Tray(nativeImage.createFromPath(join(repo,'dist/icon-512.png')).resize({width:18,height:18}));refreshTray();openWindow(page('<h1>saboro</h1><p>起動中…</p>'));mkdirSync(root,{recursive:true});mkdirSync(work,{recursive:true});
 Object.assign(process.env,{COURSECUE_ROOT:root,COURSECUE_WORK:work,COURSECUE_AUTO_UPDATE:'0',COURSECUE_VERSION:app.getVersion(),PLAYWRIGHT_BROWSERS_PATH:browsers,COURSECUE_API:apiBase});
 try{await stopOldAgent();await ensureBrowser();showStatus('サービスを起動しています…');await waitPort();await import(join(repo,'local/bridge.js'));ready=true;showStatus('動作中');app.setLoginItemSettings({openAtLogin:true});openWindow(home())}catch(e){showStatus('起動に失敗：'+String(e.message).slice(0,120));dialog.showErrorBox('saboro を起動できません',String(e.message))}
-try{const {default:updater}=await import('electron-updater');updater.autoUpdater.logger=null;updater.autoUpdater.checkForUpdatesAndNotify().catch(()=>{});setInterval(()=>updater.autoUpdater.checkForUpdatesAndNotify().catch(()=>{}),6*3600*1000)}catch{}}
+// 新しい版の確認（起動時と 6 時間ごと）。Windows は自動で入れ替える。Mac は Apple の署名がないと入れ替えられないので、ダウンロードはせず知らせるだけにする
+try{const {default:updater}=await import('electron-updater'),u=updater.autoUpdater;u.logger=null;if(process.platform==='darwin')u.autoDownload=false;const check=()=>process.platform==='darwin'?u.checkForUpdates().then(r=>{const v=r?.updateInfo?.version;if(v&&isNewer(v,app.getVersion()))announce(v)}).catch(()=>{}):u.checkForUpdatesAndNotify().catch(()=>{});check();setInterval(check,6*3600*1000)}catch{}}
+const releasePage='https://github.com/Peyangpiece/coursecue/releases/latest';
+const isNewer=(a,b)=>{const x=String(a).split('.').map(Number),y=String(b).split('.').map(Number);for(let i=0;i<3;i++){if((x[i]||0)!==(y[i]||0))return (x[i]||0)>(y[i]||0)}return false};
+// 新しい版を知らせる：メニューバーに「新しい版をダウンロード」を出し、案内の画面は版ごとに 1 回だけ出す
+async function announce(version){newer=version;refreshTray();const file=join(userData,'update-notified.json');let seen='';try{seen=JSON.parse(readFileSync(file,'utf8')).version}catch{}if(seen===version)return;try{writeFileSync(file,JSON.stringify({version}))}catch{}const r=await dialog.showMessageBox({type:'info',buttons:['ダウンロードのページを開く','あとで'],defaultId:0,cancelId:1,message:`saboro の新しい版 ${version} があります`,detail:`いまの版は ${app.getVersion()} です。Mac では自動で入れ替わらないので、saboro を終了してから、新しい版の .dmg を「アプリケーション」に入れ直してください。設定や資料はそのまま残ります。あとで入れるときは、メニューバーの saboro から「新しい版をダウンロード」を選べます。`});if(r.response===0)shell.openExternal(releasePage)}
 // 2 つ目に起動したときは、1 つ目の画面を前に出すだけで終わる（app.quit() はすぐには終わらないため、その間に start が動くと、1 つ目が使っているポートで「起動に失敗」と出る）
 if(single){app.on('second-instance',focusWindow);app.on('window-all-closed',()=>{});app.on('activate',focusWindow);app.whenReady().then(start)}
