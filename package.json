@@ -30,7 +30,7 @@
     "playwright": "^1.64.0",
     "electron-updater": "^6.8.9"
   },
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "saboro デスクトップ：授業・課題・提出状況・出席を管理する",
   "main": "desktop/main.js",
   "build": {
@@ -58,7 +58,8 @@
     "publish": {
       "provider": "github",
       "owner": "Peyangpiece",
-      "repo": "coursecue"
+      "repo": "coursecue",
+      "releaseType": "release"
     },
     "mac": {
       "category": "public.app-category.education",

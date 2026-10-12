@@ -24,7 +24,7 @@ GitHub の Release（https://github.com/Peyangpiece/coursecue/releases/latest �
 
 授業の一覧・授業日・課題・締切・資料は接続後の同期で manabo から自動で集める。資料は「書類（Documents）/saboro/<授業名>/」に保存する。アプリは Release の最新版を自動で確認して更新する（Mac は署名がないため自動更新が効かず、新しい版を入れ直す。Apple Developer の署名を CI の `CSC_LINK` に設定すれば自動更新が有効になる）。配布物は署名していないので、Mac では初回に「右クリック → 開く」、Windows では SmartScreen の「詳細情報 → 実行」が必要
 - アプリの作り：`desktop/main.js`（Electron）。OS 固有の処理（秘密の保存・ファイルを開く・ゴミ箱・フォルダ選択・再起動）は `local/platform.js` の組を `globalThis.saboroPlatform` で差し替える。アプリ本体は `local/bridge.js` をそのまま動かし、`COURSECUE_ROOT`（資料の場所）・`COURSECUE_WORK`（作業場所）・`PLAYWRIGHT_BROWSERS_PATH` を渡す。git による自動更新はアプリでは無効
-- 配布物の作成：`.github/workflows/desktop.yml`（タグ `desktop-v*` または手動）で macOS・Windows のインストーラーを作り Release に載せる。手元では `npm run desktop`（起動）／`npm run desktop:build`
+- 配布物の作成：`.github/workflows/desktop.yml`（タグ `desktop-v*` または手動）で macOS・Windows のインストーラーを作り Release に載せる（1 つのジョブで両方を作り、公開済みの Release にする。版は `package.json` の `version`）。手元では `npm run desktop`（起動）／`npm run desktop:build`
 
 ### コマンドラインでの導入（Mac、開発者向け）
 ```
