@@ -1,3 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync,readdirSync} from 'node:fs';
 // デスクトップアプリの配布物に、local/ が実行時に読む dist/ のファイルがすべて入っていること（抜けると起動時に ENOENT で止まる）
 test('デスクトップアプリの配布物に、実行時に読む dist のファイルが入っている',()=>{const files=JSON.parse(readFileSync('package.json','utf8')).build.files;const used=new Set();for(const name of readdirSync('local').filter(f=>f.endsWith('.js'))){const src=readFileSync('local/'+name,'utf8');for(const m of src.matchAll(/new URL\('\.\.\/(dist\/[^']+)'|join\(repo,'(dist\/[^']+)'\)/g))used.add(m[1]||m[2])}assert(used.has('dist/academic-calendar.json'));for(const f of used)assert(files.includes(f),`package.json の build.files に ${f} がありません`)});
+// Windows の新しい版は終了するときに入れ替わる（electron-updater は app の quit で終了コード 0 のときだけ入れ替える）。メニューの「終了」は app.quit() で終えること
+test('メニューの「終了」は app.quit() で終え、ダウンロード済みの新しい版を入れ替えられる',()=>{const src=readFileSync('desktop/main.js','utf8');assert.match(src,/label:'終了',click:\(\)=>app\.quit\(\)/);assert.match(src,/u\.on\('update-downloaded'/);assert.match(src,/quitAndInstall\(true,true\)/)});
