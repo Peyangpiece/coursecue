@@ -18,15 +18,15 @@ export function mergeCourses(courses,links){const out=courses.map(c=>({...c}));f
 // 授業の削除：一覧の並び（t.course の番号）は変えずに removed を付け、以後の同期では読まない。課題と資料の記録は removedCourseData に移し、元に戻すときに戻す（ダウンロード済みのファイルは消さない）
 export function removeCourse(state,name){if(!state.courses)state.courses=courseList(state).map(c=>({...c}));const i=state.courses.findIndex(c=>c.name===name);if(i<0)throw Error('授業がありません');const c=state.courses[i];if(c.removed)return {tasks:0};c.removed=true;c.removedAt=new Date().toISOString();const tasks=(state.tasks||[]).filter(t=>t.course===i),materials=(state.materials||[]).filter(m=>m.course===name);state.tasks=(state.tasks||[]).filter(t=>t.course!==i);state.materials=(state.materials||[]).filter(m=>m.course!==name);state.removedCourseData={...state.removedCourseData,[name]:{tasks,materials}};return {tasks:tasks.length}}
 export function restoreCourse(state,name){const c=(state.courses||[]).find(c=>c.name===name);if(!c)throw Error('授業がありません');if(!c.removed)return;delete c.removed;delete c.removedAt;const kept=state.removedCourseData?.[name];if(kept){state.tasks=[...(state.tasks||[]),...kept.tasks];state.materials=[...(state.materials||[]),...kept.materials];const {[name]:_,...rest}=state.removedCourseData;state.removedCourseData=rest}}
-// 授業の AI 利用の方針。資料・シラバスに「生成AIの使用を禁止」などの記載があれば禁止とする（AI がない端末でも判断できるよう文の照合で行う）
-// 禁止の授業でも回答は参考として作るが、saboro から manabo への提出・入力はしない。記載のない授業はこれまでどおり
+// 課題の AI 利用の方針。その回の授業資料と課題の説明に「生成AIの使用を禁止」などの記載があれば禁止とする（AI がない端末でも判断できるよう文の照合で行う）
+// 禁止の回の課題でも回答は参考として作るが、saboro から manabo への提出はしない（レポート・掲示板は入力もしない。クイズは回答の入力まで行い、提出は本人）。記載のない回はこれまでどおり
 const AI_WORD='(?:生成\\s*AI|生成系\\s*AI|対話型\\s*AI|ChatGPT|Chat\\s*GPT|Copilot|Gemini|Claude|AI\\s*ツール|人工知能|(?<![A-Za-z])AI(?![A-Za-z]))';
 const AI_FORBID=new RegExp(`${AI_WORD}[^。\\n]{0,40}(?:禁止|不可|認めない|認められない|認めません|(?:使用|利用|使)(?:わ|し)?ないこと|(?:使用|利用)(?:は|を)?(?:しない|できない|できません)|用いないこと|用いてはいけない|使ってはいけない)|(?:禁止|不可)[^。\\n]{0,20}${AI_WORD}`);
 const AI_ALLOWED=/禁止(?:し|では|は)?(?:ない|ありません|しません)|不可ではない|(?:使用|利用|使)して(?:も)?(?:よい|良い|構わない|かまわない|可)|許可|認め(?:る|ます)(?!ん)|活用してください|使ってください/;
 export function aiPolicyFrom(sources){for(const m of sources||[]){for(const line of String(m.text||'').split(/\n|。/)){const l=line.replace(/\s+/g,' ').trim();if(l&&AI_FORBID.test(l)&&!AI_ALLOWED.test(l))return {forbidden:true,evidence:l.slice(0,200),file:m.file}}}return null}
-// 自分の設定（授業の設定の「AI の利用」）があればそれを、なければ資料から判断した結果を使う
-export function aiForbidden(state,name){const own=state?.timetable?.[name]?.ai;if(own==='禁止')return true;if(own==='許可')return false;return !!state?.aiPolicy?.[name]?.forbidden}
-export const AI_FORBIDDEN_ACTION='AI の利用が禁止されている授業です。この回答は参考です。自分で書いて manabo で提出してください（saboro からは提出しません）';
+// 自分の設定（授業の設定の「AI の利用」）があればそれを、なければその回の資料から判断した結果（t.aiPolicy）を使う
+export function aiForbidden(state,t,name){const own=state?.timetable?.[name]?.ai;if(own==='禁止')return true;if(own==='許可')return false;return !!t?.aiPolicy?.forbidden}
+export const AI_FORBIDDEN_ACTION='この回は AI の利用が禁止されています。この回答は参考です。自分で書いて manabo で提出してください（saboro からは提出しません）';
 export function findClassLinks(links,names){const out={};for(const name of names){const k=nameKey(name);const hit=links.filter(l=>nameKey(l.text).includes(k)).map(l=>String(l.href||'').match(/\/class\/(\d+)/)?.[1]).filter(Boolean);if(new Set(hit).size===1)out[name]=hit[0]}return out}
 export const hash=v=>createHash('sha256').update(v).digest('hex');
 export const validLms=v=>{const u=new URL(v,LMS);if(u.origin!==LMS)throw Error('許可されていないURL');return u.href};
