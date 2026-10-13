@@ -31,6 +31,18 @@ jobs:
         run: |
           gh api repos/$DIST_REPO/releases --paginate --jq '.[] | select(.tag_name=="${{ steps.version.outputs.tag }}") | .id' | while read -r id; do gh api -X DELETE "repos/$DIST_REPO/releases/$id"; done
           gh api -X DELETE "repos/$DIST_REPO/git/refs/tags/${{ steps.version.outputs.tag }}" 2>/dev/null || true
+      # PDF の読み取り（pdf-parse）が使う @napi-rs/canvas は OS・CPU ごとに別のパッケージで、npm ci はこの Mac（Apple シリコン）用しか入れない。
+      # 入っていないと Windows と Intel Mac で起動時に「DOMMatrix is not defined」になるため、配る分をすべて取り込む（版は package-lock.json に合わせる）
+      - name: Add native canvas binaries for every target
+        run: |
+          for pkg in canvas-win32-x64-msvc canvas-darwin-x64 canvas-darwin-arm64; do
+            dir="node_modules/@napi-rs/$pkg"
+            [ -d "$dir" ] && continue
+            ver=$(node -p "require('./package-lock.json').packages['node_modules/@napi-rs/$pkg'].version")
+            mkdir -p "$dir"
+            curl -fsSL "https://registry.npmjs.org/@napi-rs/$pkg/-/$pkg-$ver.tgz" | tar -xz -C "$dir" --strip-components=1
+          done
+          ls node_modules/@napi-rs/
       # Mac は ad-hoc 署名（package.json の mac.identity: "-"）。署名がないと Apple シリコンでは「壊れているため開けません」になる
       - name: Build (macOS + Windows)
         run: npx electron-builder --mac --win --publish never
