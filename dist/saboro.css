@@ -361,3 +361,7 @@ details summary{cursor:pointer}
 .help p{margin:4px 0 0}
 /* 授業の設定：未設定（—）の項目はスマホでは出さない */
 @media (max-width:767px){.table-stack td.unset{display:none}}
+
+/* AI の利用が禁止されている授業の案内（課題の詳細） */
+.ai-forbidden{margin:12px 0 0;padding:8px 10px;background:#fff6e5;border:1px solid #f0c36d;border-radius:4px;line-height:1.6}
+.ai-forbidden small{display:block;margin-top:4px;color:var(--muted)}
