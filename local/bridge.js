@@ -32,5 +32,7 @@ async function tick(){if(running)return;try{const job=await api('/api/agent/clai
 // 再起動。launchd（npm run install:agent）配下なら終了するだけで KeepAlive が起動し直す。npm start で動かしているときは、新しい版のプロセスを自分で起こしてから終了する
 function restart(){if(platform.restart){platform.restart();return}const underLaunchd=process.env.COURSECUE_LAUNCHD=='1'||/coursecue/i.test(process.env.XPC_SERVICE_NAME||'');if(!underLaunchd){const child=spawn(process.execPath,[fileURLToPath(import.meta.url)],{cwd:repo,detached:true,stdio:'inherit',env:{...process.env,COURSECUE_RESTARTED:'1'}});child.unref()}process.exit(0)}
 async function autoUpdate(){if(running||process.env.COURSECUE_AUTO_UPDATE==='0')return;try{const r=updateToDeployed({repo});if(r==='updated'){console.error('saboro: 公開版に更新しました。再起動します');restart()}if(r.startsWith('skipped:'))console.error('saboro: 自動更新しません（'+r.slice(8)+'）');return r}catch(e){console.error('saboro: 自動更新を確認できません',String(e.message).split('\n')[0]);return 'error'}}
+// 起動した直後は何も処理していない。前回が処理の途中で終わった（終了・更新での入れ替えなど）と state.json に「処理中」が残り、画面が「同期中…」のままになるので消す
+if(state.running)state.running=null;
 state.runtime=platform.version?'desktop':'cli';state.os=platform.name;if(platform.version)state.version=platform.version;else try{state.version=execFileSync('git',['rev-parse','HEAD'],{cwd:repo}).toString().trim()}catch{}
 await lms.trashDuplicates().catch(e=>console.error('saboro: 複製の整理に失敗',String(e.message)));await save().catch(()=>{});setInterval(tick,5000);setInterval(autoUpdate,10*60*1000);await tick();await autoUpdate();
