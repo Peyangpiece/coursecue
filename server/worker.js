@@ -1,5 +1,5 @@
 const origins=['https://coursecue.hrk-6888.workers.dev','https://coursecue-2026.web.app'];
-const KINDS=['sync','generate','submit','supplement','settings','credentials','verify','timetable','link'];
+const KINDS=['sync','generate','submit','supplement','settings','credentials','verify','timetable','link','attendance'];
 const json=(data,status=200,origin='')=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Access-Control-Allow-Origin':origins.includes(origin)?origin:origins[0],'Access-Control-Allow-Headers':'Authorization,Content-Type','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Vary':'Origin'}});
 const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
 export const sha256=async v=>hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)));
