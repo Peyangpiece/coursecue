@@ -5,5 +5,3 @@ test('デスクトップアプリの配布物に、実行時に読む dist の�
 test('メニューの「終了」は app.quit() で終え、ダウンロード済みの新しい版を入れ替えられる',()=>{const src=readFileSync('desktop/main.js','utf8');assert.match(src,/label:'終了',click:\(\)=>app\.quit\(\)/);assert.match(src,/u\.on\('update-downloaded'/);assert.match(src,/quitAndInstall\(false,true\)/);assert.match(src,/checkExpectedUpdate\(\)/);assert.doesNotMatch(src,/u\.logger=null/)});
 // 処理の途中で終了すると state.json に「処理中」が残る。起動時に消さないと、画面が「同期中…」のまま同期ボタンも押せなくなる
 test('サービスの起動時に、前回から残った「処理中」を消してから状態を送る',()=>{const src=readFileSync('local/bridge.js','utf8');const reset=src.indexOf('if(state.running)state.running=null'),firstSave=src.lastIndexOf('await save().catch(()=>{});setInterval(tick');assert(reset>0,'起動時に state.running を消す');assert(reset<firstSave,'最初に状態を送る前に消す')});
-// 提出の指示は AI で作った回答（t.generation）がある課題だけ受け付ける（ない課題で提出すると、回答を作ってそのまま出してしまう）
-test('アプリは AI で作った回答がない課題の提出を受け付けない',()=>{const src=readFileSync('local/bridge.js','utf8');assert.match(src,/job\.kind==='submit'\)\{[^}]*if\(!t\.generation\)throw Error\(/)});

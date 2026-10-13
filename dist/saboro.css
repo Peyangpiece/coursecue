@@ -361,4 +361,3 @@ details summary{cursor:pointer}
 .help p{margin:4px 0 0}
 /* 授業の設定：未設定（—）の項目はスマホでは出さない */
 @media (max-width:767px){.table-stack td.unset{display:none}}
-.no-submit{margin:12px 0 0;padding:8px 10px;background:#f9f9f9;border:1px solid #ddd;border-radius:4px}
