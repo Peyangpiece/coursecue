@@ -335,3 +335,33 @@ details summary{cursor:pointer}
 
 .notes{margin:0;padding-left:1.4em}
 .notes li{margin:4px 0}
+
+/* 要確認：ホーム上部の確認事項を 1 枚にまとめる */
+.attention h2{margin:0 0 6px;font-size:14px;font-weight:700}
+.attention-count{display:inline-block;min-width:18px;padding:1px 6px;border-radius:10px;background:var(--amber);color:#fff;font-size:12px;text-align:center}
+.attention ul{margin:0;padding-left:1.3em}
+.attention li{margin:3px 0;line-height:1.6}
+.attention-note{margin-top:6px;font-size:12px;color:var(--muted)}
+.attention-note p{margin:4px 0 0}
+
+/* 課題の操作：提出は取り消せないので右端に離し、目立つ色にする */
+.actions .submit-btn{margin-left:auto}
+
+/* 概要：「うち〜」は未提出の内訳 */
+.stat-sub .stat-label{color:var(--muted)}
+
+/* 設定：保存ボタンの対象と、授業の整理 */
+.save-scope{align-self:center;font-size:12px}
+.course-manage{margin:8px 0 0;padding:0;list-style:none}
+.course-manage li{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px dotted #ccc}
+
+/* 説明は一文にして、詳しくは折りたたむ */
+.help{margin-top:6px;font-size:12px;color:var(--muted)}
+.help summary{cursor:pointer}
+.help p{margin:4px 0 0}
+/* 授業の設定：未設定（—）の項目はスマホでは出さない */
+@media (max-width:767px){.table-stack td.unset{display:none}}
+
+/* AI の利用が禁止されている授業の案内（課題の詳細） */
+.ai-forbidden{margin:12px 0 0;padding:8px 10px;background:#fff6e5;border:1px solid #f0c36d;border-radius:4px;line-height:1.6}
+.ai-forbidden small{display:block;margin-top:4px;color:var(--muted)}
