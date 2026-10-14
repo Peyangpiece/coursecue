@@ -1,3 +1,4 @@
+import {handleAdmin} from './admin.js';
 const origins=['https://coursecue.hrk-6888.workers.dev','https://coursecue-2026.web.app'];
 const KINDS=['sync','generate','submit','supplement','settings','credentials','verify','timetable','link','attendance'];
 const json=(data,status=200,origin='')=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Access-Control-Allow-Origin':origins.includes(origin)?origin:origins[0],'Access-Control-Allow-Headers':'Authorization,Content-Type','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Vary':'Origin'}});
@@ -14,16 +15,37 @@ export function d1Store(db){return {
  async claimJob(account,now){return db.prepare("UPDATE account_jobs SET status='running',updated=? WHERE id=(SELECT id FROM account_jobs WHERE account=? AND status='pending' ORDER BY created LIMIT 1) AND status='pending' RETURNING *").bind(now,account).first()},
  async finishJob(account,id,status,result,now){await db.prepare("UPDATE account_jobs SET status=?,result=?,updated=?,payload=CASE WHEN kind='credentials' THEN '{}' ELSE payload END WHERE id=? AND account=? AND status='running'").bind(status,result,now,id,account).run()},
  async findAccount(hash){const row=await db.prepare('SELECT id,owner_hash,device_hash FROM accounts WHERE owner_hash=? OR device_hash=?').bind(hash,hash).first();return row?{id:row.id,role:row.owner_hash===hash?'owner':'device'}:null},
- async createAccount(a){await db.prepare('INSERT INTO accounts(id,owner_hash,device_hash,created) VALUES(?,?,?,?)').bind(a.id,a.ownerHash,a.deviceHash,a.created).run()}}}
+ async createAccount(a){await db.prepare('INSERT INTO accounts(id,owner_hash,device_hash,created) VALUES(?,?,?,?)').bind(a.id,a.ownerHash,a.deviceHash,a.created).run()},
+ // 管理者画面：状態からは件数・最終接続・版・使用量の集計だけを取り出す（最初の利用者 legacy は accounts にないので状態から足す）
+ async adminUsers(){const cols="json_extract(s.value,'$.deviceSeen') AS seen,json_extract(s.value,'$.os') AS os,json_extract(s.value,'$.version') AS version,json_extract(s.value,'$.runtime') AS runtime,json_extract(s.value,'$.lastSync') AS last_sync,json_extract(s.value,'$.credentialsConfigured') AS creds,json_array_length(s.value,'$.tasks') AS tasks,json_array_length(s.value,'$.courses') AS courses,json_extract(s.value,'$.lastError') AS last_error,json_extract(s.value,'$.usage') AS usage,u.label,u.plan,u.price,u.status,u.started,u.note";return (await db.prepare(`SELECT a.id AS account,a.created,${cols} FROM accounts a LEFT JOIN account_state s ON s.account=a.id LEFT JOIN admin_users u ON u.account=a.id UNION ALL SELECT s.account,NULL,${cols} FROM account_state s LEFT JOIN admin_users u ON u.account=s.account WHERE s.account='legacy' ORDER BY 2`).all()).results},
+ async hasAccount(id){if(!id)return false;const row=id==='legacy'?await db.prepare("SELECT 1 AS x FROM account_state WHERE account='legacy'").first():await db.prepare('SELECT 1 AS x FROM accounts WHERE id=?').bind(id).first();return !!row},
+ async putAdminUser(r){await db.prepare('INSERT INTO admin_users(account,label,plan,price,status,started,note,updated) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(account) DO UPDATE SET label=excluded.label,plan=excluded.plan,price=excluded.price,status=excluded.status,started=excluded.started,note=excluded.note,updated=excluded.updated').bind(r.account,r.label,r.plan,r.price,r.status,r.started||null,r.note,r.updated).run()},
+ async listPayments(from,to){return (await db.prepare('SELECT id,account,month,amount,method,paid_on,note,created FROM admin_payments WHERE month>=? AND month<=? ORDER BY month DESC,created DESC').bind(from,to).all()).results},
+ async addPayment(p){await db.prepare('INSERT INTO admin_payments(id,account,month,amount,method,paid_on,note,created) VALUES(?,?,?,?,?,?,?,?)').bind(p.id,p.account,p.month,p.amount,p.method,p.paid_on||null,p.note,p.created).run()},
+ async deletePayment(id){await db.prepare('DELETE FROM admin_payments WHERE id=?').bind(id).run()},
+ async listCosts(){return (await db.prepare('SELECT id,item,amount,month,recurring,end_month,note,created FROM admin_costs ORDER BY month,created').all()).results},
+ async addCost(c){await db.prepare('INSERT INTO admin_costs(id,item,amount,month,recurring,note,created) VALUES(?,?,?,?,?,?,?)').bind(c.id,c.item,c.amount,c.month,c.recurring,c.note,c.created).run()},
+ async endCost(id,month){await db.prepare('UPDATE admin_costs SET end_month=? WHERE id=? AND recurring=1').bind(month,id).run()},
+ async deleteCost(id){await db.prepare('DELETE FROM admin_costs WHERE id=?').bind(id).run()},
+ async getAdminSettings(){const out={};for(const r of (await db.prepare('SELECT key,value FROM admin_settings').all()).results){try{out[r.key]=JSON.parse(r.value)}catch{}}return out},
+ async putAdminSettings(v){for(const [k,x] of Object.entries(v))await db.prepare('INSERT INTO admin_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(k,JSON.stringify(x)).run()}}}
 // 記憶上の保存先（テスト用）
-export function memoryStore(){const states=new Map(),jobs=[],accounts=[];return {
+export function memoryStore(){const states=new Map(),jobs=[],accounts=[],admin=new Map(),payments=[],costs=[],settings={};return {
  async getState(a){return states.get(a)??null},async putState(a,v){states.set(a,v)},
  async insertJob(j){jobs.push({...j,status:'pending',result:null})},
  async listJobs(a){return jobs.filter(j=>j.account===a).sort((x,y)=>y.created.localeCompare(x.created)).slice(0,50).map(({account,payload,...j})=>j)},
  async claimJob(a,now){const j=jobs.filter(j=>j.account===a&&j.status==='pending').sort((x,y)=>x.created.localeCompare(y.created))[0];if(!j)return null;j.status='running';j.updated=now;return {...j}},
  async finishJob(a,id,status,result,now){const j=jobs.find(j=>j.id===id&&j.account===a&&j.status==='running');if(j){j.status=status;j.result=result;j.updated=now;if(j.kind==='credentials')j.payload='{}'}},
  async findAccount(h){const a=accounts.find(a=>a.ownerHash===h||a.deviceHash===h);return a?{id:a.id,role:a.ownerHash===h?'owner':'device'}:null},
- async createAccount(a){if(accounts.some(x=>x.ownerHash===a.ownerHash||x.deviceHash===a.deviceHash))throw Error('duplicate');accounts.push(a)}}}
+ async createAccount(a){if(accounts.some(x=>x.ownerHash===a.ownerHash||x.deviceHash===a.deviceHash))throw Error('duplicate');accounts.push(a)},
+ async adminUsers(){const row=(account,created)=>{let v=null;try{v=JSON.parse(states.get(account)||'null')}catch{}const m=admin.get(account)||{};return {account,created,seen:v?.deviceSeen??null,os:v?.os??null,version:v?.version??null,runtime:v?.runtime??null,last_sync:v?.lastSync??null,creds:v?.credentialsConfigured?1:0,tasks:Array.isArray(v?.tasks)?v.tasks.length:null,courses:Array.isArray(v?.courses)?v.courses.length:null,last_error:v?.lastError??null,usage:v?.usage?JSON.stringify(v.usage):null,...m}};return [...accounts.map(a=>row(a.id,a.created)),...(states.has('legacy')?[row('legacy',null)]:[])]},
+ async hasAccount(id){return id==='legacy'?states.has('legacy'):accounts.some(a=>a.id===id)},
+ async putAdminUser(r){const {account,...rest}=r;admin.set(account,rest)},
+ async listPayments(from,to){return payments.filter(p=>p.month>=from&&p.month<=to).sort((a,b)=>b.month.localeCompare(a.month)||b.created.localeCompare(a.created)).map(p=>({...p}))},
+ async addPayment(p){payments.push({...p})},async deletePayment(id){const i=payments.findIndex(p=>p.id===id);if(i>=0)payments.splice(i,1)},
+ async listCosts(){return costs.map(c=>({end_month:null,...c}))},async addCost(c){costs.push({...c})},
+ async endCost(id,month){const c=costs.find(c=>c.id===id&&c.recurring);if(c)c.end_month=month},async deleteCost(id){const i=costs.findIndex(c=>c.id===id);if(i>=0)costs.splice(i,1)},
+ async getAdminSettings(){return {...settings}},async putAdminSettings(v){Object.assign(settings,v)}}}
 // 認証：登録済みの接続キー（owner）または Mac の鍵（device）。環境変数の旧トークンは最初の利用者（legacy）として扱う
 async function authenticate(key,env,store){if(!key)return null;if(await equal(key,env.OWNER_TOKEN))return {id:'legacy',role:'owner'};if(await equal(key,env.DEVICE_TOKEN))return {id:'legacy',role:'device'};if(!TOKEN.test(key))return null;return store.findAccount(await sha256(key))}
 export async function handle(req,env,store){const u=new URL(req.url),origin=req.headers.get('Origin')||'';
@@ -31,6 +53,8 @@ if(!u.pathname.startsWith('/api/'))return env.ASSETS.fetch(req);
 if(origin&&!origins.includes(origin))return json({error:'origin_denied'},403,origin);
 if(req.method==='OPTIONS')return json({},200,origin);
 try{
+// 管理者画面の API（ADMIN_TOKEN で認証。利用者の鍵とは別）
+if(u.pathname.startsWith('/api/admin/'))return await handleAdmin(req,u,env,store,{json,equal,origin});
 // 利用者の登録：Mac のセットアップが作った接続キーと Mac の鍵（どちらも 64 桁の16進）のハッシュだけを保存する
 if(u.pathname==='/api/register'&&req.method==='POST'){const d=await req.json().catch(()=>({}));if(!TOKEN.test(d.owner||'')||!TOKEN.test(d.device||'')||d.owner===d.device)return json({error:'invalid_token'},400,origin);const id=crypto.randomUUID();try{await store.createAccount({id,ownerHash:await sha256(d.owner),deviceHash:await sha256(d.device),created:new Date().toISOString()})}catch{return json({error:'already_registered'},409,origin)}return json({id},201,origin)}
 const key=req.headers.get('Authorization')?.replace(/^Bearer /,'');const who=await authenticate(key,env,store);
