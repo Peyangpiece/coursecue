@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://saboro-site.hrk-6888.workers.dev/sitemap.xml
