@@ -5,3 +5,7 @@ test('デスクトップアプリの配布物に、実行時に読む dist の�
 test('メニューの「終了」は app.quit() で終え、ダウンロード済みの新しい版を入れ替えられる',()=>{const src=readFileSync('desktop/main.js','utf8');assert.match(src,/label:'終了',click:\(\)=>app\.quit\(\)/);assert.match(src,/u\.on\('update-downloaded'/);assert.match(src,/quitAndInstall\(false,true\)/);assert.match(src,/checkExpectedUpdate\(\)/);assert.doesNotMatch(src,/u\.logger=null/)});
 // 処理の途中で終了すると state.json に「処理中」が残る。起動時に消さないと、画面が「同期中…」のまま同期ボタンも押せなくなる
 test('サービスの起動時に、前回から残った「処理中」を消してから状態を送る',()=>{const src=readFileSync('local/bridge.js','utf8');const reset=src.indexOf('if(state.running)state.running=null'),firstSave=src.lastIndexOf('await save().catch(()=>{});setInterval(tick');assert(reset>0,'起動時に state.running を消す');assert(reset<firstSave,'最初に状態を送る前に消す')});
+test('Mac のアプリのメニューは saboro の名前で出す（内部の名前 coursecue を出さない）。app.name は変えない（設定の保存場所・キーチェーンの秘密を守る）',()=>{const src=readFileSync('desktop/main.js','utf8'),fn=src.slice(src.indexOf('function macAppMenu('),src.indexOf('async function start('));
+ for(const l of ["role:'about',label:'saboro について'","role:'hide',label:'saboro を隠す'","role:'quit',label:'saboro を終了'","applicationName:'saboro'"])assert.ok(fn.includes(l),l);
+ for(const r of ['cut','copy','paste','selectAll','undo'])assert.ok(fn.includes(`role:'${r}'`),`編集の操作 ${r} を残す`);assert.match(src,/async function start\(\)\{macAppMenu\(\);/);
+ assert.doesNotMatch(src,/app\.setName\(|app\.name\s*=|"productName"\s*:\s*"saboro",\s*"version"/,'app.name（設定の保存場所・キーチェーンの名前）は変えない');assert.equal(JSON.parse(readFileSync('package.json','utf8')).name,'coursecue')});
