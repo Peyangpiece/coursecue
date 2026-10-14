@@ -21,3 +21,17 @@ test('記述の回答に「です・ます」が残っていれば notes で知�
  assert.deepEqual(cleanAnswer({...base,draft:'',answers:[...base.answers,{name:'essay',value:'とても勉強になりました',values:[],evidence:'e'}]},q).notes,['一般知識で推定',POLITE_NOTE]);
  const twice=cleanAnswer(cleanAnswer({...base,draft:'学びました。'},q),q);assert.equal(twice.notes.filter(n=>n===POLITE_NOTE).length,1,'二度整形しても重ねない');
  assert.equal(politeEnding('先生は「ここが大事です」と述べた。'),false);assert.equal(politeEnding('ますます重要になると考えた。'),false);assert.equal(politeEnding('なぜでしょうか？'),true)});
+// SaBoRo の AI：本人の手段がないときに使う。急ぐ依頼・キーのない依頼はすぐ、それ以外は Batch で、出来上がるまで AiPending
+test('SaBoRo の AI：急ぐ依頼はすぐ、急がない依頼は Batch（同じキーで受け取る）。出来上がるまでは AiPending を投げ、ほかの手段を試さない',async()=>{const {AiPending,createCourseInfoExtractor}=await import('../local/generate.js');const saboroProvider=providers.find(p=>p.name==='SaBoRo AI');assert.ok(saboroProvider,'最後の手段');assert.equal(providers.at(-1),saboroProvider);
+ const sent=[];let reply={status:'done',text:JSON.stringify(answer)};const saboro=async b=>{sent.push(b);return reply};const gen=createGenerator({chain:[saboroProvider],log:()=>{},saboro});
+ let r=await gen({type:'レポート'},[],'',{key:'abc12345',urgent:true});assert.equal(r.generatedBy,'SaBoRo AI');assert.deepEqual({mode:sent[0].mode,key:sent[0].key,label:sent[0].label},{mode:'now',key:'abc12345',label:'課題生成'});
+ reply={status:'pending'};await assert.rejects(gen({},[],'',{key:'abc12345'}),e=>e instanceof AiPending);assert.equal(sent[1].mode,'batch');
+ const after=fake('後ろの手段',answer);await assert.rejects(createGenerator({chain:[saboroProvider,after],log:()=>{},saboro})({},[],'',{key:'abc12345'}),e=>e instanceof AiPending);assert.equal(after.calls,0,'作成中なら次の手段に進まない');
+ reply={status:'done',text:JSON.stringify({room:{value:'',evidence:''},mode:{value:'',evidence:''},absenceLimit:{value:'',evidence:''},attendanceMethod:{value:'',evidence:''},lateRule:{value:'',evidence:''},notes:{value:'',evidence:''},sessions:[]})};await createCourseInfoExtractor({chain:[saboroProvider],log:()=>{},saboro})('授業',[]);assert.equal(sent.at(-1).mode,'now','授業情報の読み取りはすぐ');assert.equal(sent.at(-1).label,'授業情報の読み取り')});
+test('SaBoRo の AI：プランが違う・未設定なら試していない扱い（使用量に残さない）。無料分の使い切りは理由を出す',async()=>{const saboroProvider=providers.find(p=>p.name==='SaBoRo AI');const usage=[];
+ await assert.rejects(createGenerator({chain:[saboroProvider],log:()=>{},onUsage:u=>usage.push(u),saboro:async()=>({error:'plan'})})({},[]),/SaBoRo AI：SaBoRo AI 対象外/);assert.equal(usage.length,0);
+ await assert.rejects(createGenerator({chain:[saboroProvider],log:()=>{},onUsage:u=>usage.push(u)})({},[]),/SaBoRo AI 対象外/,'クラウドの窓口がなければ試さない');
+ await assert.rejects(createGenerator({chain:[saboroProvider],log:()=>{},onUsage:u=>usage.push(u),saboro:async()=>({error:'limit'})})({},[]),/今月の無料分を使い切りました/);assert.equal(usage.length,1)});
+test('アプリ：Batch を待つ課題は 10 分ごとに出来上がりを確かめて入力し直し、本人が頼んだ処理は急ぎにする',async()=>{const {readFileSync}=await import('node:fs');const bridge=readFileSync('local/bridge.js','utf8'),manabo=readFileSync('local/manabo.js','utf8');
+ assert.match(bridge,/api\('\/api\/agent\/ai\/ready','POST'/);assert.match(bridge,/run\(\{kind:'generate',task:t\.id,auto:true\}\)/);assert.match(bridge,/lms\.process\(t,false,\{urgent:!job\.auto\}\)/);assert.match(bridge,/createGenerator\(\{[^}]*saboro\}\)/);
+ assert.match(manabo,/catch\(e\)\{if\(!\(e instanceof AiPending\)\)throw e;t\.aiPending=generationKey;t\.action=AI_PENDING_ACTION/);assert.match(manabo,/urgent:urgent\|\|manualSubmit\|\|soon/)});

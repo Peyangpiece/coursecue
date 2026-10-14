@@ -23,3 +23,12 @@ CREATE TABLE IF NOT EXISTS admin_stripe_unmatched (id TEXT PRIMARY KEY, customer
 -- Stripe の定期支払い（サブスクリプション）の状態。定期支払いごと（解約して入り直した顧客は 2 件になる）。通知の時刻（event_at）より古い通知では上書きしない
 CREATE TABLE IF NOT EXISTS admin_subscriptions (subscription TEXT PRIMARY KEY, customer TEXT NOT NULL, status TEXT NOT NULL, period_end INTEGER, cancel_at_period_end INTEGER NOT NULL DEFAULT 0, event_at INTEGER NOT NULL DEFAULT 0, updated TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS admin_subscriptions_customer ON admin_subscriptions(customer);
+-- SaBoRo の AI（こちらの API キーで回答を作る。プランが「saboro の API」の利用者だけ）
+-- 使用量：1 回ごと。月の「課題生成」の回数が無料分（既定 60 回）を超えた後の回は billable=1 で、実費×上乗せ率の円（100 万分の 1 円単位）を charge_micro に持つ。
+-- billed：Stripe の請求項目にした日（未請求は NULL）
+CREATE TABLE IF NOT EXISTS ai_usage (id TEXT PRIMARY KEY, account TEXT NOT NULL, month TEXT NOT NULL, label TEXT NOT NULL, mode TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', input INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0, cache_read INTEGER NOT NULL DEFAULT 0, cache_write INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL DEFAULT 0, billable INTEGER NOT NULL DEFAULT 0, charge_micro INTEGER NOT NULL DEFAULT 0, billed TEXT, created TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ai_usage_account_month ON ai_usage(account, month);
+CREATE INDEX IF NOT EXISTS ai_usage_unbilled ON ai_usage(billable, billed);
+-- Batch（急がない依頼）：依頼のキー（課題と設問・資料から作る）ごとに 1 件。結果は渡してから数日で消す
+CREATE TABLE IF NOT EXISTS ai_requests (id TEXT PRIMARY KEY, account TEXT NOT NULL, key TEXT NOT NULL, label TEXT NOT NULL, batch_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', result TEXT, reason TEXT, created TEXT NOT NULL, updated TEXT NOT NULL, UNIQUE(account, key));
+CREATE INDEX IF NOT EXISTS ai_requests_status ON ai_requests(status, updated);

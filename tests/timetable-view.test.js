@@ -30,3 +30,8 @@ test('支払いが必要な間は支払いの案内を出し、支払い後は�
 test('プランが「無料」でも定期支払いが有効なら、契約の状態と解約のリンクを出す。契約がなければ「無料で利用中」だけ',()=>{const run=boot();
  const paid=run(`key='k';state.billing={required:false,allowed:true,active:true,exempt:true,status:'active',periodEnd:'2026-11-14T00:00:00Z',portalUrl:'https://billing.stripe.com/p/login/t'};billingStatusPanel()`);assert.match(paid,/定期支払いは有効です。次回の決済日：2026年11月14日/);assert.match(paid,/解約・カードの変更/);assert.doesNotMatch(paid,/無料で利用中/);
  const free=run(`state.billing={required:false,allowed:true,active:false,exempt:true,portalUrl:'https://billing.stripe.com/p/login/t'};billingStatusPanel()`);assert.match(free,/無料で利用中です。/);assert.doesNotMatch(free,/解約・カードの変更/)});
+test('設定の「SaBoRo の AI」：プランが saboro の API の人だけ、今月の回数・無料分・超過分の使用料と作り方を出す',()=>{const run=boot();
+ assert.equal(run(`key='k';state.ai={plan:'byo',used:0,included:60};saboroAiPanel()`),'','ほかのプランには出さない');
+ const html=run(`state.ai={plan:'api',available:true,reason:'',used:12,included:60,overage:true,overageYen:0};saboroAiPanel()`);assert.match(html,/今月の課題生成：<strong>12回<\/strong>／無料分 60回/);assert.match(html,/締切まで24時間以内の回答はすぐ作ります/);assert.match(html,/無料分（60回）を超えた後は、使った量に応じて使用料/);
+ assert.match(run(`state.ai={plan:'api',available:true,reason:'',used:61,included:60,overage:true,overageYen:135};saboroAiPanel()`),/61回目からは使用量に応じた使用料：今月 135円/);
+ assert.match(run(`state.ai={plan:'api',available:false,reason:'limit',used:60,included:60,overage:false,overageYen:0};saboroAiPanel()`),/今月の無料分（60回）を使い切りました/)});

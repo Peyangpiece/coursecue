@@ -65,6 +65,15 @@ jobs:
         env:
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      # SaBoRo の AI：Anthropic の API キー（sk-ant-…）と、超過分を請求する Stripe の制限付きキー（rk_…。請求項目・請求書の書き込みだけ）
+      - run: if [ -n "$ANTHROPIC_API_KEY" ]; then printf '%s' "$ANTHROPIC_API_KEY" | npx wrangler secret put ANTHROPIC_API_KEY; fi
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - run: if [ -n "$STRIPE_API_KEY" ]; then printf '%s' "$STRIPE_API_KEY" | npx wrangler secret put STRIPE_API_KEY; fi
+        env:
+          STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - run: npx wrangler deploy --var DEPLOYED_SHA:${{ github.sha }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
