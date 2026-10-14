@@ -32,6 +32,10 @@ test('Batch：同じ依頼は 1 件にまとめ、終わるまで pending。終�
  f.batch.status='ended';ready=await (await call(store,'/api/agent/ai/ready',{method:'POST',token:DEVICE,body:{keys:['key-00001']}})).json();assert.deepEqual(ready.ready,['key-00001']);
  for(let i=0;i<2;i++)assert.deepEqual(await (await ask(store,{mode:'batch',key:'key-00001'})).json(),{status:'done',text:'{"draft":"ok"}'},'受け取り直しても同じ結果');
  assert.equal(store.aiUsage.length,1,'記録は 1 回');assert.equal(store.aiUsage[0].cost_usd,0.2,'Batch は半額');assert.equal(store.aiUsage[0].mode,'batch');assert.equal(f.calls.results,1)});
+test('すぐの依頼に同じ key の Batch があれば二重に作らない：出来上がっていればその結果、まだなら Batch を取り消してからすぐ作る',async()=>{const f=fake();const {store}=await setup();const nowKey=async key=>JSON.parse((await (await ask(store,{mode:'now',key})).text()).trim());
+ await ask(store,{mode:'batch',key:'key-00002'});f.batch.status='ended';assert.deepEqual(await nowKey('key-00002'),{status:'done',text:'{"draft":"ok"}'});assert.equal(f.calls.stream,0,'出来上がった Batch があればすぐの依頼でも作らない');assert.equal(store.aiUsage.length,1);
+ f.batch.status='in_progress';await ask(store,{mode:'batch',key:'key-00003'});assert.deepEqual(await nowKey('key-00003'),{status:'done',text:'{"draft":"ok"}'});assert.equal(f.calls.cancel,1,'まだの Batch は取り消す');assert.equal(f.calls.stream,1);
+ await nowKey('key-00004');assert.equal(f.calls.cancel,1,'Batch がなければそのまま作る');assert.equal(f.calls.stream,2)});
 test('Batch が期限切れなどで失敗したら理由を返して依頼を消す（次はやり直せる）。記録はしない',async()=>{const f=fake();const {store}=await setup();await ask(store,{mode:'batch',key:'key-00002'});f.batch.status='ended';f.batch.fail=true;
  assert.deepEqual(await (await ask(store,{mode:'batch',key:'key-00002'})).json(),{status:'failed',reason:'24時間以内に作成できませんでした'});assert.equal(store.aiRequests.size,0);assert.equal(store.aiUsage.length,0);
  f.batch.fail=false;f.batch.status='in_progress';assert.deepEqual(await (await ask(store,{mode:'batch',key:'key-00002'})).json(),{status:'pending'});assert.equal(f.calls.create,2)});

@@ -44,6 +44,9 @@ export async function handleAi(req,u,env,store,account,{json,origin,ctx}){const 
  if(!['now','batch'].includes(d.mode)||!LABELS.includes(d.label)||typeof d.text!=='string'||!d.text||!d.schema||typeof d.schema!=='object'||(d.mode==='batch'&&!(typeof d.key==='string'&&/^[\w-]{8,128}$/.test(d.key))))return json({error:'invalid'},400,origin);
  // 出来上がった Batch の結果は、使える状態かどうかにかかわらず渡す（支払い済みの分）
  if(d.mode==='batch'){let row=await store.getAiRequest(account,d.key);if(row){row=await settle(store,env,row,now);if(row.status==='done')return json({status:'done',text:row.result},200,origin);if(row.status==='failed'){await store.deleteAiRequest(row.id);return json({status:'failed',reason:row.reason||'作成に失敗しました'},200,origin)}return json({status:'pending'},200,origin)}}
+ // すぐの依頼でも、同じ key の Batch があれば二重に作らない：出来上がっていればその結果を渡し、まだなら Batch を取り消してからすぐ作る
+ // （取り消す前に出来上がっていた分は、定期実行で受け取って使用量に記録する）
+ if(d.mode==='now'&&typeof d.key==='string'&&/^[\w-]{8,128}$/.test(d.key)){let row=await store.getAiRequest(account,d.key);if(row){row=await settle(store,env,row,now);if(row.status==='done')return json({status:'done',text:row.result},200,origin);if(row.status==='pending')await makeClient(env.SABORO_ANTHROPIC_API_KEY).messages.batches.cancel(row.batch_id).catch(()=>{})}}
  const status=await aiStatus(store,env,account,now);if(!status.available)return json({error:status.reason},403,origin);const settings=await store.getAdminSettings(),client=makeClient(env.SABORO_ANTHROPIC_API_KEY);
  if(d.mode==='batch'){const batch=await client.messages.batches.create({requests:[{custom_id:'saboro',params:params(d.text,d.schema)}]});const created=await store.insertAiRequest({id:crypto.randomUUID(),account,key:d.key,label:d.label,batch_id:batch.id,created:now.toISOString(),updated:now.toISOString()});if(!created)await client.messages.batches.cancel(batch.id).catch(()=>{});return json({status:'pending'},200,origin)}
  // すぐ：生成に数分かかることがあるので、待つ間は空白を送り続けて接続を保ち、最後に結果の JSON を送る（JSON は先頭の空白を無視する）
