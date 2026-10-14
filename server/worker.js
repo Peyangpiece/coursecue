@@ -1,4 +1,4 @@
-import {handleAdmin} from './admin.js';
+import {handleAdmin} from './admin.js';import {handleStripe} from './stripe.js';
 const origins=['https://coursecue.hrk-6888.workers.dev','https://coursecue-2026.web.app'];
 const KINDS=['sync','generate','submit','supplement','settings','credentials','verify','timetable','link','attendance'];
 const json=(data,status=200,origin='')=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Access-Control-Allow-Origin':origins.includes(origin)?origin:origins[0],'Access-Control-Allow-Headers':'Authorization,Content-Type','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Vary':'Origin'}});
@@ -28,9 +28,22 @@ export function d1Store(db){return {
  async endCost(id,month){await db.prepare('UPDATE admin_costs SET end_month=? WHERE id=? AND recurring=1').bind(month,id).run()},
  async deleteCost(id){await db.prepare('DELETE FROM admin_costs WHERE id=?').bind(id).run()},
  async getAdminSettings(){const out={};for(const r of (await db.prepare('SELECT key,value FROM admin_settings').all()).results){try{out[r.key]=JSON.parse(r.value)}catch{}}return out},
- async putAdminSettings(v){for(const [k,x] of Object.entries(v))await db.prepare('INSERT INTO admin_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(k,JSON.stringify(x)).run()}}}
+ async putAdminSettings(v){for(const [k,x] of Object.entries(v))await db.prepare('INSERT INTO admin_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(k,JSON.stringify(x)).run()},
+ // Stripe 連携：入金は記録の ID で上書き（同じ通知が何度届いても 1 件）
+ async upsertPayment(p){await db.prepare('INSERT INTO admin_payments(id,account,month,amount,method,paid_on,note,created) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET account=excluded.account,month=excluded.month,amount=excluded.amount,paid_on=excluded.paid_on,note=excluded.note').bind(p.id,p.account,p.month,p.amount,p.method,p.paid_on||null,p.note,p.created).run()},
+ async paymentAccountOf(id){return (await db.prepare('SELECT account FROM admin_payments WHERE id=?').bind(id).first())?.account||null},
+ async stripeAccountFor(customer){return (await db.prepare('SELECT account FROM admin_stripe_customers WHERE customer=?').bind(customer).first())?.account||null},
+ async listStripeCustomers(){return (await db.prepare('SELECT customer,account,created FROM admin_stripe_customers ORDER BY created').all()).results},
+ // 顧客と利用者を対応させ、その顧客の未割り当ての入金を利用者の入金に移す
+ async linkStripeCustomer(customer,account){const now=new Date().toISOString();await db.batch([db.prepare('INSERT INTO admin_stripe_customers(customer,account,created) VALUES(?,?,?) ON CONFLICT(customer) DO UPDATE SET account=excluded.account').bind(customer,account,now),db.prepare("INSERT INTO admin_payments(id,account,month,amount,method,paid_on,note,created) SELECT id,?,month,amount,'Stripe',paid_on,note,created FROM admin_stripe_unmatched WHERE customer=? ON CONFLICT(id) DO UPDATE SET account=excluded.account,amount=excluded.amount").bind(account,customer),db.prepare('DELETE FROM admin_stripe_unmatched WHERE customer=?').bind(customer)])},
+ async unlinkStripeCustomer(customer){await db.prepare('DELETE FROM admin_stripe_customers WHERE customer=?').bind(customer).run()},
+ async upsertUnmatched(u){await db.prepare('INSERT INTO admin_stripe_unmatched(id,customer,email,month,amount,paid_on,note,created) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET amount=excluded.amount,paid_on=excluded.paid_on,note=excluded.note').bind(u.id,u.customer,u.email,u.month,u.amount,u.paid_on||null,u.note,u.created).run()},
+ async listUnmatched(){return (await db.prepare('SELECT id,customer,email,month,amount,paid_on,note,created FROM admin_stripe_unmatched ORDER BY created DESC').all()).results},
+ // 1 件を利用者に割り当てる（顧客 ID があれば対応も覚え、その顧客の他の未割り当ても移す）
+ async assignUnmatched(id,account){const row=await db.prepare('SELECT * FROM admin_stripe_unmatched WHERE id=?').bind(id).first();if(!row)return false;if(row.customer){await this.linkStripeCustomer(row.customer,account);return true}await db.batch([db.prepare("INSERT INTO admin_payments(id,account,month,amount,method,paid_on,note,created) VALUES(?,?,?,?,'Stripe',?,?,?) ON CONFLICT(id) DO UPDATE SET account=excluded.account,amount=excluded.amount").bind(row.id,account,row.month,row.amount,row.paid_on,row.note,row.created),db.prepare('DELETE FROM admin_stripe_unmatched WHERE id=?').bind(id)]);return true},
+ async deleteUnmatched(id){await db.prepare('DELETE FROM admin_stripe_unmatched WHERE id=?').bind(id).run()}}}
 // 記憶上の保存先（テスト用）
-export function memoryStore(){const states=new Map(),jobs=[],accounts=[],admin=new Map(),payments=[],costs=[],settings={};return {
+export function memoryStore(){const states=new Map(),jobs=[],accounts=[],admin=new Map(),payments=[],costs=[],settings={},customers=new Map(),unmatched=new Map();const upsert=p=>{const i=payments.findIndex(x=>x.id===p.id);if(i<0)payments.push({...p});else Object.assign(payments[i],{account:p.account,month:p.month,amount:p.amount,paid_on:p.paid_on,note:p.note})};return {
  async getState(a){return states.get(a)??null},async putState(a,v){states.set(a,v)},
  async insertJob(j){jobs.push({...j,status:'pending',result:null})},
  async listJobs(a){return jobs.filter(j=>j.account===a).sort((x,y)=>y.created.localeCompare(x.created)).slice(0,50).map(({account,payload,...j})=>j)},
@@ -45,7 +58,14 @@ export function memoryStore(){const states=new Map(),jobs=[],accounts=[],admin=n
  async addPayment(p){payments.push({...p})},async deletePayment(id){const i=payments.findIndex(p=>p.id===id);if(i>=0)payments.splice(i,1)},
  async listCosts(){return costs.map(c=>({end_month:null,...c}))},async addCost(c){costs.push({...c})},
  async endCost(id,month){const c=costs.find(c=>c.id===id&&c.recurring);if(c)c.end_month=month},async deleteCost(id){const i=costs.findIndex(c=>c.id===id);if(i>=0)costs.splice(i,1)},
- async getAdminSettings(){return {...settings}},async putAdminSettings(v){Object.assign(settings,v)}}}
+ async getAdminSettings(){return {...settings}},async putAdminSettings(v){Object.assign(settings,v)},
+ async upsertPayment(p){upsert(p)},async paymentAccountOf(id){return payments.find(p=>p.id===id)?.account||null},
+ async stripeAccountFor(c){return customers.get(c)?.account||null},async listStripeCustomers(){return [...customers].map(([customer,v])=>({customer,...v}))},
+ async linkStripeCustomer(customer,account){customers.set(customer,{account,created:customers.get(customer)?.created||new Date().toISOString()});for(const [id,u] of [...unmatched])if(u.customer===customer){upsert({id,account,month:u.month,amount:u.amount,method:'Stripe',paid_on:u.paid_on,note:u.note,created:u.created});unmatched.delete(id)}},
+ async unlinkStripeCustomer(c){customers.delete(c)},
+ async upsertUnmatched(u){unmatched.set(u.id,{...(unmatched.get(u.id)||{}),...u})},async listUnmatched(){return [...unmatched.values()].sort((a,b)=>b.created.localeCompare(a.created)).map(u=>({...u}))},
+ async assignUnmatched(id,account){const u=unmatched.get(id);if(!u)return false;if(u.customer){await this.linkStripeCustomer(u.customer,account);return true}upsert({id,account,month:u.month,amount:u.amount,method:'Stripe',paid_on:u.paid_on,note:u.note,created:u.created});unmatched.delete(id);return true},
+ async deleteUnmatched(id){unmatched.delete(id)}}}
 // 認証：登録済みの接続キー（owner）または Mac の鍵（device）。環境変数の旧トークンは最初の利用者（legacy）として扱う
 async function authenticate(key,env,store){if(!key)return null;if(await equal(key,env.OWNER_TOKEN))return {id:'legacy',role:'owner'};if(await equal(key,env.DEVICE_TOKEN))return {id:'legacy',role:'device'};if(!TOKEN.test(key))return null;return store.findAccount(await sha256(key))}
 export async function handle(req,env,store){const u=new URL(req.url),origin=req.headers.get('Origin')||'';
@@ -55,6 +75,8 @@ if(req.method==='OPTIONS')return json({},200,origin);
 try{
 // 管理者画面の API（ADMIN_TOKEN で認証。利用者の鍵とは別）
 if(u.pathname.startsWith('/api/admin/'))return await handleAdmin(req,u,env,store,{json,equal,origin});
+// Stripe の通知（署名で確認。利用者の鍵は使わない）
+if(u.pathname==='/api/stripe/webhook')return await handleStripe(req,env,store,{json,origin});
 // 利用者の登録：Mac のセットアップが作った接続キーと Mac の鍵（どちらも 64 桁の16進）のハッシュだけを保存する
 if(u.pathname==='/api/register'&&req.method==='POST'){const d=await req.json().catch(()=>({}));if(!TOKEN.test(d.owner||'')||!TOKEN.test(d.device||'')||d.owner===d.device)return json({error:'invalid_token'},400,origin);const id=crypto.randomUUID();try{await store.createAccount({id,ownerHash:await sha256(d.owner),deviceHash:await sha256(d.device),created:new Date().toISOString()})}catch{return json({error:'already_registered'},409,origin)}return json({id},201,origin)}
 const key=req.headers.get('Authorization')?.replace(/^Bearer /,'');const who=await authenticate(key,env,store);
