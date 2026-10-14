@@ -13,7 +13,7 @@ img,svg{display:block;max-width:100%}
 a{color:var(--blue);text-underline-offset:3px}
 a:hover{color:var(--blue-dark)}
 :focus-visible{outline:3px solid var(--blue-dark);outline-offset:3px;border-radius:4px}
-.cta :focus-visible,footer.site :focus-visible{outline-color:#fff}
+.cta :focus-visible{outline-color:#fff}
 .skip{position:absolute;left:12px;top:-60px;z-index:20;background:var(--ink);color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none}
 .skip:focus{top:12px;color:#fff}
 .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
@@ -24,7 +24,7 @@ header.site{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.92);ba
 header.site .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:68px}
 .brand{display:flex;align-items:center;gap:10px;font-size:21px;font-weight:800;color:var(--ink);text-decoration:none;letter-spacing:.01em}
 .brand:hover{color:var(--ink)}
-.brand img{width:32px;height:32px}
+.brand img{width:162px;height:44px}
 header.site nav{display:flex;align-items:center;gap:28px;font-size:15px}
 header.site nav a:not(.btn){color:var(--text);text-decoration:none;font-weight:600}
 header.site nav a:not(.btn):hover{color:var(--blue)}
@@ -115,12 +115,12 @@ table.def tr:last-child th,table.def tr:last-child td{border-bottom:0}
 table.def th{width:32%;background:var(--soft);color:var(--ink);font-weight:700}
 
 /* フッター */
-footer.site{background:var(--blue-deep);color:#b9cfe6;font-size:14px}
+footer.site{background:var(--soft);border-top:1px solid var(--line);color:var(--muted);font-size:14px}
 footer.site .wrap{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;padding-top:32px;padding-bottom:32px}
-footer.site .brand{color:#fff;font-size:18px}
+footer.site .brand img{width:118px;height:32px}
 footer.site nav{display:flex;flex-wrap:wrap;gap:8px 24px}
-footer.site a{color:#dbe8f6}
-footer.site a:hover{color:#fff}
+footer.site nav a{color:var(--muted)}
+footer.site nav a:hover{color:var(--blue)}
 
 @media (max-width:720px){
   .wrap{padding:0 16px}
