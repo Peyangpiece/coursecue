@@ -48,7 +48,7 @@ header.site nav a:not(.btn):hover{color:var(--blue)}
 .hero .glow i:nth-child(2){width:420px;height:420px;top:120px;left:-180px;background:#e4eefa;animation:drift 22s ease-in-out -6s infinite alternate-reverse}
 .hero .wrap{position:relative}
 .hero .copy{max-width:760px;margin:0 auto;text-align:center}
-.hero h1{margin:0 0 24px;color:var(--ink);font-size:clamp(36px,5.8vw,62px);line-height:1.25;letter-spacing:-.005em;font-weight:800}
+.hero h1{margin:0 0 24px;color:var(--ink);font-size:clamp(32px,5.8vw,62px);line-height:1.25;letter-spacing:-.005em;font-weight:800}
 .hero h1 em{font-style:normal;color:var(--blue);background:linear-gradient(90deg,var(--blue) 0,#2f86d6 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .hero .lead{margin:0 auto 36px;max-width:620px;color:var(--muted);font-size:clamp(16px,1.9vw,18px)}
 .actions{display:flex;flex-wrap:wrap;justify-content:center;gap:12px}
@@ -71,6 +71,8 @@ h2.head{margin:0 auto 56px;max-width:720px;text-align:center}
 h3{margin:0 0 8px;color:var(--ink);font-size:18px;line-height:1.5}
 h1,h2,h3{word-break:auto-phrase;text-wrap:balance}
 .lead,.card p,.trust p{text-wrap:pretty}
+/* トップは文節の区切りに <wbr> を入れてあるので、そこでだけ折り返す（どのブラウザでも語の途中で改行しない。入りきらない語だけ折る） */
+main.home :is(h1,h2,h3,p,li){word-break:keep-all;overflow-wrap:anywhere}
 p{margin:0 0 14px}
 
 .grid{display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));margin:0;padding:0;list-style:none}
@@ -90,7 +92,7 @@ p{margin:0 0 14px}
 .plan{max-width:540px;margin:0 auto;padding:44px 44px 38px;border-radius:24px;background:#fff;border:1px solid var(--line);box-shadow:var(--shadow-lg);text-align:center;position:relative;overflow:hidden}
 .plan::before{content:"";position:absolute;inset:0 0 auto;height:4px;background:linear-gradient(90deg,var(--blue),#2f86d6)}
 .plan .amount{margin:0;color:var(--ink);font-size:54px;font-weight:800;line-height:1.2;letter-spacing:0}
-.plan .amount small{margin-left:4px;color:var(--muted);font-size:16px;font-weight:600}
+.plan .amount small{display:inline-block;white-space:nowrap;margin-left:4px;color:var(--muted);font-size:16px;font-weight:600}
 .plan ul{margin:28px 0 32px;padding:0;list-style:none;text-align:left}
 .plan li{display:flex;gap:10px;padding:11px 0;border-top:1px solid var(--line)}
 .plan li:last-child{border-bottom:1px solid var(--line)}
@@ -162,6 +164,8 @@ footer.site nav a:hover{color:var(--blue)}
   table.def th{border-bottom:0;padding-bottom:4px}
   table.def td{padding-top:4px}
 }
+
+@media (max-width:380px){.plan .amount{font-size:36px}.plan .amount small{font-size:14px}}
 
 /* ダウンロード：機種の選択・手順 */
 .crumbs{margin:0 0 20px;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:6px;font-size:14px;color:var(--muted)}
