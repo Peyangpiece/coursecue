@@ -121,9 +121,10 @@ const jpDate=s=>{if(!s)return '';const d=new Date(s);return `${d.getFullYear()}�
 function billingPanel(){const b=state.billing||{},price=b.price?`月額 ${b.price.toLocaleString('ja-JP')}円（税込）`:'月額';const again=b.status&&['canceled','unpaid','incomplete_expired'].includes(b.status);
  return panel('お支払い',`<p>${again?'定期支払いが終了しているため、同期や回答の作成を止めています。':'saboro を使い始めるには、お支払いの手続きが必要です。'}</p><p><strong>${price}</strong>・初回のお支払い後は、解約するまで毎月自動で決済されます。</p>
  ${b.checkoutUrl?`<p><a class="btn btn-primary" href="${esc(b.checkoutUrl)}" target="_blank" rel="noopener">お支払いに進む（Stripe）</a></p><p class="muted">お支払いが済むと、数秒〜1分ほどでこの画面が自動で切り替わります。お支払いの画面は Stripe（決済サービス）が表示します。</p>`:'<div class="alert alert-warning">お支払いの準備がまだできていません。管理者に連絡してください。</div>'}`)}
-function billingStatusPanel(){const b=state.billing||{};if(!key||(!b.required&&!b.active))return '';if(billingBlocked())return billingPanel();
- const text=b.exempt?'無料で利用中です。':b.cancelAtPeriodEnd?`解約の手続き済みです。${b.periodEnd?jpDate(b.periodEnd)+' まで':'期間の終わりまで'}使えます。`:b.status==='past_due'?'お支払いを再試行しています。カードの情報を確認してください。':`定期支払いは有効です。${b.periodEnd?'次回の決済日：'+jpDate(b.periodEnd):''}`;
- return panel('お支払い',`<p style="margin:0 0 8px">${esc(text)}</p>${b.portalUrl&&!b.exempt?`<a class="btn" href="${esc(b.portalUrl)}" target="_blank" rel="noopener">解約・カードの変更（Stripe）</a>`:''}`)}
+// 定期支払いが有効なら、プランが「無料」でも契約の状態と解約のリンクを出す（解約できないまま課金が続かないように）
+function billingStatusPanel(){const b=state.billing||{};if(!key||(!b.required&&!b.active&&!b.exempt))return '';if(billingBlocked())return billingPanel();
+ const text=!b.active?'無料で利用中です。':b.cancelAtPeriodEnd?`解約の手続き済みです。${b.periodEnd?jpDate(b.periodEnd)+' まで':'期間の終わりまで'}使えます。`:b.status==='past_due'?'お支払いを再試行しています。カードの情報を確認してください。':`定期支払いは有効です。${b.periodEnd?'次回の決済日：'+jpDate(b.periodEnd):''}`;
+ return panel('お支払い',`<p style="margin:0 0 8px">${esc(text)}</p>${b.portalUrl&&b.active?`<a class="btn" href="${esc(b.portalUrl)}" target="_blank" rel="noopener">解約・カードの変更（Stripe）</a>`:''}`)}
 function render(){const n=state.tasks.filter(needs).length;
 document.getElementById('gnav').innerHTML=`<ul>${navViews.map(v=>`<li><button data-view="${v}" class="${view===v||(v==='tasks'&&view==='needs')?'active':''}"${view===v?' aria-current="page"':''}>${views[v]}${v==='home'&&n?`<span class="badge">${n}<span class="sr-only">件要対応</span></span>`:''}</button></li>`).join('')}</ul>`;
 const gnav=document.getElementById('gnav'),toggle=document.getElementById('navtoggle');gnav.classList[menuOpen?'add':'remove']('in');toggle.setAttribute?.('aria-expanded',String(menuOpen));

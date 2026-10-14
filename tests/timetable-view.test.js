@@ -27,3 +27,6 @@ test('支払いが必要な間は支払いの案内を出し、支払い後は�
  assert.match(run(`state.billing={required:true,allowed:false,status:'canceled',checkoutUrl:''};billingPanel()`),/定期支払いが終了している[\s\S]*管理者に連絡/);
  const ok=run(`state.billing={required:true,allowed:true,active:true,cancelAtPeriodEnd:true,periodEnd:'2026-11-14T00:00:00Z',portalUrl:'https://billing.stripe.com/p/login/t'};[billingBlocked(),billingStatusPanel()]`);assert.equal(ok[0],false);assert.match(ok[1],/解約の手続き済みです。2026年11月14日 まで使えます/);assert.match(ok[1],/解約・カードの変更/);
  assert.equal(run(`state.billing={required:false,allowed:true,active:false};billingStatusPanel()`),'','必須でなく契約もなければ何も出さない')});
+test('プランが「無料」でも定期支払いが有効なら、契約の状態と解約のリンクを出す。契約がなければ「無料で利用中」だけ',()=>{const run=boot();
+ const paid=run(`key='k';state.billing={required:false,allowed:true,active:true,exempt:true,status:'active',periodEnd:'2026-11-14T00:00:00Z',portalUrl:'https://billing.stripe.com/p/login/t'};billingStatusPanel()`);assert.match(paid,/定期支払いは有効です。次回の決済日：2026年11月14日/);assert.match(paid,/解約・カードの変更/);assert.doesNotMatch(paid,/無料で利用中/);
+ const free=run(`state.billing={required:false,allowed:true,active:false,exempt:true,portalUrl:'https://billing.stripe.com/p/login/t'};billingStatusPanel()`);assert.match(free,/無料で利用中です。/);assert.doesNotMatch(free,/解約・カードの変更/)});
