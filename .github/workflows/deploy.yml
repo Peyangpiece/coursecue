@@ -82,3 +82,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - name: Record deployed commit
         run: git push origin HEAD:refs/heads/deployed
+      # ホームページ（サービスの説明・特定商取引法に基づく表記・規約）。アプリとは別の公開先（site/wrangler.jsonc の saboro-site）
+      # アプリの公開と記録の後に行う（ホームページの失敗でアプリの更新を止めない）
+      - name: Deploy homepage
+        run: npx wrangler deploy --config site/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

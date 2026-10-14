@@ -57,7 +57,7 @@ curl -fsSL https://coursecue.hrk-6888.workers.dev/install.sh | bash
 Codex生成は短い検証問題で実行確認済み。実際のmanaboのログイン・課題提出は、本人の認証情報入力後に検証が必要。
 
 ## 公開
-公開先は Cloudflare（https://coursecue.hrk-6888.workers.dev ）。`main` に入ると自動で公開される。
+公開先は Cloudflare（https://coursecue.hrk-6888.workers.dev ）。ホームページ（サービスの説明・料金・特定商取引法に基づく表記・プライバシーポリシー。書く必要のあるものだけ）はアプリと切り分けた別の公開先で、`site/`（`site/wrangler.jsonc` の `saboro-site`、https://saboro-site.hrk-6888.workers.dev ）にある。`main` に入ると自動で公開される。
 旧URL（https://coursecue-2026.web.app ）は Cloudflare へ転送するだけにしてある（`firebase.json`）。転送設定を変えたときだけ `npm run deploy:firebase` を手動で実行する。実データ同期はCloudflare D1を使用。
 
 認証付きバックエンドを公開済み。Macサービスが同期・自動ログイン・下書き生成・提出を実行する。初回はMac設定画面で認証情報を保存し、saboroを接続する。

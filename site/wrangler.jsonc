@@ -1,0 +1,11 @@
+{
+  // SaBoRo のホームページ（サービスの説明・料金・特定商取引法に基づく表記・利用規約・プライバシーポリシー）
+  // アプリ（coursecue：dist/・server/）とは別の公開先。静的なページだけで、アプリの API・データには触れない
+  "name": "saboro-site",
+  "compatibility_date": "2026-10-10",
+  "account_id": "3b7ab52765e5610dc37c4abc96d7fef0",
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "404-page"
+  }
+}

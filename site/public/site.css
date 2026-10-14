@@ -1,0 +1,51 @@
+/* SaBoRo ホームページ（アプリとは別のサイト）。色はロゴに合わせた青と赤 */
+:root{--text:#222;--muted:#5f6670;--line:#e3e6ea;--soft:#f6f8fa;--blue:#005bac;--blue-dark:#003b70;--red:#e50020;--todo:#fff3bf}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:#fff;color:var(--text);font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Noto Sans JP","メイリオ",Meiryo,system-ui,sans-serif;font-size:16px;line-height:1.8;border-top:4px solid var(--red)}
+a{color:var(--blue)}
+a:hover{color:var(--blue-dark)}
+.wrap{max-width:880px;margin:0 auto;padding:0 20px}
+header.site{border-bottom:1px solid var(--line)}
+header.site .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:64px;flex-wrap:wrap}
+header.site .brand{display:flex;align-items:center;gap:10px;font-size:22px;font-weight:700;color:var(--blue);text-decoration:none;letter-spacing:.02em}
+header.site .brand img{display:block;width:30px;height:30px}
+header.site nav{display:flex;gap:18px;flex-wrap:wrap;font-size:14px}
+header.site nav a{text-decoration:none;color:var(--text)}
+header.site nav a:hover{color:var(--blue)}
+main{padding:40px 0 56px}
+h1{font-size:30px;line-height:1.4;margin:0 0 12px}
+h2{font-size:21px;line-height:1.5;margin:44px 0 12px;padding-bottom:6px;border-bottom:2px solid var(--blue)}
+h3{font-size:17px;margin:24px 0 6px}
+p{margin:0 0 14px}
+.lead{font-size:18px;color:var(--muted);margin-bottom:24px}
+.hero{padding:16px 0 8px}
+.actions{display:flex;flex-wrap:wrap;gap:12px;margin:22px 0 8px}
+.btn{display:inline-block;padding:11px 22px;border-radius:6px;border:1px solid var(--blue);color:var(--blue);background:#fff;text-decoration:none;font-weight:700}
+.btn.primary{background:var(--blue);color:#fff}
+.btn.primary:hover{background:var(--blue-dark);color:#fff}
+.btn:hover{background:var(--soft)}
+.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));gap:16px;margin:16px 0 0;padding:0;list-style:none}
+.features li{border:1px solid var(--line);border-radius:8px;padding:16px 18px;background:#fff}
+.features strong{display:block;margin-bottom:4px}
+.price{border:2px solid var(--blue);border-radius:10px;padding:20px 22px;background:var(--soft)}
+.price .amount{font-size:30px;font-weight:700;color:var(--blue)}
+.price .amount small{font-size:15px;color:var(--text);font-weight:400}
+.note{font-size:14px;color:var(--muted)}
+table.def{width:100%;border-collapse:collapse;margin:8px 0 0;font-size:15px}
+table.def th,table.def td{border:1px solid var(--line);padding:12px 14px;text-align:left;vertical-align:top}
+table.def th{width:30%;background:var(--soft);font-weight:700}
+ol,ul{padding-left:1.4em}
+li{margin:4px 0}
+.todo{background:var(--todo);padding:0 4px;border-radius:3px}
+footer.site{border-top:1px solid var(--line);background:var(--soft);font-size:14px;color:var(--muted)}
+footer.site .wrap{padding-top:24px;padding-bottom:28px}
+footer.site nav{display:flex;flex-wrap:wrap;gap:8px 20px;margin-bottom:10px}
+footer.site nav a{color:var(--muted)}
+@media (max-width:600px){
+  body{font-size:15px}
+  h1{font-size:24px}
+  h2{font-size:19px}
+  table.def th,table.def td{display:block;width:100%}
+  table.def th{border-bottom:0}
+}
