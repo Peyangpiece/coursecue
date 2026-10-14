@@ -43,3 +43,5 @@ test('入れ替えのスクリプト：saboro の終了を待ってから、新�
  assert.deepEqual(readdirSync(join(s.d,'Applications')),['saboro.app'],'.new・.old は残さない');assert.equal(readdirSync(s.d).some(f=>f.startsWith('saboro-update.')),false,'つないだ場所も片付ける')});
 test('入れ替えのスクリプト：.dmg の中身が別の版なら入れ替えず、元の saboro を開き直して理由を記録する',()=>{const s=sandbox({dmgVersion:'1.0.28'});
  assert.throws(()=>s.run(999999));assert.equal(s.version(),'1.0.29');assert.deepEqual(readdirSync(join(s.d,'Applications')),['saboro.app']);assert.deepEqual(s.calls(),['hdiutil attach','hdiutil detach',`open ${s.app}`]);assert.match(s.log(),/ERROR\t書き出した版が 1\.0\.30 ではありません（1\.0\.28）/)});
+test('Mac の新しい版の案内：版ごとに 1 回出す（前の版の案内から 24 時間待たない）。saboro を前面に出してから出す（ほかのアプリの裏に隠れないように）',()=>{const main=readFileSync('desktop/main.js','utf8'),fn=main.slice(main.indexOf('async function announce('));
+ assert.match(fn,/if\(!manual&&seen\.version===version\)return;/);assert.doesNotMatch(fn.slice(0,fn.indexOf('\n')),/24\*3600/,'別の版の案内のあと 24 時間は出さない、という制限はしない');assert.match(fn,/app\.focus\(\{steal:true\}\);const r=await dialog\.showMessageBox/)});
