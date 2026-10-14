@@ -63,8 +63,8 @@ jobs:
           security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
           # 自分で作った証明書は信頼されていないので、この Mac（GitHub の作業用の Mac）でだけコード署名用に信頼する
           security find-certificate -a -p "$kc" > "$RUNNER_TEMP/sign.pem"
-          sudo security authorizationdb write com.apple.trust-settings.admin allow
-          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$RUNNER_TEMP/sign.pem" || echo "証明書を信頼に加えられませんでした（署名はそのまま試します）"
+          # （信頼に加えられなくても署名はできる見込みなので、失敗しても止めない。GitHub の Mac では authorizationdb の書き換えが拒否されることがある）
+          { sudo security authorizationdb write com.apple.trust-settings.admin allow && sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$RUNNER_TEMP/sign.pem"; } || echo "証明書を信頼に加えられませんでした（署名はそのまま試します）"
           security find-identity -p codesigning "$kc"
           id=$(security find-identity -p codesigning "$kc" | awk '/[0-9]+\)/{print $2; exit}')
           if [ -z "$id" ]; then echo "::error::MAC_SIGN_P12 にコード署名に使える証明書が見つかりません（証明書のタイプが「コード署名」か確かめてください）"; exit 1; fi
