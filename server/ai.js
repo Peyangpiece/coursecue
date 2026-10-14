@@ -1,4 +1,4 @@
-// SaBoRo の AI：こちらの Anthropic の API キー（Worker の秘密 ANTHROPIC_API_KEY）で回答を作る。利用者の PC にはキーを渡さない
+// SaBoRo の AI：こちらの Anthropic の API キー（Worker の秘密 SABORO_ANTHROPIC_API_KEY）で回答を作る。利用者の PC にはキーを渡さない
 // 使える人：全員（プランで分けない。支払いが必要なら定期支払いが有効な人）。本人の PC の Codex・Claude Code が使えるときはそちらを先に使う（アプリ側）。月の「課題生成」は無料分（既定 60 回）まで定額、
 // それを超えた後の回は使用量（トークン）に応じて実費×上乗せ率（既定 1.5 倍）を円で請求する（毎日まとめて Stripe の請求項目にし、次の月額の請求に加算）
 // 急ぐ依頼（本人が画面で頼んだもの・締切まで 24 時間以内）は通常の API、それ以外は Batch（半額。通常 1 時間以内、最大 24 時間）
@@ -24,12 +24,12 @@ function outcome(message){if(message?.stop_reason==='refusal')return {reason:'�
 // 今月の状態：無料分の残り・超過分の金額・使えるか（使えなければ理由）
 export async function aiStatus(store,env,account,now=new Date()){const month=currentMonth(now);const [settings,plan,subs,stats,today]=await Promise.all([store.getAdminSettings(),store.planOf(account),store.subscriptionsOf(account),store.aiMonthStats(account,month),store.aiDayCalls(account,dayStart(now))]);const s=aiSettings(settings),billing=billingOf({account,settings,plan,subs});
  const subscribed=subs.some(x=>ACTIVE.includes(x.status)),overage=subscribed&&!!env.STRIPE_API_KEY,base={month,included:s.included,used:stats.count,overageYen:Math.round(stats.chargeMicro/1e6),overage};
- const reason=!env.ANTHROPIC_API_KEY?'not_configured':!billing.allowed?'payment_required':today>=DAILY_LIMIT?'daily_limit':stats.count>=s.included&&!overage?'limit':'';return {...base,available:!reason,reason}}
+ const reason=!env.SABORO_ANTHROPIC_API_KEY?'not_configured':!billing.allowed?'payment_required':today>=DAILY_LIMIT?'daily_limit':stats.count>=s.included&&!overage?'limit':'';return {...base,available:!reason,reason}}
 // 1 回分の使用量を記録する。月の「課題生成」が無料分に達した後なら請求の対象
 async function record(store,{account,label,mode,message,settings,now=new Date()}){const month=currentMonth(now),s=aiSettings(settings),usage=message?.usage||{},model=message?.model||MODEL,usd=costUsd(usage,{model,batch:mode==='batch'});const stats=await store.aiMonthStats(account,month),billable=stats.count>=s.included;
  await store.addAiUsage({id:crypto.randomUUID(),account,month,label,mode,model,input:Number(usage.input_tokens)||0,output:Number(usage.output_tokens)||0,cache_read:Number(usage.cache_read_input_tokens)||0,cache_write:Number(usage.cache_creation_input_tokens)||0,cost_usd:usd,billable:billable?1:0,charge_micro:billable?chargeMicro(usd,s):0,created:now.toISOString()})}
 // Batch の状態を確かめ、終わっていれば結果を保存して使用量を記録する（何度呼んでも記録は 1 回）
-async function settle(store,env,row,now=new Date()){if(row.status!=='pending')return row;const client=makeClient(env.ANTHROPIC_API_KEY);const batch=await client.messages.batches.retrieve(row.batch_id);if(batch.processing_status!=='ended')return row;
+async function settle(store,env,row,now=new Date()){if(row.status!=='pending')return row;const client=makeClient(env.SABORO_ANTHROPIC_API_KEY);const batch=await client.messages.batches.retrieve(row.batch_id);if(batch.processing_status!=='ended')return row;
  let message=null,reason='結果を取得できません';for await(const r of await client.messages.batches.results(row.batch_id)){if(r.result?.type==='succeeded')message=r.result.message;else reason=r.result?.type==='expired'?'24時間以内に作成できませんでした':r.result?.type==='canceled'?'取り消されました':'作成に失敗しました'}
  const out=message?outcome(message):{reason},status=out.text?'done':'failed',updated=now.toISOString();if(!(await store.finishAiRequest(row.id,{status,result:out.text||null,reason:out.reason||null,updated})))return store.getAiRequest(row.account,row.key);
  if(message)await record(store,{account:row.account,label:row.label,mode:'batch',message,settings:await store.getAdminSettings(),now}).catch(()=>{});return {...row,status,result:out.text||null,reason:out.reason||null}}
@@ -44,7 +44,7 @@ export async function handleAi(req,u,env,store,account,{json,origin,ctx}){const 
  if(!['now','batch'].includes(d.mode)||!LABELS.includes(d.label)||typeof d.text!=='string'||!d.text||!d.schema||typeof d.schema!=='object'||(d.mode==='batch'&&!(typeof d.key==='string'&&/^[\w-]{8,128}$/.test(d.key))))return json({error:'invalid'},400,origin);
  // 出来上がった Batch の結果は、使える状態かどうかにかかわらず渡す（支払い済みの分）
  if(d.mode==='batch'){let row=await store.getAiRequest(account,d.key);if(row){row=await settle(store,env,row,now);if(row.status==='done')return json({status:'done',text:row.result},200,origin);if(row.status==='failed'){await store.deleteAiRequest(row.id);return json({status:'failed',reason:row.reason||'作成に失敗しました'},200,origin)}return json({status:'pending'},200,origin)}}
- const status=await aiStatus(store,env,account,now);if(!status.available)return json({error:status.reason},403,origin);const settings=await store.getAdminSettings(),client=makeClient(env.ANTHROPIC_API_KEY);
+ const status=await aiStatus(store,env,account,now);if(!status.available)return json({error:status.reason},403,origin);const settings=await store.getAdminSettings(),client=makeClient(env.SABORO_ANTHROPIC_API_KEY);
  if(d.mode==='batch'){const batch=await client.messages.batches.create({requests:[{custom_id:'saboro',params:params(d.text,d.schema)}]});const created=await store.insertAiRequest({id:crypto.randomUUID(),account,key:d.key,label:d.label,batch_id:batch.id,created:now.toISOString(),updated:now.toISOString()});if(!created)await client.messages.batches.cancel(batch.id).catch(()=>{});return json({status:'pending'},200,origin)}
  // すぐ：生成に数分かかることがあるので、待つ間は空白を送り続けて接続を保ち、最後に結果の JSON を送る（JSON は先頭の空白を無視する）
  const encoder=new TextEncoder(),{readable,writable}=new TransformStream(),writer=writable.getWriter();const keep=setInterval(()=>writer.write(encoder.encode(' ')).catch(()=>{}),10000);

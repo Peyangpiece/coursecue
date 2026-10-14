@@ -65,10 +65,13 @@ jobs:
         env:
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      # SaBoRo の AI：Anthropic の API キー（sk-ant-…）と、超過分を請求する Stripe の制限付きキー（rk_…。請求項目・請求書の書き込みだけ）
-      - run: if [ -n "$ANTHROPIC_API_KEY" ]; then printf '%s' "$ANTHROPIC_API_KEY" | npx wrangler secret put ANTHROPIC_API_KEY; fi
+      # SaBoRo の AI：SaBoRo 専用の Anthropic の API キー（sk-ant-…。GitHub の Secrets の SABORO_ANTHROPIC_API_KEY）と、超過分を請求する Stripe の制限付きキー（rk_…。請求項目・請求書の書き込みだけ）
+      # GitHub Action（@claude）用の ANTHROPIC_API_KEY とは分ける（費用・上限を別にするため）。以前の版が Worker に入れた ANTHROPIC_API_KEY は使わないので消す（なければ何もしない）
+      - run: |
+          if [ -n "$SABORO_ANTHROPIC_API_KEY" ]; then printf '%s' "$SABORO_ANTHROPIC_API_KEY" | npx wrangler secret put SABORO_ANTHROPIC_API_KEY; fi
+          npx wrangler secret delete ANTHROPIC_API_KEY >/dev/null 2>&1 || true
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SABORO_ANTHROPIC_API_KEY: ${{ secrets.SABORO_ANTHROPIC_API_KEY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - run: if [ -n "$STRIPE_API_KEY" ]; then printf '%s' "$STRIPE_API_KEY" | npx wrangler secret put STRIPE_API_KEY; fi
         env:

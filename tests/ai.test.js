@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {handle,memoryStore} from '../server/worker.js';import {setAiTestHooks,runAiDaily,costUsd,chargeMicro} from '../server/ai.js';
 // SaBoRo の AI：使える人の判定・すぐの依頼・Batch・月の無料分と超過分の記録・毎日の請求
-const base='https://coursecue.hrk-6888.workers.dev',ADMIN='a'.repeat(40),env={OWNER_TOKEN:'o',DEVICE_TOKEN:'d',ADMIN_TOKEN:ADMIN,ANTHROPIC_API_KEY:'sk-ant-test'};
+const base='https://coursecue.hrk-6888.workers.dev',ADMIN='a'.repeat(40),env={OWNER_TOKEN:'o',DEVICE_TOKEN:'d',ADMIN_TOKEN:ADMIN,SABORO_ANTHROPIC_API_KEY:'sk-ant-test'};
 const tok=c=>c.repeat(64),OWNER=tok('a'),DEVICE=tok('b');
 const req=(path,{method='GET',token,body}={})=>new Request(base+path,{method,headers:{...(token?{Authorization:'Bearer '+token}:{}),'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
 const call=(store,path,o,e=env)=>handle(req(path,o),e,store,{waitUntil(){}});
@@ -16,7 +16,7 @@ const now=async(store,e)=>JSON.parse((await (await ask(store,{mode:'now'},e)).te
 const status=async(store,e)=>(await call(store,'/api/agent/ai',{token:DEVICE},e)).json();
 test('料金：Sonnet 5.5 の通常料金（入力 $2・出力 $10／100 万トークン）、Batch は半額、請求は実費×為替×1.5',()=>{assert.equal(costUsd({input_tokens:1e6,output_tokens:1e6}),12);assert.equal(costUsd({cache_read_input_tokens:1e6,cache_creation_input_tokens:1e6}),2.7);assert.equal(costUsd({input_tokens:1e6,output_tokens:1e6},{batch:true}),6);assert.equal(costUsd({input_tokens:1e6},{model:'unknown'}),4,'知らないモデルは高めに見積もる');assert.equal(chargeMicro(0.4,{usdJpy:150,markup:1.5}),90e6)});
 test('プランで分けず誰でも使える。キー未設定・支払いが必要なのに未払いなら使えない',async()=>{fake();let {store}=await setup({plan:'byo'});assert.equal((await status(store)).available,true,'プランに関係なく使える');assert.equal((await now(store)).status,'done');
- ({store}=await setup());assert.equal((await status(store,{...env,ANTHROPIC_API_KEY:undefined})).reason,'not_configured');assert.deepEqual(await status(store).then(s=>[s.available,s.included,s.used]),[true,60,0]);
+ ({store}=await setup());assert.equal((await status(store,{...env,SABORO_ANTHROPIC_API_KEY:undefined})).reason,'not_configured');assert.deepEqual(await status(store).then(s=>[s.available,s.included,s.used]),[true,60,0]);
  await admin(store,'/settings',{feeRate:0.036,taxable:false,usdJpy:150,requirePayment:true});assert.equal((await status(store)).reason,'payment_required');
  const web=await (await call(store,'/api/state',{token:OWNER})).json();assert.equal(web.ai.reason,'payment_required','Web の画面にも状態を出す')});
 test('すぐの依頼：結果を返し、使用量を記録する。無料分の 60 回までは請求なし',async()=>{const f=fake();const {store,id}=await setup();const r=await now(store);assert.deepEqual(r,{status:'done',text:'{"draft":"ok"}'});assert.equal(f.calls.stream,1);
