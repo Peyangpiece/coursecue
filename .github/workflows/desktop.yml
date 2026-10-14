@@ -43,7 +43,33 @@ jobs:
             curl -fsSL "https://registry.npmjs.org/@napi-rs/$pkg/-/$pkg-$ver.tgz" | tar -xz -C "$dir" --strip-components=1
           done
           ls node_modules/@napi-rs/
-      # Mac は ad-hoc 署名（package.json の mac.identity: "-"）。署名がないと Apple シリコンでは「壊れているため開けません」になる
+      # Mac の署名：GitHub の Secrets に自分で作ったコード署名の証明書（MAC_SIGN_P12：.p12 を base64 にしたもの、MAC_SIGN_PASSWORD：その書き出しのパスワード）があれば、
+      # 一時的なキーチェーンに取り込み、desktop/after-pack.cjs がそれで署名する。毎回同じ証明書で署名すると、キーチェーンの「常に許可」が更新のあとも引き継がれる。
+      # 証明書がなければ ad-hoc 署名（署名がないと Apple シリコンでは「壊れているため開けません」になる）。electron-builder 自身の署名は package.json の mac.identity: null で止めている
+      - name: Prepare the Mac signing certificate
+        env:
+          MAC_SIGN_P12: ${{ secrets.MAC_SIGN_P12 }}
+          MAC_SIGN_PASSWORD: ${{ secrets.MAC_SIGN_PASSWORD }}
+        run: |
+          if [ -z "$MAC_SIGN_P12" ]; then echo "署名用の証明書（MAC_SIGN_P12）がないため、ad-hoc 署名で作ります"; exit 0; fi
+          kc="$RUNNER_TEMP/saboro-sign.keychain-db"; kp=$(openssl rand -hex 16)
+          security create-keychain -p "$kp" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kp" "$kc"
+          printf '%s' "$MAC_SIGN_P12" | base64 --decode > "$RUNNER_TEMP/sign.p12"
+          security import "$RUNNER_TEMP/sign.p12" -k "$kc" -P "$MAC_SIGN_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/sign.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kp" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          # 自分で作った証明書は信頼されていないので、この Mac（GitHub の作業用の Mac）でだけコード署名用に信頼する
+          security find-certificate -a -p "$kc" > "$RUNNER_TEMP/sign.pem"
+          sudo security authorizationdb write com.apple.trust-settings.admin allow
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$RUNNER_TEMP/sign.pem" || echo "証明書を信頼に加えられませんでした（署名はそのまま試します）"
+          security find-identity -p codesigning "$kc"
+          id=$(security find-identity -p codesigning "$kc" | awk '/[0-9]+\)/{print $2; exit}')
+          if [ -z "$id" ]; then echo "::error::MAC_SIGN_P12 にコード署名に使える証明書が見つかりません（証明書のタイプが「コード署名」か確かめてください）"; exit 1; fi
+          echo "MAC_SIGN_IDENTITY=$id" >> "$GITHUB_ENV"
+          echo "MAC_SIGN_KEYCHAIN=$kc" >> "$GITHUB_ENV"
       - name: Build (macOS + Windows)
         run: npx electron-builder --mac --win --publish never
         env:

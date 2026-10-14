@@ -9,3 +9,9 @@ test('Mac のアプリのメニューは saboro の名前で出す（内部の�
  for(const l of ["role:'about',label:'saboro について'","role:'hide',label:'saboro を隠す'","role:'quit',label:'saboro を終了'","applicationName:'saboro'"])assert.ok(fn.includes(l),l);
  for(const r of ['cut','copy','paste','selectAll','undo'])assert.ok(fn.includes(`role:'${r}'`),`編集の操作 ${r} を残す`);assert.match(src,/async function start\(\)\{macAppMenu\(\);/);
  assert.doesNotMatch(src,/app\.setName\(|app\.name\s*=|"productName"\s*:\s*"saboro",\s*"version"/,'app.name（設定の保存場所・キーチェーンの名前）は変えない');assert.equal(JSON.parse(readFileSync('package.json','utf8')).name,'coursecue')});
+test('Mac の署名：electron-builder の署名は止め、afterPack で自分の証明書（なければ ad-hoc）で署名する。証明書は Secrets にあるときだけ一時的なキーチェーンに取り込む',()=>{const b=JSON.parse(readFileSync('package.json','utf8')).build,wf=readFileSync('.github/workflows/desktop.yml','utf8'),hook=readFileSync('desktop/after-pack.cjs','utf8');
+ assert.equal(b.mac.identity,null,'electron-builder が ad-hoc で上書きしないように');assert.equal(b.afterPack,'desktop/after-pack.cjs');assert.ok(b.files.includes('!desktop/after-pack.cjs'),'署名の処理はアプリに入れない');
+ assert.match(hook,/identity=process\.env\.MAC_SIGN_IDENTITY\|\|'-'/,'証明書がなければ ad-hoc（Apple シリコンは署名がないと開けない）');assert.match(hook,/'--verify','--deep','--strict'/,'署名を確かめる');assert.match(hook,/Signature=adhoc/,'証明書で署名したはずが ad-hoc なら止める');
+ const step=wf.slice(wf.indexOf('- name: Prepare the Mac signing certificate'),wf.indexOf('- name: Build (macOS + Windows)'));assert.ok(step.length>0&&wf.indexOf('Prepare the Mac signing certificate')<wf.indexOf('Build (macOS + Windows)'),'作る前に用意する');
+ for(const k of ['secrets.MAC_SIGN_P12','secrets.MAC_SIGN_PASSWORD','if [ -z "$MAC_SIGN_P12" ]; then','security create-keychain','security import','rm -f "$RUNNER_TEMP/sign.p12"','MAC_SIGN_IDENTITY=','MAC_SIGN_KEYCHAIN='])assert.ok(step.includes(k),k);
+ assert.doesNotMatch(step,/echo "\$MAC_SIGN_(P12|PASSWORD)"/,'秘密をログに出さない')});
