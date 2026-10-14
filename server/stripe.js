@@ -21,12 +21,19 @@ export function paymentFromEvent(event){const o=event?.data?.object||{},type=eve
  if(type==='checkout.session.completed'||type==='checkout.session.async_payment_succeeded'){if(o.mode!=='payment'||o.payment_status!=='paid'||!(o.amount_total>0))return null;return {id:`stripe:${o.id}`,customer:o.customer||'',email:o.customer_details?.email||'',reference:REF.test(o.client_reference_id||'')?o.client_reference_id:'',amount:o.amount_total,paid_on:jstDate(event.created),note:'Stripe 支払いリンク'}}
  if(type==='charge.refunded'){if(!(o.amount_refunded>0))return null;return {id:`stripe:refund:${o.id}`,customer:o.customer||'',email:o.billing_details?.email||o.receipt_email||'',amount:-o.amount_refunded,paid_on:jstDate(event.created),note:`Stripe 返金（${o.id}）`}}
  return null}
+// 定期支払いの状態：customer.subscription.created／updated／deleted。期間の終わりは新しい API では items 側にある
+// 初回の Checkout（mode=subscription、支払い済み）でも「有効」として先に記録する（subscription の通知を選び忘れても使い始められるように）
+export function subscriptionFromEvent(event){const o=event?.data?.object||{},type=event?.type,at=Number(event?.created)||0;
+ if(['customer.subscription.created','customer.subscription.updated','customer.subscription.deleted'].includes(type)&&o.customer&&o.id)return {customer:o.customer,subscription:o.id||'',status:type==='customer.subscription.deleted'?'canceled':String(o.status||''),periodEnd:o.current_period_end??o.items?.data?.[0]?.current_period_end??null,cancelAtPeriodEnd:!!o.cancel_at_period_end,eventAt:at};
+ if(type==='checkout.session.completed'&&o.mode==='subscription'&&o.payment_status==='paid'&&o.customer&&o.subscription)return {customer:o.customer,subscription:o.subscription||'',status:'active',periodEnd:null,cancelAtPeriodEnd:false,eventAt:at};
+ return null}
 // 定期支払いの初回の Checkout：顧客 ID と利用者 ID の対応を覚える
 export function linkFromEvent(event){const o=event?.data?.object||{};if(event?.type!=='checkout.session.completed'||!o.customer||!REF.test(o.client_reference_id||''))return null;return {customer:o.customer,account:o.client_reference_id}}
 export async function handleStripe(req,env,store,{json,origin}){const secret=env.STRIPE_WEBHOOK_SECRET;if(!secret)return json({error:'stripe_not_configured'},503,origin);if(req.method!=='POST')return json({error:'not_found'},404,origin);
  const body=await req.text();if(body.length>1000000)return json({error:'too_large'},413,origin);if(!(await verifyStripeSignature(body,req.headers.get('Stripe-Signature'),secret)))return json({error:'bad_signature'},400,origin);
  let event;try{event=JSON.parse(body)}catch{return json({error:'invalid'},400,origin)}
  const link=linkFromEvent(event);if(link&&await store.hasAccount(link.account))await store.linkStripeCustomer(link.customer,link.account);
+ const sub=subscriptionFromEvent(event);if(sub)await store.upsertSubscription(sub);
  const p=paymentFromEvent(event);if(!p)return json({received:true},200,origin);
  // 利用者：支払いリンクの利用者 ID → 覚えた顧客 ID の順に探す
  let account=p.reference&&await store.hasAccount(p.reference)?p.reference:null;if(account&&p.customer)await store.linkStripeCustomer(p.customer,account);if(!account&&p.customer)account=await store.stripeAccountFor(p.customer);
