@@ -8,8 +8,6 @@
     "deploy:firebase": "firebase deploy --only hosting --project coursecue-2026",
     "start": "node local/bridge.js",
     "setup": "node local/setup.js",
-    "setup:claude-api": "node local/set-claude-key.js",
-    "check:claude-api": "node local/check-claude-key.js",
     "test": "node --test tests/*.test.js",
     "install:agent": "node local/install-agent.js",
     "seed": "node local/seed.js",

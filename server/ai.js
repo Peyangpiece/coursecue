@@ -1,5 +1,5 @@
 // SaBoRo の AI：こちらの Anthropic の API キー（Worker の秘密 ANTHROPIC_API_KEY）で回答を作る。利用者の PC にはキーを渡さない
-// 使える人：プランが「saboro の API」で、支払いが必要なら定期支払いが有効な人。月の「課題生成」は無料分（既定 60 回）まで定額、
+// 使える人：全員（プランで分けない。支払いが必要なら定期支払いが有効な人）。本人の PC の Codex・Claude Code が使えるときはそちらを先に使う（アプリ側）。月の「課題生成」は無料分（既定 60 回）まで定額、
 // それを超えた後の回は使用量（トークン）に応じて実費×上乗せ率（既定 1.5 倍）を円で請求する（毎日まとめて Stripe の請求項目にし、次の月額の請求に加算）
 // 急ぐ依頼（本人が画面で頼んだもの・締切まで 24 時間以内）は通常の API、それ以外は Batch（半額。通常 1 時間以内、最大 24 時間）
 import Anthropic from '@anthropic-ai/sdk';
@@ -23,8 +23,8 @@ const params=(text,schema)=>({model:MODEL,max_tokens:MAX_TOKENS,output_config:{e
 function outcome(message){if(message?.stop_reason==='refusal')return {reason:'回答を拒否されました'};if(message?.stop_reason==='max_tokens')return {reason:'出力が上限で途切れました'};const text=message?.content?.find?.(b=>b.type==='text')?.text;return text?{text}:{reason:'出力なし'}}
 // 今月の状態：無料分の残り・超過分の金額・使えるか（使えなければ理由）
 export async function aiStatus(store,env,account,now=new Date()){const month=currentMonth(now);const [settings,plan,subs,stats,today]=await Promise.all([store.getAdminSettings(),store.planOf(account),store.subscriptionsOf(account),store.aiMonthStats(account,month),store.aiDayCalls(account,dayStart(now))]);const s=aiSettings(settings),billing=billingOf({account,settings,plan,subs});
- const subscribed=subs.some(x=>ACTIVE.includes(x.status)),overage=subscribed&&!!env.STRIPE_API_KEY,base={plan:plan||'byo',month,included:s.included,used:stats.count,overageYen:Math.round(stats.chargeMicro/1e6),overage};
- const reason=!env.ANTHROPIC_API_KEY?'not_configured':plan!=='api'?'plan':!billing.allowed?'payment_required':today>=DAILY_LIMIT?'daily_limit':stats.count>=s.included&&!overage?'limit':'';return {...base,available:!reason,reason}}
+ const subscribed=subs.some(x=>ACTIVE.includes(x.status)),overage=subscribed&&!!env.STRIPE_API_KEY,base={month,included:s.included,used:stats.count,overageYen:Math.round(stats.chargeMicro/1e6),overage};
+ const reason=!env.ANTHROPIC_API_KEY?'not_configured':!billing.allowed?'payment_required':today>=DAILY_LIMIT?'daily_limit':stats.count>=s.included&&!overage?'limit':'';return {...base,available:!reason,reason}}
 // 1 回分の使用量を記録する。月の「課題生成」が無料分に達した後なら請求の対象
 async function record(store,{account,label,mode,message,settings,now=new Date()}){const month=currentMonth(now),s=aiSettings(settings),usage=message?.usage||{},model=message?.model||MODEL,usd=costUsd(usage,{model,batch:mode==='batch'});const stats=await store.aiMonthStats(account,month),billable=stats.count>=s.included;
  await store.addAiUsage({id:crypto.randomUUID(),account,month,label,mode,model,input:Number(usage.input_tokens)||0,output:Number(usage.output_tokens)||0,cache_read:Number(usage.cache_read_input_tokens)||0,cache_write:Number(usage.cache_creation_input_tokens)||0,cost_usd:usd,billable:billable?1:0,charge_micro:billable?chargeMicro(usd,s):0,created:now.toISOString()})}

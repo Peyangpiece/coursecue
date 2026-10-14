@@ -11,15 +11,15 @@ manabo自動連携は、各自の Mac に入れたサービスと接続キーで
 - 認証付き同期API・処理キュー: Cloudflare Worker + D1
 - Macエージェント: `local/bridge.js`（15秒ごとにキュー確認、毎日16:30に同期）
 - manabo操作: Playwrightの専用ブラウザ。大学の正規のログインフォームを利用
-- 課題生成: 資料テキストを根拠に構造化出力で生成。本文（draft・記述式の回答）はそのまま提出できる文章だけにし、見出し記号・強調・箇条書き記号・引用符などの記号や Markdown、本人への指示・助言は入れない（生成後にも取り除く）。確認が必要な点・一般知識で推定した旨は notes に分け、課題詳細の「注意点」に表示する。Codex CLI → Claude Code（`claude -p`）→ Claude API（`claude-sonnet-5-5`）の順に試し、未インストール・未ログイン・利用枠超過・形式不正などで失敗したら次へ進む。使った手段は課題詳細の「生成」に表示
-  - Claude APIを使う場合は `npm run setup:claude-api` でAPIキーをキーチェーンに保存し（入力は * で表示。`pbpaste | npm run setup:claude-api` でクリップボードからも可）、Macサービスを再起動
-  - CLIの場所は自動で探す。見つからない場合は `COURSECUE_CODEX` / `COURSECUE_CLAUDE` で指定。モデルは `COURSECUE_CLAUDE_MODEL`（Claude Code）/ `COURSECUE_CLAUDE_API_MODEL`（Claude API）で変更可
+- 課題生成: 資料テキストを根拠に構造化出力で生成。本文（draft・記述式の回答）はそのまま提出できる文章だけにし、見出し記号・強調・箇条書き記号・引用符などの記号や Markdown、本人への指示・助言は入れない（生成後にも取り除く）。確認が必要な点・一般知識で推定した旨は notes に分け、課題詳細の「注意点」に表示する。Codex CLI → Claude Code（`claude -p`）→ SaBoRo の AI（こちらの API キーでクラウドが作る。`claude-sonnet-5-5`）の順に試し、未インストール・未ログイン・利用枠超過・形式不正などで失敗したら次へ進む。どの手段で作ったかは画面に出さない
+  - SaBoRo の AI：月の課題生成 60 回までは月額に含み、それを超えた分は使用量（実費×1.5 倍）を月額と一緒に請求する。急がない回答は Batch（半額。通常 1 時間以内、最大 24 時間）で作り、出来上がったら自動で入力する（`server/ai.js`）
+  - CLIの場所は自動で探す。見つからない場合は `COURSECUE_CODEX` / `COURSECUE_CLAUDE` で指定。モデルは `COURSECUE_CLAUDE_MODEL`（Claude Code）で変更可
 - 認証情報・接続キー: macOSキーチェーン。平文パスワードはクラウドへ送信しない。公開設定はRSA-OAEP + AES-GCMで暗号化し、登録Macだけが復号する
 
 ## セットアップ（デスクトップアプリ：Mac・Windows）
 GitHub の Release（https://github.com/Peyangpiece/SaBoRo/releases/latest ）から自分の OS 用を入れる（Mac は `.dmg`、Windows は `.exe`）。起動すると常駐し（メニューバー／タスクトレイ）、ログイン時に自動で立ち上がる。初回は manabo 用のブラウザ（Chromium）を取り込む（数分）。その後に開く「はじめの設定」で済ませるのは 3 つだけ：
 1. manabo のログイン ID とパスワードを保存する（このパソコンの中だけに暗号化して保存。Mac はキーチェーン、Windows は DPAPI。保存と同時に manabo への接続を確認）
-2. AI との連携を確認する。Codex（ChatGPT アプリ）または Claude Code にログイン済みならそのまま使える。どちらもなければ Claude API のキーを入れる（その場で使えるか確認してから保存）
+2. AI との連携を確認する（設定は要らない。「使えます」と出ればよい）
 3. 「saboroを接続」でアプリ内の画面を saboro に接続する
 
 授業の一覧・授業日・課題・締切・資料は接続後の同期で manabo から自動で集める。資料は「書類（Documents）/saboro/<授業名>/」に保存する。アプリは Release の最新版を自動で確認して更新する（Mac は署名がないため自動更新が効かず、新しい版を入れ直す。新しい版を見つけたら案内の画面とメニューバーの「新しい版をダウンロード」で知らせる。Apple Developer の署名を CI の `CSC_LINK` に設定すれば自動更新が有効になる）。配布物は Apple の署名がない（Mac は ad-hoc 署名のみ）ので、Mac では初回に開こうとして止められたあと「システム設定 → プライバシーとセキュリティ」の「このまま開く」、Windows では SmartScreen の「詳細情報 → 実行」が必要

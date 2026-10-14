@@ -15,7 +15,7 @@ const ask=(store,body,e)=>call(store,'/api/agent/ai',{method:'POST',token:DEVICE
 const now=async(store,e)=>JSON.parse((await (await ask(store,{mode:'now'},e)).text()).trim());
 const status=async(store,e)=>(await call(store,'/api/agent/ai',{token:DEVICE},e)).json();
 test('料金：Sonnet 5.5 の通常料金（入力 $2・出力 $10／100 万トークン）、Batch は半額、請求は実費×為替×1.5',()=>{assert.equal(costUsd({input_tokens:1e6,output_tokens:1e6}),12);assert.equal(costUsd({cache_read_input_tokens:1e6,cache_creation_input_tokens:1e6}),2.7);assert.equal(costUsd({input_tokens:1e6,output_tokens:1e6},{batch:true}),6);assert.equal(costUsd({input_tokens:1e6},{model:'unknown'}),4,'知らないモデルは高めに見積もる');assert.equal(chargeMicro(0.4,{usdJpy:150,markup:1.5}),90e6)});
-test('使えるのはプランが「saboro の API」の人だけ。キー未設定・支払いが必要なのに未払いなら使えない',async()=>{fake();let {store}=await setup({plan:'byo'});assert.equal((await status(store)).reason,'plan');assert.equal((await ask(store,{mode:'now'})).status,403);
+test('プランで分けず誰でも使える。キー未設定・支払いが必要なのに未払いなら使えない',async()=>{fake();let {store}=await setup({plan:'byo'});assert.equal((await status(store)).available,true,'プランに関係なく使える');assert.equal((await now(store)).status,'done');
  ({store}=await setup());assert.equal((await status(store,{...env,ANTHROPIC_API_KEY:undefined})).reason,'not_configured');assert.deepEqual(await status(store).then(s=>[s.available,s.included,s.used]),[true,60,0]);
  await admin(store,'/settings',{feeRate:0.036,taxable:false,usdJpy:150,requirePayment:true});assert.equal((await status(store)).reason,'payment_required');
  const web=await (await call(store,'/api/state',{token:OWNER})).json();assert.equal(web.ai.reason,'payment_required','Web の画面にも状態を出す')});
