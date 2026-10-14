@@ -34,7 +34,7 @@ const watchPrompt=p=>{if(!p.promptSeen)p.promptSeen=new Promise(r=>p.on('dialog'
 // 渡したタブで出席コードの入力がまだ開いているか（開いている間はページの処理が止まり、2 秒で応答しない）
 const promptOpen=async p=>!p.isClosed()&&await Promise.race([p.evaluate(()=>1).then(()=>false,()=>false),new Promise(r=>setTimeout(()=>r(true),2000))]);
 // SaBoRo の AI の Batch で回答を作っている間の案内
-export const AI_PENDING_ACTION='回答を作成中です（SaBoRo の AI。通常 1 時間以内、遅くとも 24 時間以内に入力します）';
+export const AI_PENDING_ACTION='回答を作成中です（SaBoRo課題サポート。通常 1 時間以内、遅くとも 24 時間以内に入力します）';
 export class Manabo {
  constructor({root,work,credentials,state,save,ai,extract,trash=trashFile}){Object.assign(this,{baseRoot:root,work,credentials,state,ai,extract,trash});this.spareIds=new Set();this.held=new Map();this.promptTabs=new Map();this.pending=new Map();let chain=Promise.resolve();this.save=()=>(chain=chain.then(save,save))}
  // 資料・授業フォルダの置き場所。設定欄で指定したフォルダ、なければ既定（2026秋学期 フォルダ）
