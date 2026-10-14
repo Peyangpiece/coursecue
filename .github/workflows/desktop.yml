@@ -48,7 +48,13 @@ jobs:
         run: npx electron-builder --mac --win --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # ホームページのダウンロードボタンは版の番号を知らないので、版の番号のない名前の複製も載せる
+      # （https://github.com/Peyangpiece/SaBoRo/releases/latest/download/saboro-mac-arm64.dmg などで常に最新版を指せる）
       - name: Create the release with every installer
         run: |
+          v="${{ steps.version.outputs.tag }}"; v="${v#v}"
+          cp "release/saboro-$v-mac-arm64.dmg" release/saboro-mac-arm64.dmg
+          cp "release/saboro-$v-mac-x64.dmg" release/saboro-mac-x64.dmg
+          cp "release/saboro-$v-win-x64.exe" release/saboro-win-x64.exe
           ls -la release
           gh release create "${{ steps.version.outputs.tag }}" --repo "$DIST_REPO" --latest --title "saboro ${{ steps.version.outputs.tag }}" --notes "Mac は .dmg（Apple シリコンは arm64、Intel は x64）、Windows は .exe を入れてください。Apple の署名がないため、Mac は初回に開こうとして止められたあと「システム設定 → プライバシーとセキュリティ」の「このまま開く」、Windows は SmartScreen の「詳細情報 → 実行」が必要です。" release/*.dmg release/*.zip release/*.blockmap release/*.exe release/latest*.yml

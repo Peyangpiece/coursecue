@@ -143,3 +143,32 @@ footer.site nav a:hover{color:var(--blue)}
   table.def th{border-bottom:0;padding-bottom:4px}
   table.def td{padding-top:4px}
 }
+
+/* ダウンロード：機種の選択・手順 */
+.crumbs{margin:0 0 20px;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:6px;font-size:14px;color:var(--muted)}
+.crumbs li+li::before{content:"›";margin-right:6px;color:#9aa4b1}
+.page .lead{margin:0 0 36px;color:var(--muted);font-size:17px}
+.choices{display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));margin:0;padding:0;list-style:none}
+.choice{display:flex;flex-direction:column;align-items:flex-start;gap:6px;height:100%;padding:32px 28px;border:1.5px solid var(--line);border-radius:18px;background:#fff;box-shadow:var(--shadow);color:var(--text);text-decoration:none;transition:border-color .15s,box-shadow .15s,transform .15s}
+.choice:hover{border-color:var(--blue);box-shadow:var(--shadow-lg);color:var(--text);transform:translateY(-2px)}
+.choice .icon{width:56px;height:56px;margin-bottom:12px}
+.choice .icon svg{width:28px;height:28px}
+.choice strong{color:var(--ink);font-size:22px;line-height:1.4}
+.choice span{color:var(--muted);font-size:15px}
+.choice .go{margin-top:14px;color:var(--blue);font-weight:700}
+@media (prefers-reduced-motion:reduce){.choice{transition:none}.choice:hover{transform:none}}
+.get{margin:0 0 12px;padding:28px;border-radius:18px;background:var(--soft);border:1px solid var(--line)}
+.get .buttons{display:flex;flex-wrap:wrap;gap:12px}
+.get .btn small{font-weight:600;opacity:.85}
+.get p{margin:14px 0 0;color:var(--muted);font-size:14px}
+.steps{counter-reset:step;margin:8px 0 0;padding:0;list-style:none}
+.steps>li{position:relative;margin:0;padding:0 0 28px 60px}
+.steps>li::before{counter-increment:step;content:counter(step);position:absolute;left:0;top:0;display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:var(--blue);color:#fff;font-weight:800}
+.steps>li:not(:last-child)::after{content:"";position:absolute;left:19px;top:44px;bottom:6px;width:2px;background:var(--line)}
+.steps h3{margin:6px 0 6px}
+.steps p{margin:0 0 8px;color:var(--text)}
+.steps ul{margin:4px 0 0;padding-left:1.2em;color:var(--text)}
+.steps li li{margin:4px 0}
+.ui{display:inline-block;padding:0 6px;border-radius:4px;background:var(--tint);color:var(--blue-deep);font-weight:700;font-size:.95em}
+.note-box{margin:8px 0 0;padding:16px 20px;border-left:4px solid var(--blue);border-radius:0 10px 10px 0;background:var(--soft);color:var(--text);font-size:15px}
+.other{margin:40px 0 0;color:var(--muted);font-size:15px}
