@@ -63,5 +63,6 @@ export const courseInfoPrompt=(course,materials)=>`大学の授業「${course}�
 - notes: 上記以外の出席・授業形式に関する重要事項（休講・補講の連絡方法など）を短く。
 資料: ${JSON.stringify(materials)}`;
 const validCourseInfo=o=>!!o&&courseInfoKeys.every(k=>o[k]&&typeof o[k].value==='string'&&typeof o[k].evidence==='string')&&Array.isArray(o.sessions);
-export function createCourseInfoExtractor({chain=providers,log=console.error,onUsage,saboro}={}){return (course,materials)=>runChain(chain,courseInfoPrompt(course,materials),{schema:courseInfoSchema,check:validCourseInfo,log,label:'授業情報の読み取り',onUsage,saboro,urgent:true})}
+// options：key（同じ依頼の目印。あれば SaBoRo の AI は Batch にできる）、urgent（すぐ欲しい。Batch にしない）。key がなければ常にすぐ作る
+export function createCourseInfoExtractor({chain=providers,log=console.error,onUsage,saboro}={}){return (course,materials,{key,urgent=true}={})=>runChain(chain,courseInfoPrompt(course,materials),{schema:courseInfoSchema,check:validCourseInfo,log,label:'授業情報の読み取り',onUsage,saboro,key,urgent:urgent||!key})}
 export const generate=createGenerator();
