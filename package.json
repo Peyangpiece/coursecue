@@ -28,7 +28,7 @@
     "playwright": "^1.64.0",
     "electron-updater": "^6.8.9"
   },
-  "version": "1.0.32",
+  "version": "1.0.33",
   "description": "saboro デスクトップ：授業・課題・提出状況・出席を管理する",
   "main": "desktop/main.js",
   "build": {
@@ -49,7 +49,8 @@
       "!local/keychain.swift",
       "!local/install-agent.js",
       "!local/setup.js",
-      "!local/seed.js"
+      "!local/seed.js",
+      "!desktop/after-pack.cjs"
     ],
     "asarUnpack": [
       "node_modules/playwright/**",
@@ -82,7 +83,7 @@
         }
       ],
       "icon": "dist/icon-512.png",
-      "identity": "-",
+      "identity": null,
       "hardenedRuntime": false
     },
     "win": {
@@ -104,6 +105,7 @@
     },
     "dmg": {
       "sign": false
-    }
+    },
+    "afterPack": "desktop/after-pack.cjs"
   }
 }
