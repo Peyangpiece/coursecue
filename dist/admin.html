@@ -1,0 +1,33 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#005bac"><title>saboro 管理</title><link rel="icon" href="/saboro-logo.svg?v=vector-1" type="image/svg+xml"><link rel="stylesheet" href="/saboro.css?v=sp-16">
+<style>
+.admin main{max-width:1180px;margin:0 auto;padding:16px}
+.admin .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 14px}
+.admin .bar .grow{flex:1}
+.admin .bar input[type=month]{width:auto;display:inline-block}
+.admin .stats{grid-template-columns:repeat(5,minmax(0,1fr));margin-bottom:14px}
+.admin .stat{cursor:default}
+.admin .stat:hover{background:var(--th-bg)}
+.admin .stat:hover .stat-label{text-decoration:none}
+.admin .stat-label:after{content:""}
+.admin .stat.minus .stat-num{color:var(--red)}
+.admin .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.admin .table-default th{width:auto}
+.admin .table-default td.num,.admin .table-default th.num{width:auto;text-align:right;white-space:nowrap}
+.admin .table-default td.minus{color:var(--red)}
+.admin .form-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px 12px;align-items:end;margin:8px 0}
+.admin .form-grid label{display:block;font-size:12px;color:var(--muted);margin-bottom:2px}
+.admin .form-grid .wide{grid-column:1/-1}
+.admin .editbox{border:1px solid var(--panel-line);background:#fafcff;padding:10px 12px;margin:0 0 12px}
+.admin .tag{display:inline-block;padding:0 6px;border:1px solid var(--th-line);border-radius:3px;font-size:12px;white-space:nowrap}
+.admin .tag.active{border-color:var(--green);color:var(--green)}
+.admin .tag.stopped{color:var(--muted)}
+.admin .tag.unpaid{border-color:var(--amber);color:var(--amber)}
+.admin .err{color:var(--alert)}
+.admin table.wide{min-width:680px}
+.admin code{word-break:break-all}
+@media (max-width:767px){.admin .stats{grid-template-columns:repeat(2,minmax(0,1fr))}.admin .stat{border-bottom:1px solid var(--th-line)}.admin main{padding:12px}}
+</style></head><body class="admin">
+<div class="screen"><header><div class="nav1"><a class="brand" href="/admin.html"><img src="/saboro-logo.svg?v=vector-1" alt="SaBoRo" width="90" height="34"></a><nav class="gnav" aria-label="管理"><span class="muted" style="padding:0 8px">管理者</span></nav></div></header>
+<main><h1 class="sr-only">saboro 管理</h1><div id="app"><p class="muted">読み込み中…</p></div></main></div>
+<div class="toast" role="status" id="toast"></div>
+<script src="/admin.js?v=1"></script></body></html>
