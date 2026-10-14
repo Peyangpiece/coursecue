@@ -10,4 +10,4 @@ step('manabo 用のブラウザを用意');await run(join(repo,'node_modules/.bi
 if(process.argv.includes('--no-agent')){console.log('Mac サービスの登録は省きました（npm start で起動できます）');process.exit(0)}
 step('Mac サービスを登録');await run(process.execPath,[join(repo,'local/install-agent.js')]);
 step('設定画面を開く');await new Promise(r=>setTimeout(r,2500));spawn('open',['http://127.0.0.1:8766/setup'],{stdio:'ignore',detached:true}).unref();
-console.log('\n完了。開いた画面で manabo の ID・パスワードを保存し、AI を連携し、「saboroを接続」を押してください。');
+console.log('\n完了。開いた画面で manabo の ID・パスワードを保存し、SaBoRo課題サポートが「使えます」になっていることを確かめ、「saboroを接続」を押してください。');
