@@ -17,3 +17,9 @@ CREATE INDEX IF NOT EXISTS admin_payments_month ON admin_payments(month);
 CREATE TABLE IF NOT EXISTS admin_costs (id TEXT PRIMARY KEY, item TEXT NOT NULL, amount INTEGER NOT NULL, month TEXT NOT NULL, recurring INTEGER NOT NULL DEFAULT 0, end_month TEXT, note TEXT NOT NULL DEFAULT '', created TEXT NOT NULL);
 -- 計算の設定（決済手数料率・消費税を引くか・1 ドルの円換算）
 CREATE TABLE IF NOT EXISTS admin_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- Stripe 連携：Stripe の顧客 ID と利用者の対応、利用者の分からない入金（管理者画面で割り当てる）
+CREATE TABLE IF NOT EXISTS admin_stripe_customers (customer TEXT PRIMARY KEY, account TEXT NOT NULL, created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS admin_stripe_unmatched (id TEXT PRIMARY KEY, customer TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', month TEXT NOT NULL, amount INTEGER NOT NULL, paid_on TEXT, note TEXT NOT NULL DEFAULT '', created TEXT NOT NULL);
+-- Stripe の定期支払い（サブスクリプション）の状態。定期支払いごと（解約して入り直した顧客は 2 件になる）。通知の時刻（event_at）より古い通知では上書きしない
+CREATE TABLE IF NOT EXISTS admin_subscriptions (subscription TEXT PRIMARY KEY, customer TEXT NOT NULL, status TEXT NOT NULL, period_end INTEGER, cancel_at_period_end INTEGER NOT NULL DEFAULT 0, event_at INTEGER NOT NULL DEFAULT 0, updated TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS admin_subscriptions_customer ON admin_subscriptions(customer);

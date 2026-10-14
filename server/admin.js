@@ -1,8 +1,12 @@
 // 管理者画面（/admin.html）の API と集計。認証は Worker の秘密 ADMIN_TOKEN（32 文字以上）で、利用者の接続キー・Mac の鍵とは別
 // 利用者の状態からは、件数・最終接続・版・AI の使用量の集計だけを読む（授業名・課題・資料の中身は返さない）
 // 売上は入金の記録、費用は登録した費用、AI の費用は「saboro の API」プランの利用者の使用量から Claude Sonnet 5.5 の通常料金で出した目安
+import {billingOf} from './billing.js';
 export const PLANS=['api','byo','free'],STATUSES=['active','trial','stopped'];
-export const DEFAULT_SETTINGS={feeRate:0.036,taxable:false,usdJpy:150};
+// paymentLink：Stripe の支払いリンク（https://buy.stripe.com/…）。利用者ごとに client_reference_id を付けて画面に出す
+// requirePayment：支払いを必須にする（定期支払いが有効でない利用者は同期・回答の作成などを止める。プランが「無料」の人は対象外）。portalLink：Stripe の顧客ポータル（解約・カード変更）。monthlyPrice：支払い画面に出す月額
+export const DEFAULT_SETTINGS={feeRate:0.036,taxable:false,usdJpy:150,paymentLink:'',requirePayment:false,portalLink:'',monthlyPrice:0};
+const CUSTOMER=/^cus_[A-Za-z0-9]{1,100}$/;
 const MONTH=/^\d{4}-(0[1-9]|1[0-2])$/,DATE=/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 export const monthAdd=(m,n)=>{const [y,mo]=m.split('-').map(Number),d=new Date(Date.UTC(y,mo-1+n,1));return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}`};
 // 「今月」は日本時間で決める
@@ -27,15 +31,18 @@ const int=(v,min,max)=>Number.isInteger(v)&&v>=min&&v<=max?v:null;
 export function validUser(d){const label=str(d.label,40),note=str(d.note,500),started=d.started?(DATE.test(d.started)?d.started:null):'',price=int(d.price,0,1000000);if(label==null||note==null||started==null||price==null||!PLANS.includes(d.plan)||!STATUSES.includes(d.status))return null;return {label,plan:d.plan,price,status:d.status,started,note}}
 export function validPayment(d){const amount=int(d.amount,-10000000,10000000),method=str(d.method,20),note=str(d.note,200),paid_on=d.paid_on?(DATE.test(d.paid_on)?d.paid_on:null):'';if(!amount||!MONTH.test(d.month||'')||method==null||note==null||paid_on==null)return null;return {month:d.month,amount,method,paid_on,note}}
 export function validCost(d){const item=str(d.item,40,{required:true}),note=str(d.note,200),amount=int(d.amount,0,10000000);if(item==null||note==null||amount==null||!MONTH.test(d.month||'')||typeof d.recurring!=='boolean')return null;return {item,amount,month:d.month,recurring:d.recurring?1:0,note}}
-export function validSettings(d){const ok=typeof d.feeRate==='number'&&d.feeRate>=0&&d.feeRate<=0.2&&typeof d.taxable==='boolean'&&typeof d.usdJpy==='number'&&d.usdJpy>=50&&d.usdJpy<=500;return ok?{feeRate:d.feeRate,taxable:d.taxable,usdJpy:d.usdJpy}:null}
+const URL_OK=v=>!v||/^https:\/\/[^\s?#]{1,290}$/.test(v),URL_Q=v=>!v||/^https:\/\/[^\s#]{1,290}$/.test(v);
+export function validSettings(d){const ok=typeof d.feeRate==='number'&&d.feeRate>=0&&d.feeRate<=0.2&&typeof d.taxable==='boolean'&&typeof d.usdJpy==='number'&&d.usdJpy>=50&&d.usdJpy<=500;const opt=k=>d[k]==null?undefined:String(d[k]).trim();const link=opt('paymentLink'),portal=opt('portalLink');
+ if(!ok||!URL_OK(link)||!URL_Q(portal)||(d.requirePayment!=null&&typeof d.requirePayment!=='boolean')||(d.monthlyPrice!=null&&!(Number.isInteger(d.monthlyPrice)&&d.monthlyPrice>=0&&d.monthlyPrice<=100000)))return null;
+ return {feeRate:d.feeRate,taxable:d.taxable,usdJpy:d.usdJpy,...(link!==undefined?{paymentLink:link}:{}),...(portal!==undefined?{portalLink:portal}:{}),...(d.requirePayment!=null?{requirePayment:d.requirePayment}:{}),...(d.monthlyPrice!=null?{monthlyPrice:d.monthlyPrice}:{})}}
 // /api/admin/* の処理。json・equal は worker.js から受け取る
 export async function handleAdmin(req,u,env,store,{json,equal,origin}){const token=env.ADMIN_TOKEN;if(!token||String(token).length<32)return json({error:'admin_not_configured'},503,origin);
  const key=req.headers.get('Authorization')?.replace(/^Bearer /,'');if(!(await equal(key,token)))return json({error:'unauthorized'},401,origin);
  const path=u.pathname.slice('/api/admin'.length),body=req.method==='POST'?await req.json().catch(()=>null):null;if(req.method==='POST'&&!body)return json({error:'invalid'},400,origin);
  const bad=()=>json({error:'invalid'},400,origin),ok=()=>json({ok:true},200,origin),now=new Date();
- if(path==='/overview'&&req.method==='GET'){const q=u.searchParams.get('month'),month=MONTH.test(q||'')?q:currentMonth(now);const [users,payments,costs,settings]=await Promise.all([store.adminUsers().then(rows=>rows.map(userRow)),store.listPayments(monthAdd(month,-5),month),store.listCosts(),store.getAdminSettings()]);const set={...DEFAULT_SETTINGS,...settings};
+ if(path==='/overview'&&req.method==='GET'){const q=u.searchParams.get('month'),month=MONTH.test(q||'')?q:currentMonth(now);const [users,payments,costs,settings,unmatched,customers,subscriptions]=await Promise.all([store.adminUsers().then(rows=>rows.map(userRow)),store.listPayments(monthAdd(month,-5),month),store.listCosts(),store.getAdminSettings(),store.listUnmatched(),store.listStripeCustomers(),store.listSubscriptions()]);const set={...DEFAULT_SETTINGS,...settings};
   const trend=[-5,-4,-3,-2,-1,0].map(i=>{const m=monthAdd(month,i),r=summarize({month:m,users,payments,costs,settings:set,now});return {month:m,revenue:r.revenue,fees:r.fees,tax:r.tax,apiCost:r.apiCost,fixed:r.fixed,profit:r.profit,paying:r.paying}});
-  return json({month,current:currentMonth(now),settings:set,summary:summarize({month,users,payments,costs,settings:set,now}),trend,users:users.map(({usage,...x})=>({...x,usageMonth:usageOf({usage},month)})),payments:payments.filter(p=>p.month===month),costs:costs.map(c=>({...c,recurring:!!c.recurring,applies:costApplies(c,month)}))},200,origin)}
+  return json({month,current:currentMonth(now),settings:set,summary:summarize({month,users,payments,costs,settings:set,now}),trend,users:users.map(({usage,...x})=>({...x,usageMonth:usageOf({usage},month),stripeCustomers:customers.filter(c=>c.account===x.account).map(c=>c.customer),billing:billingOf({account:x.account,settings:set,plan:x.plan,subs:subscriptions.filter(s=>s.account===x.account)})})),stripe:{configured:!!env.STRIPE_WEBHOOK_SECRET,unmatched},payments:payments.filter(p=>p.month===month),costs:costs.map(c=>({...c,recurring:!!c.recurring,applies:costApplies(c,month)}))},200,origin)}
  if(req.method!=='POST')return json({error:'not_found'},404,origin);
  if(path==='/user'){const v=validUser(body);if(!v||!(await store.hasAccount(String(body.account||''))))return bad();await store.putAdminUser({account:body.account,...v,updated:now.toISOString()});return ok()}
  if(path==='/payment'){const v=validPayment(body);if(!v||!(await store.hasAccount(String(body.account||''))))return bad();await store.addPayment({id:crypto.randomUUID(),account:body.account,...v,created:now.toISOString()});return ok()}
@@ -43,5 +50,10 @@ export async function handleAdmin(req,u,env,store,{json,equal,origin}){const tok
  if(path==='/cost'){const v=validCost(body);if(!v)return bad();await store.addCost({id:crypto.randomUUID(),...v,created:now.toISOString()});return ok()}
  if(path==='/cost/end'){if(!MONTH.test(body.month||''))return bad();await store.endCost(String(body.id||''),body.month);return ok()}
  if(path==='/cost/delete'){await store.deleteCost(String(body.id||''));return ok()}
+ // Stripe 連携：未割り当ての入金を利用者に割り当てる・顧客 ID の対応を登録／解除する・未割り当てを消す
+ if(path==='/stripe/assign'){if(!(await store.hasAccount(String(body.account||''))))return bad();return (await store.assignUnmatched(String(body.id||''),body.account))?ok():bad()}
+ if(path==='/stripe/link'){if(!CUSTOMER.test(body.customer||'')||!(await store.hasAccount(String(body.account||''))))return bad();await store.linkStripeCustomer(body.customer,body.account);return ok()}
+ if(path==='/stripe/unlink'){if(!CUSTOMER.test(body.customer||''))return bad();await store.unlinkStripeCustomer(body.customer);return ok()}
+ if(path==='/stripe/unmatched/delete'){await store.deleteUnmatched(String(body.id||''));return ok()}
  if(path==='/settings'){const v=validSettings(body);if(!v)return bad();await store.putAdminSettings(v);return ok()}
  return json({error:'not_found'},404,origin)}

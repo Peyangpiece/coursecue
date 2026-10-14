@@ -1,4 +1,4 @@
-import {handleAdmin} from './admin.js';
+import {handleAdmin} from './admin.js';import {handleStripe} from './stripe.js';import {billingOf,PAID_KINDS} from './billing.js';
 const origins=['https://coursecue.hrk-6888.workers.dev','https://coursecue-2026.web.app'];
 const KINDS=['sync','generate','submit','supplement','settings','credentials','verify','timetable','link','attendance'];
 const json=(data,status=200,origin='')=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Access-Control-Allow-Origin':origins.includes(origin)?origin:origins[0],'Access-Control-Allow-Headers':'Authorization,Content-Type','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Vary':'Origin'}});
@@ -12,7 +12,8 @@ export function d1Store(db){return {
  async putState(account,value){await db.prepare('INSERT INTO account_state(account,value) VALUES(?,?) ON CONFLICT(account) DO UPDATE SET value=excluded.value').bind(account,value).run()},
  async insertJob(j){await db.prepare('INSERT INTO account_jobs(id,account,kind,task,payload,created,updated) VALUES(?,?,?,?,?,?,?)').bind(j.id,j.account,j.kind,j.task,j.payload,j.created,j.updated).run()},
  async listJobs(account){return (await db.prepare('SELECT id,kind,task,status,result,created,updated FROM account_jobs WHERE account=? ORDER BY created DESC LIMIT 50').bind(account).all()).results},
- async claimJob(account,now){return db.prepare("UPDATE account_jobs SET status='running',updated=? WHERE id=(SELECT id FROM account_jobs WHERE account=? AND status='pending' ORDER BY created LIMIT 1) AND status='pending' RETURNING *").bind(now,account).first()},
+ // exclude：取り出さない種類（支払いが必要な利用者の、作業を伴う処理）
+ async claimJob(account,now,exclude=[]){const not=exclude.length?` AND kind NOT IN (${exclude.map(()=>'?').join(',')})`:'';return db.prepare(`UPDATE account_jobs SET status='running',updated=? WHERE id=(SELECT id FROM account_jobs WHERE account=? AND status='pending'${not} ORDER BY created LIMIT 1) AND status='pending' RETURNING *`).bind(now,account,...exclude).first()},
  async finishJob(account,id,status,result,now){await db.prepare("UPDATE account_jobs SET status=?,result=?,updated=?,payload=CASE WHEN kind='credentials' THEN '{}' ELSE payload END WHERE id=? AND account=? AND status='running'").bind(status,result,now,id,account).run()},
  async findAccount(hash){const row=await db.prepare('SELECT id,owner_hash,device_hash FROM accounts WHERE owner_hash=? OR device_hash=?').bind(hash,hash).first();return row?{id:row.id,role:row.owner_hash===hash?'owner':'device'}:null},
  async createAccount(a){await db.prepare('INSERT INTO accounts(id,owner_hash,device_hash,created) VALUES(?,?,?,?)').bind(a.id,a.ownerHash,a.deviceHash,a.created).run()},
@@ -28,13 +29,31 @@ export function d1Store(db){return {
  async endCost(id,month){await db.prepare('UPDATE admin_costs SET end_month=? WHERE id=? AND recurring=1').bind(month,id).run()},
  async deleteCost(id){await db.prepare('DELETE FROM admin_costs WHERE id=?').bind(id).run()},
  async getAdminSettings(){const out={};for(const r of (await db.prepare('SELECT key,value FROM admin_settings').all()).results){try{out[r.key]=JSON.parse(r.value)}catch{}}return out},
- async putAdminSettings(v){for(const [k,x] of Object.entries(v))await db.prepare('INSERT INTO admin_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(k,JSON.stringify(x)).run()}}}
+ async putAdminSettings(v){for(const [k,x] of Object.entries(v))await db.prepare('INSERT INTO admin_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(k,JSON.stringify(x)).run()},
+ // Stripe 連携：入金は記録の ID で上書き（同じ通知が何度届いても 1 件）
+ async upsertPayment(p){await db.prepare('INSERT INTO admin_payments(id,account,month,amount,method,paid_on,note,created) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET account=excluded.account,month=excluded.month,amount=excluded.amount,paid_on=excluded.paid_on,note=excluded.note').bind(p.id,p.account,p.month,p.amount,p.method,p.paid_on||null,p.note,p.created).run()},
+ async paymentAccountOf(id){return (await db.prepare('SELECT account FROM admin_payments WHERE id=?').bind(id).first())?.account||null},
+ async stripeAccountFor(customer){return (await db.prepare('SELECT account FROM admin_stripe_customers WHERE customer=?').bind(customer).first())?.account||null},
+ async listStripeCustomers(){return (await db.prepare('SELECT customer,account,created FROM admin_stripe_customers ORDER BY created').all()).results},
+ // 顧客と利用者を対応させ、その顧客の未割り当ての入金を利用者の入金に移す
+ async linkStripeCustomer(customer,account){const now=new Date().toISOString();await db.batch([db.prepare('INSERT INTO admin_stripe_customers(customer,account,created) VALUES(?,?,?) ON CONFLICT(customer) DO UPDATE SET account=excluded.account').bind(customer,account,now),db.prepare("INSERT INTO admin_payments(id,account,month,amount,method,paid_on,note,created) SELECT id,?,month,amount,'Stripe',paid_on,note,created FROM admin_stripe_unmatched WHERE customer=? ON CONFLICT(id) DO UPDATE SET account=excluded.account,amount=excluded.amount").bind(account,customer),db.prepare('DELETE FROM admin_stripe_unmatched WHERE customer=?').bind(customer)])},
+ async unlinkStripeCustomer(customer){await db.prepare('DELETE FROM admin_stripe_customers WHERE customer=?').bind(customer).run()},
+ async upsertUnmatched(u){await db.prepare('INSERT INTO admin_stripe_unmatched(id,customer,email,month,amount,paid_on,note,created) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET amount=excluded.amount,paid_on=excluded.paid_on,note=excluded.note').bind(u.id,u.customer,u.email,u.month,u.amount,u.paid_on||null,u.note,u.created).run()},
+ async listUnmatched(){return (await db.prepare('SELECT id,customer,email,month,amount,paid_on,note,created FROM admin_stripe_unmatched ORDER BY created DESC').all()).results},
+ // 1 件を利用者に割り当てる（顧客 ID があれば対応も覚え、その顧客の他の未割り当ても移す）
+ async assignUnmatched(id,account){const row=await db.prepare('SELECT * FROM admin_stripe_unmatched WHERE id=?').bind(id).first();if(!row)return false;if(row.customer){await this.linkStripeCustomer(row.customer,account);return true}await db.batch([db.prepare("INSERT INTO admin_payments(id,account,month,amount,method,paid_on,note,created) VALUES(?,?,?,?,'Stripe',?,?,?) ON CONFLICT(id) DO UPDATE SET account=excluded.account,amount=excluded.amount").bind(row.id,account,row.month,row.amount,row.paid_on,row.note,row.created),db.prepare('DELETE FROM admin_stripe_unmatched WHERE id=?').bind(id)]);return true},
+ async deleteUnmatched(id){await db.prepare('DELETE FROM admin_stripe_unmatched WHERE id=?').bind(id).run()},
+ // 定期支払い：古い通知では上書きしない。期間の終わりが通知になければ前の値を残す
+ async upsertSubscription(x){await db.prepare('INSERT INTO admin_subscriptions(subscription,customer,status,period_end,cancel_at_period_end,event_at,updated) VALUES(?,?,?,?,?,?,?) ON CONFLICT(subscription) DO UPDATE SET customer=excluded.customer,status=excluded.status,period_end=COALESCE(excluded.period_end,admin_subscriptions.period_end),cancel_at_period_end=excluded.cancel_at_period_end,event_at=excluded.event_at,updated=excluded.updated WHERE excluded.event_at>=admin_subscriptions.event_at').bind(x.subscription,x.customer,x.status,x.periodEnd,x.cancelAtPeriodEnd?1:0,x.eventAt,new Date().toISOString()).run()},
+ async planOf(account){return (await db.prepare('SELECT plan FROM admin_users WHERE account=?').bind(account).first())?.plan||null},
+ async subscriptionsOf(account){return (await db.prepare('SELECT s.subscription,s.customer,s.status,s.period_end,s.cancel_at_period_end,s.event_at FROM admin_subscriptions s JOIN admin_stripe_customers c ON c.customer=s.customer WHERE c.account=?').bind(account).all()).results},
+ async listSubscriptions(){return (await db.prepare('SELECT s.subscription,s.customer,s.status,s.period_end,s.cancel_at_period_end,s.event_at,c.account FROM admin_subscriptions s LEFT JOIN admin_stripe_customers c ON c.customer=s.customer').all()).results}}}
 // 記憶上の保存先（テスト用）
-export function memoryStore(){const states=new Map(),jobs=[],accounts=[],admin=new Map(),payments=[],costs=[],settings={};return {
+export function memoryStore(){const states=new Map(),jobs=[],accounts=[],admin=new Map(),payments=[],costs=[],settings={},customers=new Map(),unmatched=new Map(),subs=new Map();const upsert=p=>{const i=payments.findIndex(x=>x.id===p.id);if(i<0)payments.push({...p});else Object.assign(payments[i],{account:p.account,month:p.month,amount:p.amount,paid_on:p.paid_on,note:p.note})};return {
  async getState(a){return states.get(a)??null},async putState(a,v){states.set(a,v)},
  async insertJob(j){jobs.push({...j,status:'pending',result:null})},
  async listJobs(a){return jobs.filter(j=>j.account===a).sort((x,y)=>y.created.localeCompare(x.created)).slice(0,50).map(({account,payload,...j})=>j)},
- async claimJob(a,now){const j=jobs.filter(j=>j.account===a&&j.status==='pending').sort((x,y)=>x.created.localeCompare(y.created))[0];if(!j)return null;j.status='running';j.updated=now;return {...j}},
+ async claimJob(a,now,exclude=[]){const j=jobs.filter(j=>j.account===a&&j.status==='pending'&&!exclude.includes(j.kind)).sort((x,y)=>x.created.localeCompare(y.created))[0];if(!j)return null;j.status='running';j.updated=now;return {...j}},
  async finishJob(a,id,status,result,now){const j=jobs.find(j=>j.id===id&&j.account===a&&j.status==='running');if(j){j.status=status;j.result=result;j.updated=now;if(j.kind==='credentials')j.payload='{}'}},
  async findAccount(h){const a=accounts.find(a=>a.ownerHash===h||a.deviceHash===h);return a?{id:a.id,role:a.ownerHash===h?'owner':'device'}:null},
  async createAccount(a){if(accounts.some(x=>x.ownerHash===a.ownerHash||x.deviceHash===a.deviceHash))throw Error('duplicate');accounts.push(a)},
@@ -45,7 +64,20 @@ export function memoryStore(){const states=new Map(),jobs=[],accounts=[],admin=n
  async addPayment(p){payments.push({...p})},async deletePayment(id){const i=payments.findIndex(p=>p.id===id);if(i>=0)payments.splice(i,1)},
  async listCosts(){return costs.map(c=>({end_month:null,...c}))},async addCost(c){costs.push({...c})},
  async endCost(id,month){const c=costs.find(c=>c.id===id&&c.recurring);if(c)c.end_month=month},async deleteCost(id){const i=costs.findIndex(c=>c.id===id);if(i>=0)costs.splice(i,1)},
- async getAdminSettings(){return {...settings}},async putAdminSettings(v){Object.assign(settings,v)}}}
+ async getAdminSettings(){return {...settings}},async putAdminSettings(v){Object.assign(settings,v)},
+ async upsertPayment(p){upsert(p)},async paymentAccountOf(id){return payments.find(p=>p.id===id)?.account||null},
+ async stripeAccountFor(c){return customers.get(c)?.account||null},async listStripeCustomers(){return [...customers].map(([customer,v])=>({customer,...v}))},
+ async linkStripeCustomer(customer,account){customers.set(customer,{account,created:customers.get(customer)?.created||new Date().toISOString()});for(const [id,u] of [...unmatched])if(u.customer===customer){upsert({id,account,month:u.month,amount:u.amount,method:'Stripe',paid_on:u.paid_on,note:u.note,created:u.created});unmatched.delete(id)}},
+ async unlinkStripeCustomer(c){customers.delete(c)},
+ async upsertUnmatched(u){unmatched.set(u.id,{...(unmatched.get(u.id)||{}),...u})},async listUnmatched(){return [...unmatched.values()].sort((a,b)=>b.created.localeCompare(a.created)).map(u=>({...u}))},
+ async assignUnmatched(id,account){const u=unmatched.get(id);if(!u)return false;if(u.customer){await this.linkStripeCustomer(u.customer,account);return true}upsert({id,account,month:u.month,amount:u.amount,method:'Stripe',paid_on:u.paid_on,note:u.note,created:u.created});unmatched.delete(id);return true},
+ async deleteUnmatched(id){unmatched.delete(id)},
+ async upsertSubscription(x){const old=subs.get(x.subscription);if(old&&x.eventAt<old.event_at)return;subs.set(x.subscription,{subscription:x.subscription,customer:x.customer,status:x.status,period_end:x.periodEnd??old?.period_end??null,cancel_at_period_end:x.cancelAtPeriodEnd?1:0,event_at:x.eventAt})},
+ async planOf(a){return admin.get(a)?.plan||null},
+ async subscriptionsOf(a){return [...subs.values()].filter(s=>customers.get(s.customer)?.account===a).map(s=>({...s}))},
+ async listSubscriptions(){return [...subs.values()].map(s=>({...s,account:customers.get(s.customer)?.account||null}))}}}
+// 支払いの状態（管理者画面の「支払いを必須にする」と Stripe の定期支払いから判定）
+async function billingFor(store,account){const [settings,plan,subs]=await Promise.all([store.getAdminSettings(),store.planOf(account),store.subscriptionsOf(account)]);return billingOf({account,settings,plan,subs})}
 // 認証：登録済みの接続キー（owner）または Mac の鍵（device）。環境変数の旧トークンは最初の利用者（legacy）として扱う
 async function authenticate(key,env,store){if(!key)return null;if(await equal(key,env.OWNER_TOKEN))return {id:'legacy',role:'owner'};if(await equal(key,env.DEVICE_TOKEN))return {id:'legacy',role:'device'};if(!TOKEN.test(key))return null;return store.findAccount(await sha256(key))}
 export async function handle(req,env,store){const u=new URL(req.url),origin=req.headers.get('Origin')||'';
@@ -55,16 +87,18 @@ if(req.method==='OPTIONS')return json({},200,origin);
 try{
 // 管理者画面の API（ADMIN_TOKEN で認証。利用者の鍵とは別）
 if(u.pathname.startsWith('/api/admin/'))return await handleAdmin(req,u,env,store,{json,equal,origin});
+// Stripe の通知（署名で確認。利用者の鍵は使わない）
+if(u.pathname==='/api/stripe/webhook')return await handleStripe(req,env,store,{json,origin});
 // 利用者の登録：Mac のセットアップが作った接続キーと Mac の鍵（どちらも 64 桁の16進）のハッシュだけを保存する
 if(u.pathname==='/api/register'&&req.method==='POST'){const d=await req.json().catch(()=>({}));if(!TOKEN.test(d.owner||'')||!TOKEN.test(d.device||'')||d.owner===d.device)return json({error:'invalid_token'},400,origin);const id=crypto.randomUUID();try{await store.createAccount({id,ownerHash:await sha256(d.owner),deviceHash:await sha256(d.device),created:new Date().toISOString()})}catch{return json({error:'already_registered'},409,origin)}return json({id},201,origin)}
 const key=req.headers.get('Authorization')?.replace(/^Bearer /,'');const who=await authenticate(key,env,store);
 if(!who)return json({error:'unauthorized'},401,origin);
 const agent=who.role==='device',owner=who.role==='owner',account=who.id;
-if(u.pathname==='/api/state'&&req.method==='GET'){const value=await store.getState(account);return json({...(value?JSON.parse(value):{tasks:[],materials:[],connection:'not_configured'}),deployed:env.DEPLOYED_SHA||''},200,origin)}
+if(u.pathname==='/api/state'&&req.method==='GET'){const [value,billing]=await Promise.all([store.getState(account),billingFor(store,account)]);return json({...(value?JSON.parse(value):{tasks:[],materials:[],connection:'not_configured'}),deployed:env.DEPLOYED_SHA||'',billing},200,origin)}
 if(u.pathname==='/api/state'&&req.method==='POST'&&agent){const value=await req.text();if(value.length>2000000)return json({error:'too_large'},413,origin);JSON.parse(value);await store.putState(account,value);return json({ok:true},200,origin)}
-if(u.pathname==='/api/jobs'&&req.method==='POST'&&owner){const data=await req.json();if(!KINDS.includes(data.kind)||JSON.stringify(data).length>100000)return json({error:'invalid_job'},400,origin);const id=crypto.randomUUID(),now=new Date().toISOString();await store.insertJob({id,account,kind:data.kind,task:data.task||null,payload:JSON.stringify(data.payload||{}),created:now,updated:now});return json({id,status:'pending'},202,origin)}
+if(u.pathname==='/api/jobs'&&req.method==='POST'&&owner){const data=await req.json();if(!KINDS.includes(data.kind)||JSON.stringify(data).length>100000)return json({error:'invalid_job'},400,origin);if(PAID_KINDS.includes(data.kind)&&!(await billingFor(store,account)).allowed)return json({error:'payment_required'},402,origin);const id=crypto.randomUUID(),now=new Date().toISOString();await store.insertJob({id,account,kind:data.kind,task:data.task||null,payload:JSON.stringify(data.payload||{}),created:now,updated:now});return json({id,status:'pending'},202,origin)}
 if(u.pathname==='/api/jobs'&&req.method==='GET')return json(await store.listJobs(account),200,origin);
-if(u.pathname==='/api/agent/claim'&&req.method==='POST'&&agent){const row=await store.claimJob(account,new Date().toISOString());const res=json(row?{id:row.id,kind:row.kind,task:row.task,status:row.status,created:row.created,updated:row.updated,payload:JSON.parse(row.payload)}:null,200,origin);if(env.DEPLOYED_SHA)res.headers.set('X-Coursecue-Deployed',env.DEPLOYED_SHA);return res}
+if(u.pathname==='/api/agent/claim'&&req.method==='POST'&&agent){const billing=await billingFor(store,account);const row=await store.claimJob(account,new Date().toISOString(),billing.allowed?[]:PAID_KINDS);const res=json(row?{id:row.id,kind:row.kind,task:row.task,status:row.status,created:row.created,updated:row.updated,payload:JSON.parse(row.payload)}:null,200,origin);if(env.DEPLOYED_SHA)res.headers.set('X-Coursecue-Deployed',env.DEPLOYED_SHA);res.headers.set('X-Coursecue-Billing',billing.allowed?'ok':'required');return res}
 if(u.pathname==='/api/agent/finish'&&req.method==='POST'&&agent){const d=await req.json();if(!['done','failed','waiting'].includes(d.status))return json({error:'invalid'},400,origin);await store.finishJob(account,String(d.id||''),d.status,JSON.stringify(d.result||{}),new Date().toISOString());return json({ok:true},200,origin)}
 return json({error:'not_found'},404,origin)
 }catch{return json({error:'request_failed'},500,origin)}}
