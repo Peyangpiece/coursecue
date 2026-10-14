@@ -17,5 +17,9 @@
       "database_id": "53f28943-4867-4d5f-925d-f8525909fa11"
     }
   ],
-  "main": "server/worker.js"
+  "main": "server/worker.js",
+  // 毎日 9:05（日本時間）：SaBoRo の AI の Batch の受け取りと、無料分を超えた分の請求（server/ai.js）
+  "triggers": {
+    "crons": ["5 0 * * *"]
+  }
 }
