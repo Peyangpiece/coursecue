@@ -15,7 +15,7 @@ export const currentMonth=(now=new Date())=>{const d=new Date(now.getTime()+9*36
 export const costApplies=(c,m)=>c.recurring?c.month<=m&&(!c.end_month||m<=c.end_month):c.month===m;
 const parse=v=>{if(v==null)return null;if(typeof v==='object')return v;try{return JSON.parse(v)}catch{return null}};
 // 保存先から読んだ 1 行を画面に出す形にそろえる（D1 と記憶上の保存先で同じ形）
-export function userRow(r){return {account:r.account,created:r.created||null,seen:r.seen||null,os:r.os||null,version:r.version||null,runtime:r.runtime||null,lastSync:r.last_sync||null,creds:!!r.creds,tasks:Number(r.tasks)||0,courses:Number(r.courses)||0,lastError:r.last_error?String(r.last_error).slice(0,120):null,lastErrorAt:r.last_error_at||null,usage:parse(r.usage),label:r.label||'',plan:PLANS.includes(r.plan)?r.plan:'byo',price:Number(r.price)||0,status:STATUSES.includes(r.status)?r.status:'trial',started:r.started||'',note:r.note||''}}
+export function userRow(r){return {account:r.account,created:r.created||null,seen:r.seen||null,os:r.os||null,version:r.version||null,runtime:r.runtime||null,lastSync:r.last_sync||null,creds:!!r.creds,tasks:Number(r.tasks)||0,courses:Number(r.courses)||0,lastError:r.last_error?String(r.last_error).slice(0,120):null,lastErrorAt:r.last_error_at||null,usage:parse(r.usage),label:r.label||'',plan:PLANS.includes(r.plan)?r.plan:'byo',price:Number(r.price)||0,status:STATUSES.includes(r.status)?r.status:'trial',registered:r.status!=null,started:r.started||'',note:r.note||''}}
 const usageOf=(u,m)=>u.usage?.months?.[m]||null;
 // 1 か月分の集計
 // aiRows：SaBoRo の AI の実際の使用量（利用者ごとの月の合計）。あれば AI の費用はこの実費、なければ「saboro の API」プランの人の使用量から出した目安
