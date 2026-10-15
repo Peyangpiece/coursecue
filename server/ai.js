@@ -6,9 +6,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import {billingOf,ACTIVE} from './billing.js';
 import {currentMonth,DEFAULT_SETTINGS} from './admin.js';
 // 1 回の費用の上限：出力は MAX_TOKENS まで、依頼の大きさ（資料込み）は MAX_BODY 文字まで。同時に作るのは MAX_INFLIGHT 件まで（同期は授業を最大 5 つ並行に読む）
-// 月の回数に数えず、無料分を超えた後でも請求しない処理（本人への質問を作る・過去のレポートから文体を読み取る）
-export const FREE_LABELS=['質問の作成','文体の読み取り'];
-export const MODEL='claude-sonnet-5-5',MAX_TOKENS=32000,MAX_BODY=300000,DAILY_LIMIT=200,MAX_INFLIGHT=5,LABELS=['課題生成','授業情報の読み取り','質問の作成','文体の読み取り'];
+// 月の回数に数えず、無料分を超えた後でも請求しない処理（本人への質問を作る・過去のレポートから文体を読み取る・ChatGPT や Claude の会話から自分についてを読み取る）
+export const FREE_LABELS=['質問の作成','文体の読み取り','会話の読み取り'];
+export const MODEL='claude-sonnet-5-5',MAX_TOKENS=32000,MAX_BODY=300000,DAILY_LIMIT=200,MAX_INFLIGHT=5,LABELS=['課題生成','授業情報の読み取り','質問の作成','文体の読み取り','会話の読み取り'];
 // 高度な生成：出力が上限で途切れた課題を、本人が選んだときだけ出力の上限を広げて作り直す（月 ADVANCED_LIMIT 回まで。使用量の mode は advanced）
 export const ADVANCED_TOKENS=64000,ADVANCED_LIMIT=3,TRUNCATED='出力が上限で途切れました';
 // 1M トークンあたりのドル（通常料金）。キャッシュの書き込みは 5 分のキャッシュ（入力の 1.25 倍）。Batch はすべて半額
