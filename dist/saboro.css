@@ -365,3 +365,5 @@ details summary{cursor:pointer}
 /* AI の利用が禁止されている授業の案内（課題の詳細） */
 .ai-forbidden{margin:12px 0 0;padding:8px 10px;background:#fff6e5;border:1px solid #f0c36d;border-radius:4px;line-height:1.6}
 .ai-forbidden small{display:block;margin-top:4px;color:var(--muted)}
+/* 「自分について」のアンケート */
+.pf{border:0;padding:0;margin:0 0 12px;min-width:0}.pf legend{font-weight:700;margin-bottom:4px;padding:0}.pf-options .check{display:inline-block;margin:2px 14px 2px 0;font-weight:400}.pf-note{margin-top:4px;max-width:360px}
