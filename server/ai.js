@@ -6,7 +6,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import {billingOf,ACTIVE} from './billing.js';
 import {currentMonth,DEFAULT_SETTINGS} from './admin.js';
 // 1 回の費用の上限：出力は MAX_TOKENS まで、依頼の大きさ（資料込み）は MAX_BODY 文字まで。同時に作るのは MAX_INFLIGHT 件まで（同期は授業を最大 5 つ並行に読む）
-export const MODEL='claude-sonnet-5-5',MAX_TOKENS=32000,MAX_BODY=300000,DAILY_LIMIT=200,MAX_INFLIGHT=5,LABELS=['課題生成','授業情報の読み取り'];
+export const MODEL='claude-sonnet-5-5',MAX_TOKENS=32000,MAX_BODY=300000,DAILY_LIMIT=200,MAX_INFLIGHT=5,LABELS=['課題生成','授業情報の読み取り','質問の作成'];
 // 高度な生成：出力が上限で途切れた課題を、本人が選んだときだけ出力の上限を広げて作り直す（月 ADVANCED_LIMIT 回まで。使用量の mode は advanced）
 export const ADVANCED_TOKENS=64000,ADVANCED_LIMIT=3,TRUNCATED='出力が上限で途切れました';
 // 1M トークンあたりのドル（通常料金）。キャッシュの書き込みは 5 分のキャッシュ（入力の 1.25 倍）。Batch はすべて半額
@@ -36,7 +36,7 @@ export async function aiStatus(store,env,account,now=new Date()){const month=cur
  const reason=!env.SABORO_ANTHROPIC_API_KEY?'not_configured':!billing.allowed||!entitled?'payment_required':today>=DAILY_LIMIT?'daily_limit':(stats.count>=s.included&&!overage)||freeOver?'limit':'';return {...base,available:!reason,reason}}
 // 1 回分の使用量を記録する。月の「課題生成」が無料分に達した後で、作成できた回なら請求の対象
 // 作成できなかった回（出力が上限で途切れた・拒否された・出力なし）は ok=0：回数に数えず請求もしない（費用は無料分の実費の上限には数える）。料金表にないモデルは請求しない（実費を正しく出せないため）
-async function record(store,{account,label,mode,message,settings,now=new Date()}){const month=currentMonth(now),s=aiSettings(settings),usage=message?.usage||{},model=message?.model||MODEL,usd=costUsd(usage,{model,batch:mode==='batch'}),ok=!!outcome(message).text;const stats=await store.aiMonthStats(account,month),billable=ok&&!!PRICES[model]&&stats.count>=s.included;
+async function record(store,{account,label,mode,message,settings,now=new Date()}){const month=currentMonth(now),s=aiSettings(settings),usage=message?.usage||{},model=message?.model||MODEL,usd=costUsd(usage,{model,batch:mode==='batch'}),ok=!!outcome(message).text;const stats=await store.aiMonthStats(account,month),billable=ok&&label!=='質問の作成'&&!!PRICES[model]&&stats.count>=s.included;
  await store.addAiUsage({id:crypto.randomUUID(),account,month,label,mode,model,input:Number(usage.input_tokens)||0,output:Number(usage.output_tokens)||0,cache_read:Number(usage.cache_read_input_tokens)||0,cache_write:Number(usage.cache_creation_input_tokens)||0,cost_usd:usd,billable:billable?1:0,charge_micro:billable?chargeMicro(usd,s):0,ok:ok?1:0,created:now.toISOString()})}
 // Batch の状態を確かめ、終わっていれば結果を保存して使用量を記録する（何度呼んでも記録は 1 回）
 async function settle(store,env,row,now=new Date()){if(row.status!=='pending')return row;const client=makeClient(env.SABORO_ANTHROPIC_API_KEY);const batch=await client.messages.batches.retrieve(row.batch_id);if(batch.processing_status!=='ended')return row;
