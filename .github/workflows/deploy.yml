@@ -51,8 +51,16 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       # 公開したコミットを Worker に持たせる。Mac は処理の確認（5秒ごと）のついでにこれを見て、違えばすぐ更新する
+      # D1 を変える前の時点を記録する（Time Travel。戻すときは npx wrangler d1 time-travel restore coursecue-private --bookmark=<ここに出た bookmark>）。記録できなくても公開は続ける
+      - run: npx wrangler d1 time-travel info coursecue-private || echo "D1 の時点を記録できませんでした"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       # D1 の表を用意する（IF NOT EXISTS だけなので何度実行しても同じ）
       - run: npx wrangler d1 execute coursecue-private --remote --file server/schema.sql
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      # 既にある表への列の追加などは migrations/ の番号つきの SQL に書く（schema.sql の IF NOT EXISTS では既にある表は変わらない）。適用済みのものは D1 が覚えていて、1 回だけ実行される
+      - run: npx wrangler d1 migrations apply coursecue-private --remote
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       # 管理者画面（/admin.html）の秘密。GitHub の Secrets に ADMIN_TOKEN（32 文字以上）があれば Worker の秘密に入れる（なければ何もしない）
@@ -76,6 +84,11 @@ jobs:
       - run: if [ -n "$STRIPE_API_KEY" ]; then printf '%s' "$STRIPE_API_KEY" | npx wrangler secret put STRIPE_API_KEY; fi
         env:
           STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      # 運営者への通知先（Slack・Discord などの Webhook の URL）。GitHub の Secrets に ALERT_WEBHOOK_URL があれば Worker の秘密に入れる（なければ通知はログだけ）
+      - run: if [ -n "$ALERT_WEBHOOK_URL" ]; then printf '%s' "$ALERT_WEBHOOK_URL" | npx wrangler secret put ALERT_WEBHOOK_URL; fi
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - run: npx wrangler deploy --var DEPLOYED_SHA:${{ github.sha }}
         env:

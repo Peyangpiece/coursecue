@@ -82,3 +82,11 @@ Codex生成は短い検証問題で実行確認済み。実際のmanaboのログ
 - **回ごとの授業形式**：manabo のディレクトリ名やシラバスの授業計画で【動画】（動画配信・オンデマンド）とある回はオンデマンドにする。あわせて授業ページのシラバス（授業計画）・お知らせ・資料に回ごとの形式が書かれていれば反映する（引用が本文に実在し、引用に回番号と形式の言い方があるものだけ）。読んだシラバス・お知らせは Mac の `tmp/coursecue/syllabus/` に保存する（学生名などヘッダーの情報は読まない）
 - **授業形式の既定**：回ごとの形式は 自分の記録 → CUBICS の休講 → 資料・シラバスの回ごとの記載 → 授業の既定、授業の既定は 自分で設定した値 → 資料・シラバス → CUBICS からの推定、の順で決める。CUBICS で教室が割り当てられている授業は「対面」、読み取った週のどこにも枠がない授業は「オンデマンド」と推定し、「（CUBICSから推定）」と表示する。違う場合は授業の設定で変更できる
 - **出席**（メニュー「出席」）：授業ごとに出席・遅刻・欠席・公欠・未記録（過去の回で記録なし）・欠席の上限と残りを表示。休講の回は数えない
+
+## 運用
+
+- 障害の通知：毎日 9:05（日本時間）の定期実行で、直近 3 日に PC が接続した利用者のうち 24 時間以内に失敗した人・2 日以上同期していない人が多ければ（3 人以上かつ 3 割以上）、または定期処理で失敗があれば、GitHub の Secrets の `ALERT_WEBHOOK_URL`（Slack・Discord などの Webhook）に送る（`server/worker.js` の `alertOperator`）
+- D1 の変更：新しい表は `server/schema.sql`、既にある表の変更は `migrations/` の番号つきの SQL（`migrations/README.md`）。公開の前に D1 の時点（Time Travel の bookmark）をログに残す
+- Worker を前の版に戻す：`npx wrangler deployments list` で版を確かめ、`npx wrangler rollback <版の ID>`。D1 を戻すときは Actions のログの bookmark で `npx wrangler d1 time-travel restore coursecue-private --bookmark=<bookmark>`
+- デスクトップ版の配布：`package.json` の版を上げてからタグ `desktop-v<版>` を付ける。テストが通ってから作り、タグと版が違う・その版が公開済みのときは止まる
+

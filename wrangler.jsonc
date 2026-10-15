@@ -14,7 +14,8 @@
     {
       "binding": "DB",
       "database_name": "coursecue-private",
-      "database_id": "53f28943-4867-4d5f-925d-f8525909fa11"
+      "database_id": "53f28943-4867-4d5f-925d-f8525909fa11",
+      "migrations_dir": "migrations"
     }
   ],
   "main": "server/worker.js",

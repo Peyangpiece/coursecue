@@ -15,7 +15,7 @@ export const currentMonth=(now=new Date())=>{const d=new Date(now.getTime()+9*36
 export const costApplies=(c,m)=>c.recurring?c.month<=m&&(!c.end_month||m<=c.end_month):c.month===m;
 const parse=v=>{if(v==null)return null;if(typeof v==='object')return v;try{return JSON.parse(v)}catch{return null}};
 // 保存先から読んだ 1 行を画面に出す形にそろえる（D1 と記憶上の保存先で同じ形）
-export function userRow(r){return {account:r.account,created:r.created||null,seen:r.seen||null,os:r.os||null,version:r.version||null,runtime:r.runtime||null,lastSync:r.last_sync||null,creds:!!r.creds,tasks:Number(r.tasks)||0,courses:Number(r.courses)||0,lastError:r.last_error?String(r.last_error).slice(0,120):null,usage:parse(r.usage),label:r.label||'',plan:PLANS.includes(r.plan)?r.plan:'byo',price:Number(r.price)||0,status:STATUSES.includes(r.status)?r.status:'trial',started:r.started||'',note:r.note||''}}
+export function userRow(r){return {account:r.account,created:r.created||null,seen:r.seen||null,os:r.os||null,version:r.version||null,runtime:r.runtime||null,lastSync:r.last_sync||null,creds:!!r.creds,tasks:Number(r.tasks)||0,courses:Number(r.courses)||0,lastError:r.last_error?String(r.last_error).slice(0,120):null,lastErrorAt:r.last_error_at||null,usage:parse(r.usage),label:r.label||'',plan:PLANS.includes(r.plan)?r.plan:'byo',price:Number(r.price)||0,status:STATUSES.includes(r.status)?r.status:'trial',started:r.started||'',note:r.note||''}}
 const usageOf=(u,m)=>u.usage?.months?.[m]||null;
 // 1 か月分の集計
 // aiRows：SaBoRo の AI の実際の使用量（利用者ごとの月の合計）。あれば AI の費用はこの実費、なければ「saboro の API」プランの人の使用量から出した目安
@@ -27,6 +27,10 @@ export function summarize({month,users,payments,costs,settings=DEFAULT_SETTINGS,
  const usage={calls:0,failed:0,tokenCalls:0,input:0,output:0,estimateUsd:0,byProvider:{}};for(const u of users){const m=usageOf(u,month);if(!m)continue;usage.calls+=m.calls||0;usage.failed+=m.failed||0;const t=m.tokens||{};usage.tokenCalls+=t.calls||0;usage.input+=(t.input||0)+(t.cacheRead||0)+(t.cacheWrite||0);usage.output+=t.output||0;usage.estimateUsd+=m.estimateUsd||0;for(const [k,v] of Object.entries(m.byProvider||{})){const p=usage.byProvider[k]||={calls:0,failed:0};p.calls+=v.calls||0;p.failed+=v.failed||0}}
  const since=h=>users.filter(u=>u.seen&&now-new Date(u.seen)<=h*3600e3).length;
  return {month,apiActual:!!aiRows,aiCharge:aiRows?Math.round(aiRows.reduce((a,r)=>a+(Number(r.charge_micro)||0),0)/1e6):0,revenue,expected:billable.reduce((a,u)=>a+u.price,0),fees,tax,apiCost,apiUsd,fixed,profit,paying:payers.size,perPaying:payers.size?Math.round(profit/payers.size):null,unpaid:billable.filter(u=>!payers.has(u.account)).map(u=>u.account),usage,users:{total:users.length,active:users.filter(u=>u.status==='active').length,trial:users.filter(u=>u.status==='trial').length,stopped:users.filter(u=>u.status==='stopped').length,seen24h:since(24),seen7d:since(24*7)}}}
+// 利用者全体の様子（運営者への通知に使う）：直近 3 日に PC が接続した人のうち、24 時間以内に失敗した人・2 日以上同期していない人が多ければ知らせる（3 人以上かつ 3 割以上）
+export function health(users,now=new Date()){const within=(t,h)=>!!t&&now-new Date(t)<=h*3600e3,active=users.filter(u=>within(u.seen,72)),failing=active.filter(u=>within(u.lastErrorAt,24)),stale=active.filter(u=>!within(u.lastSync,48)),many=n=>n>=3&&n>=active.length*0.3;
+ const reasons=[...new Set(failing.map(u=>String(u.lastError||'').slice(0,80)).filter(Boolean))].slice(0,3),alert=many(failing.length)||many(stale.length);
+ return {active:active.length,failing:failing.length,stale:stale.length,alert,message:alert?`利用者 ${active.length} 人のうち、24 時間以内に失敗 ${failing.length} 人・2 日以上同期なし ${stale.length} 人${reasons.length?`（主な理由：${reasons.join('／')}）`:''}。manabo の画面の変更などで同期が壊れていないか確かめてください`:''}}
 // 入力の確認（不正なら null）
 const str=(v,max,{required=false}={})=>{if(v==null||v==='')return required?null:'';const t=String(v).trim();return t.length>max||(required&&!t)?null:t};
 const int=(v,min,max)=>Number.isInteger(v)&&v>=min&&v<=max?v:null;

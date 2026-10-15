@@ -10,7 +10,32 @@ on:
     tags: ['desktop-v*']
   workflow_dispatch:
 jobs:
+  # 配布物を作る前にテストする（deploy.yml の test と同じ。テストに落ちる版を配らない）
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - id: pw
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+      - run: npm test
   build:
+    needs: test
     runs-on: macos-latest
     permissions:
       contents: write
@@ -26,9 +51,16 @@ jobs:
       - run: npm ci
       - id: version
         run: echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-      # 同じ版の作りかけ（下書き・配布物のない Release）が残っていれば消してから作る
+      # タグで動いたときは、タグと package.json の版が同じか確かめる（版を上げ忘れて公開済みの版を作り直さないように）
+      - name: Check tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "desktop-${{ steps.version.outputs.tag }}" ]; then echo "タグ ${GITHUB_REF_NAME} と package.json の版 ${{ steps.version.outputs.tag }} が違います。package.json の版を上げてからタグを付けてください"; exit 1; fi
+      # 同じ版の作りかけ（下書き・配布物のない Release）が残っていれば消してから作る。配布物のある公開済みの Release があれば、消さずに止める
       - name: Remove stale release for this version
         run: |
+          published=$(gh api repos/$DIST_REPO/releases --paginate --jq '.[] | select(.tag_name=="${{ steps.version.outputs.tag }}" and (.draft|not) and (.assets|length)>0) | .id')
+          if [ -n "$published" ]; then echo "版 ${{ steps.version.outputs.tag }} は公開済みです。package.json の版を上げてください"; exit 1; fi
           gh api repos/$DIST_REPO/releases --paginate --jq '.[] | select(.tag_name=="${{ steps.version.outputs.tag }}") | .id' | while read -r id; do gh api -X DELETE "repos/$DIST_REPO/releases/$id"; done
           gh api -X DELETE "repos/$DIST_REPO/git/refs/tags/${{ steps.version.outputs.tag }}" 2>/dev/null || true
       # PDF の読み取り（pdf-parse）が使う @napi-rs/canvas は OS・CPU ごとに別のパッケージで、npm ci はこの Mac（Apple シリコン）用しか入れない。
