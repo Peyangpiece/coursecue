@@ -46,10 +46,14 @@ export function d1Store(db){return {
  // 定期支払い：古い通知では上書きしない。期間の終わりが通知になければ前の値を残す
  async upsertSubscription(x){await db.prepare('INSERT INTO admin_subscriptions(subscription,customer,status,period_end,cancel_at_period_end,event_at,updated) VALUES(?,?,?,?,?,?,?) ON CONFLICT(subscription) DO UPDATE SET customer=excluded.customer,status=excluded.status,period_end=COALESCE(excluded.period_end,admin_subscriptions.period_end),cancel_at_period_end=excluded.cancel_at_period_end,event_at=excluded.event_at,updated=excluded.updated WHERE excluded.event_at>=admin_subscriptions.event_at').bind(x.subscription,x.customer,x.status,x.periodEnd,x.cancelAtPeriodEnd?1:0,x.eventAt,new Date().toISOString()).run()},
  async planOf(account){return (await db.prepare('SELECT plan FROM admin_users WHERE account=?').bind(account).first())?.plan||null},
+ async adminStatusOf(account){return (await db.prepare('SELECT status FROM admin_users WHERE account=?').bind(account).first())?.status||null},
  async subscriptionsOf(account){return (await db.prepare('SELECT s.subscription,s.customer,s.status,s.period_end,s.cancel_at_period_end,s.event_at FROM admin_subscriptions s JOIN admin_stripe_customers c ON c.customer=s.customer WHERE c.account=?').bind(account).all()).results},
  async listSubscriptions(){return (await db.prepare('SELECT s.subscription,s.customer,s.status,s.period_end,s.cancel_at_period_end,s.event_at,c.account FROM admin_subscriptions s LEFT JOIN admin_stripe_customers c ON c.customer=s.customer').all()).results},
  // SaBoRo の AI：使用量（月の「課題生成」の回数・実費・請求額）と Batch の依頼
- async aiMonthStats(account,month){const r=await db.prepare("SELECT COALESCE(SUM(CASE WHEN label='課題生成' THEN 1 ELSE 0 END),0) AS count,COALESCE(SUM(cost_usd),0) AS cost,COALESCE(SUM(charge_micro),0) AS charge FROM ai_usage WHERE account=? AND month=?").bind(account,month).first();return {count:Number(r?.count)||0,costUsd:Number(r?.cost)||0,chargeMicro:Number(r?.charge)||0}},
+ async aiMonthStats(account,month){const r=await db.prepare("SELECT COALESCE(SUM(CASE WHEN label='課題生成' THEN 1 ELSE 0 END),0) AS count,COALESCE(SUM(cost_usd),0) AS cost,COALESCE(SUM(CASE WHEN billable=0 THEN cost_usd ELSE 0 END),0) AS free_cost,COALESCE(SUM(charge_micro),0) AS charge FROM ai_usage WHERE account=? AND month=?").bind(account,month).first();return {count:Number(r?.count)||0,costUsd:Number(r?.cost)||0,freeCostUsd:Number(r?.free_cost)||0,chargeMicro:Number(r?.charge)||0}},
+ // 作っている最中の依頼の予約。同時に作る数と 1 日の回数の上限を、確かめて入れるまでを 1 つの文で行う（同時に送られても上限を超えない）
+ async reserveAi({id,account,created,since,staleBefore,dayLimit,maxInflight}){const r=await db.prepare('INSERT INTO ai_inflight(id,account,created) SELECT ?1,?2,?3 WHERE (SELECT COUNT(*) FROM ai_inflight WHERE account=?2 AND created>=?5)<?7 AND (SELECT COUNT(*) FROM ai_usage WHERE account=?2 AND created>=?4)+(SELECT COUNT(*) FROM ai_requests WHERE account=?2 AND created>=?4)+(SELECT COUNT(*) FROM ai_inflight WHERE account=?2 AND created>=?5)<?6').bind(id,account,created,since,staleBefore,dayLimit,maxInflight).run();return (r.meta?.changes||0)>0},
+ async releaseAi(id){await db.prepare('DELETE FROM ai_inflight WHERE id=?').bind(id).run()},
  async aiMonthAll(month){return (await db.prepare("SELECT account,SUM(CASE WHEN label='課題生成' THEN 1 ELSE 0 END) AS count,SUM(cost_usd) AS cost_usd,SUM(charge_micro) AS charge_micro,COUNT(*) AS calls FROM ai_usage WHERE month=? GROUP BY account").bind(month).all()).results},
  async aiDayCalls(account,since){const r=await db.prepare('SELECT (SELECT COUNT(*) FROM ai_usage WHERE account=?1 AND created>=?2)+(SELECT COUNT(*) FROM ai_requests WHERE account=?1 AND created>=?2) AS n').bind(account,since).first();return Number(r?.n)||0},
  async addAiUsage(x){await db.prepare('INSERT INTO ai_usage(id,account,month,label,mode,model,input,output,cache_read,cache_write,cost_usd,billable,charge_micro,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(x.id,x.account,x.month,x.label,x.mode,x.model,x.input,x.output,x.cache_read,x.cache_write,x.cost_usd,x.billable,x.charge_micro,x.created).run()},
@@ -58,11 +62,11 @@ export function d1Store(db){return {
  async finishAiRequest(id,x){const r=await db.prepare("UPDATE ai_requests SET status=?,result=?,reason=?,updated=? WHERE id=? AND status='pending'").bind(x.status,x.result,x.reason,x.updated,id).run();return (r.meta?.changes||0)>0},
  async deleteAiRequest(id){await db.prepare('DELETE FROM ai_requests WHERE id=?').bind(id).run()},
  async listPendingAiRequests(){return (await db.prepare("SELECT id,account,key,label,batch_id,status,created,updated FROM ai_requests WHERE status='pending' ORDER BY created LIMIT 200").all()).results},
- async cleanupAiRequests(doneBefore,pendingBefore){await db.prepare("DELETE FROM ai_requests WHERE (status!='pending' AND updated<?) OR (status='pending' AND created<?)").bind(doneBefore,pendingBefore).run()},
+ async cleanupAiRequests(doneBefore,pendingBefore){await db.prepare("DELETE FROM ai_requests WHERE (status!='pending' AND updated<?) OR (status='pending' AND created<?)").bind(doneBefore,pendingBefore).run();await db.prepare('DELETE FROM ai_inflight WHERE created<?').bind(doneBefore).run()},
  async unbilledAiCharges(cutoff){return (await db.prepare('SELECT account,SUM(charge_micro) AS charge_micro FROM ai_usage WHERE billable=1 AND billed IS NULL AND created<=? GROUP BY account').bind(cutoff).all()).results},
  async markAiBilled(account,cutoff,day){await db.prepare('UPDATE ai_usage SET billed=? WHERE account=? AND billable=1 AND billed IS NULL AND created<=?').bind(day,account,cutoff).run()}}}
 // 記憶上の保存先（テスト用）
-export function memoryStore(){const states=new Map(),jobs=[],accounts=[],admin=new Map(),payments=[],costs=[],settings={},customers=new Map(),unmatched=new Map(),subs=new Map(),aiUsage=[],aiRequests=new Map();const upsert=p=>{const i=payments.findIndex(x=>x.id===p.id);if(i<0)payments.push({...p});else Object.assign(payments[i],{account:p.account,month:p.month,amount:p.amount,paid_on:p.paid_on,note:p.note})};return {
+export function memoryStore(){const states=new Map(),jobs=[],accounts=[],admin=new Map(),payments=[],costs=[],settings={},customers=new Map(),unmatched=new Map(),subs=new Map(),aiUsage=[],aiRequests=new Map(),aiInflight=new Map();const upsert=p=>{const i=payments.findIndex(x=>x.id===p.id);if(i<0)payments.push({...p});else Object.assign(payments[i],{account:p.account,month:p.month,amount:p.amount,paid_on:p.paid_on,note:p.note})};return {
  async getState(a){return states.get(a)??null},async putState(a,v){states.set(a,v)},
  async insertJob(j){jobs.push({...j,status:'pending',result:null})},
  async listJobs(a){return jobs.filter(j=>j.account===a).sort((x,y)=>y.created.localeCompare(x.created)).slice(0,50).map(({account,payload,...j})=>j)},
@@ -86,10 +90,12 @@ export function memoryStore(){const states=new Map(),jobs=[],accounts=[],admin=n
  async assignUnmatched(id,account){const u=unmatched.get(id);if(!u)return false;if(u.customer){await this.linkStripeCustomer(u.customer,account);return true}upsert({id,account,month:u.month,amount:u.amount,method:'Stripe',paid_on:u.paid_on,note:u.note,created:u.created});unmatched.delete(id);return true},
  async deleteUnmatched(id){unmatched.delete(id)},
  async upsertSubscription(x){const old=subs.get(x.subscription);if(old&&x.eventAt<old.event_at)return;subs.set(x.subscription,{subscription:x.subscription,customer:x.customer,status:x.status,period_end:x.periodEnd??old?.period_end??null,cancel_at_period_end:x.cancelAtPeriodEnd?1:0,event_at:x.eventAt})},
- async planOf(a){return admin.get(a)?.plan||null},
+ async planOf(a){return admin.get(a)?.plan||null},async adminStatusOf(a){return admin.get(a)?.status||null},
  async subscriptionsOf(a){return [...subs.values()].filter(s=>customers.get(s.customer)?.account===a).map(s=>({...s}))},
  async listSubscriptions(){return [...subs.values()].map(s=>({...s,account:customers.get(s.customer)?.account||null}))},
- async aiMonthStats(a,m){const rows=aiUsage.filter(x=>x.account===a&&x.month===m);return {count:rows.filter(x=>x.label==='課題生成').length,costUsd:rows.reduce((t,x)=>t+x.cost_usd,0),chargeMicro:rows.reduce((t,x)=>t+x.charge_micro,0)}},
+ async aiMonthStats(a,m){const rows=aiUsage.filter(x=>x.account===a&&x.month===m);return {count:rows.filter(x=>x.label==='課題生成').length,costUsd:rows.reduce((t,x)=>t+x.cost_usd,0),freeCostUsd:rows.filter(x=>!x.billable).reduce((t,x)=>t+x.cost_usd,0),chargeMicro:rows.reduce((t,x)=>t+x.charge_micro,0)}},
+ async reserveAi({id,account,created,since,staleBefore,dayLimit,maxInflight}){const live=[...aiInflight.values()].filter(x=>x.account===account&&x.created>=staleBefore).length;if(live>=maxInflight||live+await this.aiDayCalls(account,since)>=dayLimit)return false;aiInflight.set(id,{account,created});return true},
+ async releaseAi(id){aiInflight.delete(id)},
  async aiMonthAll(m){const g=new Map();for(const x of aiUsage.filter(x=>x.month===m)){const r=g.get(x.account)||{account:x.account,count:0,cost_usd:0,charge_micro:0,calls:0};r.count+=x.label==='課題生成'?1:0;r.cost_usd+=x.cost_usd;r.charge_micro+=x.charge_micro;r.calls++;g.set(x.account,r)}return [...g.values()]},
  async aiDayCalls(a,since){return aiUsage.filter(x=>x.account===a&&x.created>=since).length+[...aiRequests.values()].filter(x=>x.account===a&&x.created>=since).length},
  async addAiUsage(x){aiUsage.push({billed:null,...x})},
@@ -98,7 +104,7 @@ export function memoryStore(){const states=new Map(),jobs=[],accounts=[],admin=n
  async finishAiRequest(id,x){const r=aiRequests.get(id);if(!r||r.status!=='pending')return false;Object.assign(r,x);return true},
  async deleteAiRequest(id){aiRequests.delete(id)},
  async listPendingAiRequests(){return [...aiRequests.values()].filter(r=>r.status==='pending').map(r=>({...r}))},
- async cleanupAiRequests(doneBefore,pendingBefore){for(const [id,r] of [...aiRequests])if(r.status!=='pending'?r.updated<doneBefore:r.created<pendingBefore)aiRequests.delete(id)},
+ async cleanupAiRequests(doneBefore,pendingBefore){for(const [id,r] of [...aiRequests])if(r.status!=='pending'?r.updated<doneBefore:r.created<pendingBefore)aiRequests.delete(id);for(const [id,r] of [...aiInflight])if(r.created<doneBefore)aiInflight.delete(id)},
  async unbilledAiCharges(cutoff){const g=new Map();for(const x of aiUsage)if(x.billable&&!x.billed&&x.created<=cutoff)g.set(x.account,(g.get(x.account)||0)+x.charge_micro);return [...g].map(([account,charge_micro])=>({account,charge_micro}))},
  async markAiBilled(a,cutoff,day){for(const x of aiUsage)if(x.account===a&&x.billable&&!x.billed&&x.created<=cutoff)x.billed=day},
  aiUsage,aiRequests}}

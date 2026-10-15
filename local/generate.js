@@ -9,7 +9,7 @@ const TIMEOUT=180000;
 export class AiPending extends Error{constructor(){super('SaBoRo課題サポートで作成中')}}
 const OFF='SaBoRo課題サポートの対象外';
 // 使えない理由（クラウドのキー未設定は「試していない」扱いで画面に出さない）
-export const SABORO_REASONS={not_configured:OFF,payment_required:'お支払いが必要です',limit:'今月の無料分を使い切りました',daily_limit:'今日の上限に達しました',too_large:'資料が大きすぎます'};
+export const SABORO_REASONS={not_configured:OFF,payment_required:'お支払いが必要です',limit:'今月の無料分を使い切りました',daily_limit:'今日の上限に達しました',busy:'同時に作れる数の上限です。しばらくしてからもう一度お試しください',too_large:'資料が大きすぎます'};
 // 本文から記号・Markdown を取り除く（見出し #、強調 *、箇条書き記号、引用符、コードブロック）。「」は残す
 export function cleanText(s){return String(s||'').replace(/\r\n?/g,'\n').replace(/^```.*$/gm,'').replace(/`([^`]*)`/g,'$1').replace(/^[ \t]*#{1,6}[ \t]*/gm,'').replace(/^[ \t]*(?:[-*+]|・)[ \t]+/gm,'').replace(/^[ \t]*>[ \t]?/gm,'').replace(/\*\*(.+?)\*\*/g,'$1').replace(/__(.+?)__/g,'$1').replace(/(^|[^\w*])\*(\S[^*\n]*?\S)\*(?=[^\w*]|$)/g,'$1$2').replace(/[\u201c\"]([^\u201d\"\n]*)[\u201d\"]/g,'「$1」').replace(/[#＃*\u201c\u201d\"]/g,'').replace(/[ \t]+$/gm,'').replace(/\n{3,}/g,'\n\n').trim()}
 // 本文は「だ・である調」で書かせる。敬体（です・ます）の文末が残っていれば本人に知らせる（書き換えは意味が変わりうるので自動ではしない）
