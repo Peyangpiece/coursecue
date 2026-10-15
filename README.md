@@ -85,6 +85,8 @@ Codex生成は短い検証問題で実行確認済み。実際のmanaboのログ
 
 ## 運用
 
+- 料金の条件：月額に含む課題生成の回数（60 回）・超過分の倍率（1.5 倍）・請求の為替（1 ドル＝150 円）は、特定商取引法に基づく表記と同じ固定値（`server/ai.js` の `TERMS`）。変えるときは `site/public/tokushoho.html` と同時に変える（`tests/site.test.js` で照らす）。管理画面の為替は利益の計算だけに使う。回答を作成できなかった回（途切れた・拒否された）は回数に数えず請求もしない
+- Stripe の Webhook で選ぶ通知：`invoice.paid`・`checkout.session.completed`・`checkout.session.async_payment_succeeded`・`charge.refunded`・`customer.subscription.created/updated/deleted`・`charge.dispute.created`・`charge.dispute.closed`（チャージバック。未割り当てに入るので管理画面で割り当てる）
 - 障害の通知：毎日 9:05（日本時間）の定期実行で、直近 3 日に PC が接続した利用者のうち 24 時間以内に失敗した人・2 日以上同期していない人が多ければ（3 人以上かつ 3 割以上）、または定期処理で失敗があれば、GitHub の Secrets の `ALERT_WEBHOOK_URL`（Slack・Discord などの Webhook）に送る（`server/worker.js` の `alertOperator`）
 - D1 の変更：新しい表は `server/schema.sql`、既にある表の変更は `migrations/` の番号つきの SQL（`migrations/README.md`）。公開の前に D1 の時点（Time Travel の bookmark）をログに残す
 - Worker を前の版に戻す：`npx wrangler deployments list` で版を確かめ、`npx wrangler rollback <版の ID>`。D1 を戻すときは Actions のログの bookmark で `npx wrangler d1 time-travel restore coursecue-private --bookmark=<bookmark>`

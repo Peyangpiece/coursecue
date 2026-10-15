@@ -11,17 +11,20 @@ export const MODEL='claude-sonnet-5-5',MAX_TOKENS=32000,MAX_BODY=300000,DAILY_LI
 export const ADVANCED_TOKENS=64000,ADVANCED_LIMIT=3,TRUNCATED='出力が上限で途切れました';
 // 1M トークンあたりのドル（通常料金）。キャッシュの書き込みは 5 分のキャッシュ（入力の 1.25 倍）。Batch はすべて半額
 export const PRICES={'claude-sonnet-5-5':{input:2,output:10,cacheRead:0.2,cacheWrite:2.5}};
-// 知らないモデル名（将来の変更など）は高めの料金で見積もる（安く見積もって損をしないように）
+// 知らないモデル名（将来の変更など）は高めの料金で費用を見積もる（運営者の費用の目安。料金表にないモデルの分は利用者に請求しない）
 const FALLBACK_PRICE={input:4,output:20,cacheRead:0.2,cacheWrite:5};
 export function costUsd(usage={},{model=MODEL,batch=false}={}){const p=PRICES[model]||FALLBACK_PRICE,n=k=>Number(usage[k])||0;const usd=(n('input_tokens')*p.input+n('output_tokens')*p.output+n('cache_read_input_tokens')*p.cacheRead+n('cache_creation_input_tokens')*p.cacheWrite)/1e6;return batch?usd/2:usd}
 // 請求額（100 万分の 1 円単位の整数）：実費×為替×上乗せ率
 export const chargeMicro=(usd,{usdJpy,markup})=>Math.round(usd*usdJpy*markup*1e6);
+// 料金の条件（特定商取引法に基づく表記と同じ値。site/public/tokushoho.html と必ず同時に変える。tests/site.test.js で照らす）
+// included：月額に含む課題生成の回数、markup：超えた分の請求＝実費×この倍率、usdJpy：請求に使う為替（管理画面の為替は利益の計算だけに使う）
+export let TERMS={included:60,markup:1.5,usdJpy:150};
 // freeCapUsd：月額に含む分（無料分）で使える実費の上限（ドル。0 なら上限なし）。回数だけでは 1 回の大きさ・授業情報の読み取りの費用を抑えられないため
-export const aiSettings=s=>{const x={...DEFAULT_SETTINGS,...s};return {included:Number.isInteger(x.aiIncluded)?x.aiIncluded:60,markup:typeof x.aiMarkup==='number'?x.aiMarkup:1.5,usdJpy:x.usdJpy,freeCapUsd:typeof x.aiFreeCapUsd==='number'?x.aiFreeCapUsd:15}};
+export const aiSettings=s=>{const x={...DEFAULT_SETTINGS,...s};return {...TERMS,freeCapUsd:typeof x.aiFreeCapUsd==='number'?x.aiFreeCapUsd:15}};
 const jstDay=(now=new Date())=>new Date(now.getTime()+9*3600e3).toISOString().slice(0,10),dayStart=now=>new Date(`${jstDay(now)}T00:00:00+09:00`).toISOString();
 // テストで Anthropic・Stripe を差し替える
 let makeClient=key=>new Anthropic({apiKey:key,maxRetries:2});let stripeFetch=(...a)=>fetch(...a);
-export function setAiTestHooks({client,fetch:f}={}){if(client)makeClient=client;if(f)stripeFetch=f}
+export function setAiTestHooks({client,fetch:f,terms}={}){if(client)makeClient=client;if(f)stripeFetch=f;if(terms)TERMS={...TERMS,...terms}}
 const params=(text,schema,maxTokens=MAX_TOKENS)=>({model:MODEL,max_tokens:maxTokens,output_config:{effort:'high',format:{type:'json_schema',schema}},messages:[{role:'user',content:text}]});
 // 出力の本文（構造化出力の JSON 文字列）。拒否・途中で切れた場合は理由を返す
 function outcome(message){if(message?.stop_reason==='refusal')return {reason:'回答を拒否されました'};if(message?.stop_reason==='max_tokens')return {reason:TRUNCATED,truncated:true};const text=message?.content?.find?.(b=>b.type==='text')?.text;return text?{text}:{reason:'出力なし'}}
@@ -31,9 +34,10 @@ export async function aiStatus(store,env,account,now=new Date()){const month=cur
  // 無料分は「課題生成の回数が無料分に達するまで、かつ実費が上限に達するまで」。回数に達した後は超過分として請求できる人だけ続けて使える
  const entitled=subscribed||(!!registered&&registered!=='stopped'),freeOver=stats.count<s.included&&s.freeCapUsd>0&&(stats.freeCostUsd||0)>=s.freeCapUsd;
  const reason=!env.SABORO_ANTHROPIC_API_KEY?'not_configured':!billing.allowed||!entitled?'payment_required':today>=DAILY_LIMIT?'daily_limit':(stats.count>=s.included&&!overage)||freeOver?'limit':'';return {...base,available:!reason,reason}}
-// 1 回分の使用量を記録する。月の「課題生成」が無料分に達した後なら請求の対象
-async function record(store,{account,label,mode,message,settings,now=new Date()}){const month=currentMonth(now),s=aiSettings(settings),usage=message?.usage||{},model=message?.model||MODEL,usd=costUsd(usage,{model,batch:mode==='batch'});const stats=await store.aiMonthStats(account,month),billable=stats.count>=s.included;
- await store.addAiUsage({id:crypto.randomUUID(),account,month,label,mode,model,input:Number(usage.input_tokens)||0,output:Number(usage.output_tokens)||0,cache_read:Number(usage.cache_read_input_tokens)||0,cache_write:Number(usage.cache_creation_input_tokens)||0,cost_usd:usd,billable:billable?1:0,charge_micro:billable?chargeMicro(usd,s):0,created:now.toISOString()})}
+// 1 回分の使用量を記録する。月の「課題生成」が無料分に達した後で、作成できた回なら請求の対象
+// 作成できなかった回（出力が上限で途切れた・拒否された・出力なし）は ok=0：回数に数えず請求もしない（費用は無料分の実費の上限には数える）。料金表にないモデルは請求しない（実費を正しく出せないため）
+async function record(store,{account,label,mode,message,settings,now=new Date()}){const month=currentMonth(now),s=aiSettings(settings),usage=message?.usage||{},model=message?.model||MODEL,usd=costUsd(usage,{model,batch:mode==='batch'}),ok=!!outcome(message).text;const stats=await store.aiMonthStats(account,month),billable=ok&&!!PRICES[model]&&stats.count>=s.included;
+ await store.addAiUsage({id:crypto.randomUUID(),account,month,label,mode,model,input:Number(usage.input_tokens)||0,output:Number(usage.output_tokens)||0,cache_read:Number(usage.cache_read_input_tokens)||0,cache_write:Number(usage.cache_creation_input_tokens)||0,cost_usd:usd,billable:billable?1:0,charge_micro:billable?chargeMicro(usd,s):0,ok:ok?1:0,created:now.toISOString()})}
 // Batch の状態を確かめ、終わっていれば結果を保存して使用量を記録する（何度呼んでも記録は 1 回）
 async function settle(store,env,row,now=new Date()){if(row.status!=='pending')return row;const client=makeClient(env.SABORO_ANTHROPIC_API_KEY);const batch=await client.messages.batches.retrieve(row.batch_id);if(batch.processing_status!=='ended')return row;
  let message=null,reason='結果を取得できません';for await(const r of await client.messages.batches.results(row.batch_id)){if(r.result?.type==='succeeded')message=r.result.message;else reason=r.result?.type==='expired'?'24時間以内に作成できませんでした':r.result?.type==='canceled'?'取り消されました':'作成に失敗しました'}
@@ -69,10 +73,11 @@ export async function runAiDaily(env,store,now=new Date()){const log=[];
  for(const row of await store.listPendingAiRequests()){try{await settle(store,env,row,now)}catch(e){log.push(`batch ${row.id}: ${e.message}`)}}
  if(env.STRIPE_API_KEY){const day=jstDay(now),cutoff=now.toISOString();for(const g of await store.unbilledAiCharges(cutoff)){const yen=Math.round(g.charge_micro/1e6);if(yen<1)continue;// 1 円未満はたまるまで持ち越す
   try{const subs=await store.subscriptionsOf(g.account),sub=subs.find(s=>ACTIVE.includes(s.status));const customer=sub?.customer||subs[0]?.customer;if(!customer){log.push(`charge ${g.account}: 顧客なし`);continue}
-   const description=`SaBoRo課題サポート 使用料（無料分を超えた分・${day} まで）`,key=`saboro-ai-${g.account}-${day}`;await stripe(env,'invoiceitems',{customer,amount:yen,currency:'jpy',description,subscription:sub?.subscription},key);
-   // 定期支払いが終わっていれば、その場で請求書を作って請求する（次の月額の請求がないため）
-   if(!sub)await stripe(env,'invoices',{customer,auto_advance:'true',collection_method:'charge_automatically',pending_invoice_items_behavior:'include',description},key+'-invoice');
-   await store.markAiBilled(g.account,cutoff,day)}catch(e){log.push(`charge ${g.account}: ${e.message}`)}}}
+   // 次の月額の請求に加えるのは、続く定期支払いがあるときだけ。終わった・期間の終わりで解約する定期支払いには次の請求がないので、その場で請求書を作って請求する
+   const recurring=!!sub&&!sub.cancel_at_period_end,description=`SaBoRo課題サポート 使用料（無料分を超えた分・${day} まで）`,key=`saboro-ai-${g.account}-${day}`;await stripe(env,'invoiceitems',{customer,amount:yen,currency:'jpy',description,subscription:recurring?sub.subscription:undefined},key);
+   // 請求項目ができたらすぐ請求済みにする（この後の請求書の作成に失敗しても、翌日に同じ分の請求項目を作り直して二重に請求しない）
+   await store.markAiBilled(g.account,cutoff,day);
+   if(!recurring)try{await stripe(env,'invoices',{customer,auto_advance:'true',collection_method:'charge_automatically',pending_invoice_items_behavior:'include',description},key+'-invoice')}catch(e){log.push(`charge ${g.account}: 請求書を作れません（${yen} 円の請求項目は Stripe に残っています。Stripe の画面で請求してください）：${e.message}`)}}catch(e){log.push(`charge ${g.account}: ${e.message}`)}}}
  await store.cleanupAiRequests(new Date(now.getTime()-3*86400e3).toISOString(),new Date(now.getTime()-30*86400e3).toISOString());return log}
 // 学年暦の PDF を読み取る（管理者画面から。こちらの API キーで 1 回だけ作る）。返すのは確かめる前の学年暦（server/calendar.js の checkCalendar で確かめてから保存する）
 // term：どの学期を読むか（例「2027 春学期」。空なら PDF の次に始まる学期）
