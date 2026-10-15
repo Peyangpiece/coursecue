@@ -43,3 +43,4 @@ test('ゴミ箱へ移した資料の知らせは「閉じる」で消え、そ�
 const html=run(`attentionPanel()`);assert.match(html,/2 件を/);const at=html.match(/data-at="([^"]+)"/)[1];assert.equal(at,run(`state.trashed[1].at`),'新しい方の時刻を覚える');
 run(`localStorage.setItem('coursecue-trash-seen',${JSON.stringify(at)})`);assert.equal(run(`attentionPanel()`),'','閉じたあとは出さない');
 run(`state.trashed.push({name:'第3回_資料 (2).pdf',at:new Date().toISOString()})`);const again=run(`attentionPanel()`);assert.match(again,/1 件を/,'新しく移した分だけ出す');assert.match(again,/第3回_資料/)});
+test('前回の同期は、反映し終えた時刻とかかった時間を出す',()=>{const run=boot();assert.equal(run(`state.lastSync='2026-10-15T07:31:17.485Z';state.syncTiming={total:50000,cubicsSkipped:true,classes:47000,courses:{'経済原論Ⅱ':19000}};lastSyncText()`),'前回の同期 10/15(木) 16:31 に反映・50秒（CUBICS 1時間以内に確認済みのため省略・授業 47秒［最長 経済原論Ⅱ 19秒］）');assert.equal(run(`state.syncTiming=null;lastSyncText()`),'前回の同期 10/15(木) 16:31 に反映','かかった時間がなくても時刻は出す')});
