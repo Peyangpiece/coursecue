@@ -4,6 +4,8 @@
 // - checkout.session.completed / checkout.session.async_payment_succeeded：単発の支払い（mode=payment、コンビニ払いなど後から確定するものを含む）。
 //   定期支払いの初回（mode=subscription）は invoice.paid と二重にならないよう入金は記録せず、client_reference_id から「顧客 → 利用者」の対応だけを覚える
 // - charge.refunded：返金（一部返金を含む）。支払いごとに返金の合計をマイナスで記録（後から増えたら上書き）
+// - charge.dispute.created／closed：チャージバック（カードの持ち主からの不審請求の申し立て）。申し立てで差し引かれた額をマイナスで記録し、運営者が勝てば 0 に戻す（負ければそのまま）。
+//   申し立ての通知には顧客 ID がないので「未割り当て」に置き、管理者画面で割り当てる（Stripe の Webhook でこの 2 つの通知も選んでおく）
 // 利用者の特定：支払いリンクの client_reference_id（利用者の ID）、または覚えた Stripe の顧客 ID。分からない入金は「未割り当て」に置き、管理者画面で割り当てる
 // 同じ通知が何度届いても、記録の ID（stripe:請求書 ID など）が同じなので二重にならない。円（JPY）以外の支払いは記録しない
 const TOLERANCE=300;
@@ -20,6 +22,7 @@ export function paymentFromEvent(event){const o=event?.data?.object||{},type=eve
  if(type==='invoice.paid'){if(!(o.amount_paid>0))return null;const at=o.status_transitions?.paid_at||event.created;return {id:`stripe:${o.id}`,customer:o.customer||'',email:o.customer_email||'',amount:o.amount_paid,paid_on:jstDate(at),note:`Stripe 請求書 ${o.number||o.id}`}}
  if(type==='checkout.session.completed'||type==='checkout.session.async_payment_succeeded'){if(o.mode!=='payment'||o.payment_status!=='paid'||!(o.amount_total>0))return null;return {id:`stripe:${o.id}`,customer:o.customer||'',email:o.customer_details?.email||'',reference:REF.test(o.client_reference_id||'')?o.client_reference_id:'',amount:o.amount_total,paid_on:jstDate(event.created),note:'Stripe 支払いリンク'}}
  if(type==='charge.refunded'){if(!(o.amount_refunded>0))return null;return {id:`stripe:refund:${o.id}`,customer:o.customer||'',email:o.billing_details?.email||o.receipt_email||'',amount:-o.amount_refunded,paid_on:jstDate(event.created),note:`Stripe 返金（${o.id}）`}}
+ if(type==='charge.dispute.created'||type==='charge.dispute.closed'){if(!(o.amount>0))return null;const won=type==='charge.dispute.closed'&&o.status==='won';return {id:`stripe:dispute:${o.id}`,customer:o.customer||'',email:'',amount:won?0:-o.amount,paid_on:jstDate(o.created||event.created),note:`Stripe チャージバック（${won?'運営者が勝ち、差し引きなし':type==='charge.dispute.closed'?'運営者が負け、差し引き確定':'申し立て中'}。支払い ${o.charge||'不明'}・理由 ${o.reason||'不明'}）`}}
  return null}
 // 定期支払いの状態：customer.subscription.created／updated／deleted。期間の終わりは新しい API では items 側にある
 // 初回の Checkout（mode=subscription、支払い済み）でも「有効」として先に記録する（subscription の通知を選び忘れても使い始められるように）
