@@ -15,3 +15,4 @@ test('Mac の署名：electron-builder の署名は止め、afterPack で自分�
  const step=wf.slice(wf.indexOf('- name: Prepare the Mac signing certificate'),wf.indexOf('- name: Build (macOS + Windows)'));assert.ok(step.length>0&&wf.indexOf('Prepare the Mac signing certificate')<wf.indexOf('Build (macOS + Windows)'),'作る前に用意する');
  for(const k of ['secrets.MAC_SIGN_P12','secrets.MAC_SIGN_PASSWORD','if [ -z "$MAC_SIGN_P12" ]; then','security create-keychain','security import','rm -f "$RUNNER_TEMP/sign.p12"','MAC_SIGN_IDENTITY=','MAC_SIGN_KEYCHAIN='])assert.ok(step.includes(k),k);
  assert.doesNotMatch(step,/echo "\$MAC_SIGN_(P12|PASSWORD)"/,'秘密をログに出さない')});
+test('manabo 用のブラウザの準備済みの印には Playwright の版を書き、版が変われば取り込み直す（アプリの更新後に同期が止まらないように）',()=>{const src=readFileSync('desktop/main.js','utf8');assert.match(src,/node_modules\/playwright-core\/package\.json/);assert.match(src,/readFileSync\(marker,'utf8'\)\.trim\(\)===version/);assert.match(src,/writeFileSync\(marker,version\|\|/)});

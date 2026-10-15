@@ -2,7 +2,7 @@
 const WEEKDAYS=['月','火','水','木','金','土'],MODES=['対面','オンライン','オンデマンド','休講'],MARKS=['出席','遅刻','欠席','公欠'];
 const modeClass={'対面':'mode-face','オンライン':'mode-online','オンデマンド':'mode-demand','休講':'mode-off'},markClass={'出席':'done','遅刻':'wait','欠席':'mode-off','公欠':'draft'};
 let academicRounds={},weekOffset=0,pendingTimetable=[];
-if(typeof fetch==='function')fetch('./academic-calendar.json').then(r=>r.json()).then(j=>{academicRounds=j.rounds||{};render()}).catch(()=>{});
+if(typeof fetch==='function')academicCalendar().then(j=>{academicRounds=j.rounds||{};render()}).catch(()=>{});
 const todayISO=()=>new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
 const addDays=(iso,n)=>{const d=new Date(iso+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)};
 const dayLabel=iso=>{const d=new Date(iso+'T00:00:00Z');return `${d.getUTCMonth()+1}/${d.getUTCDate()}(${'日月火水木金土'[d.getUTCDay()]})`};
