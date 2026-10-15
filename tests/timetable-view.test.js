@@ -33,3 +33,5 @@ test('設定の「SaBoRo の AI」：今月の回数・無料分・超過分の�
  const html=run(`state.ai={available:true,reason:'',used:12,included:60,overage:true,overageYen:0};saboroAiPanel()`);assert.match(html,/今月の課題生成：<strong>12回<\/strong>／無料分 60回/);assert.match(html,/締切まで24時間以内の回答はすぐ作ります/);assert.match(html,/無料分（60回）を超えた後は、使った量に応じて使用料/);
  assert.match(run(`state.ai={available:true,reason:'',used:61,included:60,overage:true,overageYen:135};saboroAiPanel()`),/61回目からは使用量に応じた使用料：今月 135円/);
  assert.match(run(`state.ai={available:false,reason:'limit',used:60,included:60,overage:false,overageYen:0};saboroAiPanel()`),/今月の無料分（60回）を使い切りました/)});
+test('課題の詳細：出力が上限で途切れた課題には「高度な生成を使う（使用回数/上限）」を出し、使い切ったら出さない',()=>{const run=boot();const html=offer=>{run(`key='k';state.tasks=[{id:'t1',title:'レポート',type:'レポート',status:'wait',course:0,action:'出力が上限で途切れました',advancedOffer:${JSON.stringify(offer)}}];detail('t1')`);return run(`document.getElementById('drawer').innerHTML`)};
+ assert.match(html({used:1,limit:3}),/id="advanced">高度な生成を使う（1\/3）<\/button>/);assert.doesNotMatch(html({used:3,limit:3}),/id="advanced"/)});

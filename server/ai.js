@@ -7,6 +7,8 @@ import {billingOf,ACTIVE} from './billing.js';
 import {currentMonth,DEFAULT_SETTINGS} from './admin.js';
 // 1 回の費用の上限：出力は MAX_TOKENS まで、依頼の大きさ（資料込み）は MAX_BODY 文字まで。同時に作るのは MAX_INFLIGHT 件まで（同期は授業を最大 5 つ並行に読む）
 export const MODEL='claude-sonnet-5-5',MAX_TOKENS=32000,MAX_BODY=300000,DAILY_LIMIT=200,MAX_INFLIGHT=5,LABELS=['課題生成','授業情報の読み取り'];
+// 高度な生成：出力が上限で途切れた課題を、本人が選んだときだけ出力の上限を広げて作り直す（月 ADVANCED_LIMIT 回まで。使用量の mode は advanced）
+export const ADVANCED_TOKENS=64000,ADVANCED_LIMIT=3,TRUNCATED='出力が上限で途切れました';
 // 1M トークンあたりのドル（通常料金）。キャッシュの書き込みは 5 分のキャッシュ（入力の 1.25 倍）。Batch はすべて半額
 export const PRICES={'claude-sonnet-5-5':{input:2,output:10,cacheRead:0.2,cacheWrite:2.5}};
 // 知らないモデル名（将来の変更など）は高めの料金で見積もる（安く見積もって損をしないように）
@@ -20,12 +22,12 @@ const jstDay=(now=new Date())=>new Date(now.getTime()+9*3600e3).toISOString().sl
 // テストで Anthropic・Stripe を差し替える
 let makeClient=key=>new Anthropic({apiKey:key,maxRetries:2});let stripeFetch=(...a)=>fetch(...a);
 export function setAiTestHooks({client,fetch:f}={}){if(client)makeClient=client;if(f)stripeFetch=f}
-const params=(text,schema)=>({model:MODEL,max_tokens:MAX_TOKENS,output_config:{effort:'high',format:{type:'json_schema',schema}},messages:[{role:'user',content:text}]});
+const params=(text,schema,maxTokens=MAX_TOKENS)=>({model:MODEL,max_tokens:maxTokens,output_config:{effort:'high',format:{type:'json_schema',schema}},messages:[{role:'user',content:text}]});
 // 出力の本文（構造化出力の JSON 文字列）。拒否・途中で切れた場合は理由を返す
-function outcome(message){if(message?.stop_reason==='refusal')return {reason:'回答を拒否されました'};if(message?.stop_reason==='max_tokens')return {reason:'出力が上限で途切れました'};const text=message?.content?.find?.(b=>b.type==='text')?.text;return text?{text}:{reason:'出力なし'}}
+function outcome(message){if(message?.stop_reason==='refusal')return {reason:'回答を拒否されました'};if(message?.stop_reason==='max_tokens')return {reason:TRUNCATED,truncated:true};const text=message?.content?.find?.(b=>b.type==='text')?.text;return text?{text}:{reason:'出力なし'}}
 // 今月の状態：無料分の残り・超過分の金額・使えるか（使えなければ理由）
 export async function aiStatus(store,env,account,now=new Date()){const month=currentMonth(now);const [settings,plan,subs,stats,today,registered]=await Promise.all([store.getAdminSettings(),store.planOf(account),store.subscriptionsOf(account),store.aiMonthStats(account,month),store.aiDayCalls(account,dayStart(now)),store.adminStatusOf(account)]);const s=aiSettings(settings),billing=billingOf({account,settings,plan,subs});
- const subscribed=subs.some(x=>ACTIVE.includes(x.status)),overage=subscribed&&!!env.STRIPE_API_KEY,base={month,included:s.included,used:stats.count,overageYen:Math.round(stats.chargeMicro/1e6),overage};
+ const subscribed=subs.some(x=>ACTIVE.includes(x.status)),overage=subscribed&&!!env.STRIPE_API_KEY,base={month,included:s.included,used:stats.count,overageYen:Math.round(stats.chargeMicro/1e6),overage,advanced:{used:stats.advanced||0,limit:ADVANCED_LIMIT}};
  // 無料分は「課題生成の回数が無料分に達するまで、かつ実費が上限に達するまで」。回数に達した後は超過分として請求できる人だけ続けて使える
  const entitled=subscribed||(!!registered&&registered!=='stopped'),freeOver=stats.count<s.included&&s.freeCapUsd>0&&(stats.freeCostUsd||0)>=s.freeCapUsd;
  const reason=!env.SABORO_ANTHROPIC_API_KEY?'not_configured':!billing.allowed||!entitled?'payment_required':today>=DAILY_LIMIT?'daily_limit':(stats.count>=s.included&&!overage)||freeOver?'limit':'';return {...base,available:!reason,reason}}
@@ -47,17 +49,18 @@ export async function handleAi(req,u,env,store,account,{json,origin,ctx}){const 
  const body=await req.text();if(body.length>MAX_BODY)return json({error:'too_large'},413,origin);let d;try{d=JSON.parse(body)}catch{return json({error:'invalid'},400,origin)}
  if(!['now','batch'].includes(d.mode)||!LABELS.includes(d.label)||typeof d.text!=='string'||!d.text||!d.schema||typeof d.schema!=='object'||(d.mode==='batch'&&!(typeof d.key==='string'&&/^[\w-]{8,128}$/.test(d.key))))return json({error:'invalid'},400,origin);
  // 出来上がった Batch の結果は、使える状態かどうかにかかわらず渡す（支払い済みの分）
- if(d.mode==='batch'){let row=await store.getAiRequest(account,d.key);if(row){row=await settle(store,env,row,now);if(row.status==='done')return json({status:'done',text:row.result},200,origin);if(row.status==='failed'){await store.deleteAiRequest(row.id);return json({status:'failed',reason:row.reason||'作成に失敗しました'},200,origin)}return json({status:'pending'},200,origin)}}
+ if(d.mode==='batch'){let row=await store.getAiRequest(account,d.key);if(row){row=await settle(store,env,row,now);if(row.status==='done')return json({status:'done',text:row.result},200,origin);if(row.status==='failed'){await store.deleteAiRequest(row.id);return json({status:'failed',reason:row.reason||'作成に失敗しました',...(row.reason===TRUNCATED?{truncated:true,advanced:{used:(await store.aiMonthStats(account,currentMonth(now))).advanced||0,limit:ADVANCED_LIMIT}}:{})},200,origin)}return json({status:'pending'},200,origin)}}
  // すぐの依頼でも、同じ key の Batch があれば二重に作らない：出来上がっていればその結果を渡し、まだなら Batch を取り消してからすぐ作る
  // （取り消す前に出来上がっていた分は、定期実行で受け取って使用量に記録する）
  if(d.mode==='now'&&typeof d.key==='string'&&/^[\w-]{8,128}$/.test(d.key)){let row=await store.getAiRequest(account,d.key);if(row){row=await settle(store,env,row,now);if(row.status==='done')return json({status:'done',text:row.result},200,origin);if(row.status==='pending')await makeClient(env.SABORO_ANTHROPIC_API_KEY).messages.batches.cancel(row.batch_id).catch(()=>{})}}
- const status=await aiStatus(store,env,account,now);if(!status.available)return json({error:status.reason},403,origin);const settings=await store.getAdminSettings(),client=makeClient(env.SABORO_ANTHROPIC_API_KEY);
+ const advanced=d.advanced===true;if(advanced&&(d.mode!=='now'||d.label!=='課題生成'))return json({error:'invalid'},400,origin);
+ const status=await aiStatus(store,env,account,now);if(!status.available)return json({error:status.reason},403,origin);if(advanced&&status.advanced.used>=ADVANCED_LIMIT)return json({error:'advanced_limit'},403,origin);const settings=await store.getAdminSettings(),client=makeClient(env.SABORO_ANTHROPIC_API_KEY);
  // 作る前に予約する（同時に送られても、同時に作る数と 1 日の回数の上限を超えない）。作り終えたら（Batch は依頼を記録したら）外す
  const slot=crypto.randomUUID();if(!await store.reserveAi({id:slot,account,created:now.toISOString(),since:dayStart(now),staleBefore:new Date(now.getTime()-30*60e3).toISOString(),dayLimit:DAILY_LIMIT,maxInflight:MAX_INFLIGHT}))return json({error:'busy'},429,origin);
  if(d.mode==='batch'){try{const batch=await client.messages.batches.create({requests:[{custom_id:'saboro',params:params(d.text,d.schema)}]});const created=await store.insertAiRequest({id:crypto.randomUUID(),account,key:d.key,label:d.label,batch_id:batch.id,created:now.toISOString(),updated:now.toISOString()});if(!created)await client.messages.batches.cancel(batch.id).catch(()=>{});return json({status:'pending'},200,origin)}finally{await store.releaseAi(slot)}}
  // すぐ：生成に数分かかることがあるので、待つ間は空白を送り続けて接続を保ち、最後に結果の JSON を送る（JSON は先頭の空白を無視する）
  const encoder=new TextEncoder(),{readable,writable}=new TransformStream(),writer=writable.getWriter();const keep=setInterval(()=>writer.write(encoder.encode(' ')).catch(()=>{}),10000);
- const work=(async()=>{let out;try{const message=await client.messages.stream(params(d.text,d.schema)).finalMessage();await record(store,{account,label:d.label,mode:'now',message,settings,now}).catch(()=>{});const o=outcome(message);out=o.text?{status:'done',text:o.text}:{status:'failed',reason:o.reason}}catch(e){out={status:'failed',reason:e instanceof Anthropic.RateLimitError?'混み合っています':e instanceof Anthropic.APIError?`SaBoRo課題サポートの処理に失敗（${e.status??'接続'}）`:'SaBoRo課題サポートの処理に失敗'}}finally{clearInterval(keep);await store.releaseAi(slot).catch(()=>{})}await writer.write(encoder.encode(JSON.stringify(out)));await writer.close()})();
+ const work=(async()=>{let out;try{const message=await client.messages.stream(params(d.text,d.schema,advanced?ADVANCED_TOKENS:MAX_TOKENS)).finalMessage();await record(store,{account,label:d.label,mode:advanced?'advanced':'now',message,settings,now}).catch(()=>{});const o=outcome(message);out=o.text?{status:'done',text:o.text}:{status:'failed',reason:o.reason,...(o.truncated?{truncated:true,advanced:{used:status.advanced.used+(advanced?1:0),limit:ADVANCED_LIMIT}}:{})}}catch(e){out={status:'failed',reason:e instanceof Anthropic.RateLimitError?'混み合っています':e instanceof Anthropic.APIError?`SaBoRo課題サポートの処理に失敗（${e.status??'接続'}）`:'SaBoRo課題サポートの処理に失敗'}}finally{clearInterval(keep);await store.releaseAi(slot).catch(()=>{})}await writer.write(encoder.encode(JSON.stringify(out)));await writer.close()})();
  ctx?.waitUntil?.(work);return new Response(readable,{status:200,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}})}
 // Stripe の API（請求項目・請求書）。STRIPE_API_KEY は制限付きキー（請求項目・請求書の書き込みだけ）
 async function stripe(env,path,fields,idempotency){const body=new URLSearchParams(Object.entries(fields).filter(([,v])=>v!==undefined&&v!==null).map(([k,v])=>[k,String(v)]));const r=await stripeFetch('https://api.stripe.com/v1/'+path,{method:'POST',headers:{Authorization:'Bearer '+env.STRIPE_API_KEY,'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':idempotency},body});if(!r.ok)throw Error(`Stripe ${path} ${r.status}`);return r.json()}
