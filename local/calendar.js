@@ -1,7 +1,7 @@
 import {readFileSync} from 'node:fs';
 import {readFile,writeFile} from 'node:fs/promises';
 // 大学の学年暦（dist/academic-calendar.json）から、曜日ごとの第1〜15回の授業日を返す
-// 同梱の学年暦は版を出したときのもの。今の学年暦の期間が終わったら（学期が変わったら）、同期のときに公開中の学年暦（サイトの /academic-calendar.json）を確かめて取り込み、作業フォルダに残して次の起動からも使う（新しい学期の分を配布し直さずに届ける）。確かめるのは 1 日 1 回まで
+// 同梱の学年暦は版を出したときのもの。今の学年暦の期間が終わったら（学期が変わったら）、同期のときに公開中の学年暦（管理者画面で更新したもの。/api/academic-calendar）を確かめて取り込み、作業フォルダに残して次の起動からも使う（新しい学期の分を配布し直さずに届ける）。確かめるのは 1 日 1 回まで
 export let calendar=JSON.parse(readFileSync(new URL('../dist/academic-calendar.json',import.meta.url),'utf8'));
 const WEEKDAYS=['月','火','水','木','金','土'],DATE=/^\d{4}-\d{2}-\d{2}$/;
 export const validCalendar=c=>!!c&&typeof c.term==='string'&&!!c.rounds&&typeof c.rounds==='object'&&Object.keys(c.rounds).length>0&&Object.entries(c.rounds).every(([k,v])=>WEEKDAYS.includes(k)&&Array.isArray(v)&&v.length<=30&&v.every(d=>typeof d==='string'&&DATE.test(d)));

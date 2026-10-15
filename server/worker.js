@@ -1,4 +1,4 @@
-import {handleAdmin,health,userRow} from './admin.js';import {handleStripe} from './stripe.js';import {billingOf,PAID_KINDS} from './billing.js';import {handleAi,aiStatus,runAiDaily} from './ai.js';
+import {handleAdmin,health,userRow} from './admin.js';import {currentCalendar,needsUpdate,calendarEnd} from './calendar.js';import {handleStripe} from './stripe.js';import {billingOf,PAID_KINDS} from './billing.js';import {handleAi,aiStatus,runAiDaily} from './ai.js';
 const origins=['https://coursecue.hrk-6888.workers.dev','https://coursecue-2026.web.app'];
 const KINDS=['sync','generate','submit','supplement','settings','credentials','verify','timetable','link','attendance'];
 const json=(data,status=200,origin='')=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Access-Control-Allow-Origin':origins.includes(origin)?origin:origins[0],'Access-Control-Allow-Headers':'Authorization,Content-Type','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Vary':'Origin'}});
@@ -117,6 +117,8 @@ if(!u.pathname.startsWith('/api/'))return env.ASSETS.fetch(req);
 if(origin&&!origins.includes(origin))return json({error:'origin_denied'},403,origin);
 if(req.method==='OPTIONS')return json({},200,origin);
 try{
+// 学年暦（認証なし。PC と画面が新しい学期の授業日を受け取る）。管理者画面で保存したもの、なければ同梱のもの
+if(u.pathname==='/api/academic-calendar'&&req.method==='GET'){const {calendar}=await currentCalendar(env,store,u);return calendar?json(calendar,200,origin):json({error:'not_found'},404,origin)}
 // 管理者画面の API（ADMIN_TOKEN で認証。利用者の鍵とは別）
 if(u.pathname.startsWith('/api/admin/'))return await handleAdmin(req,u,env,store,{json,equal,origin});
 // Stripe の通知（署名で確認。利用者の鍵は使わない）
@@ -137,8 +139,9 @@ if(u.pathname==='/api/agent/finish'&&req.method==='POST'&&agent){const d=await r
 return json({error:'not_found'},404,origin)
 }catch{return json({error:'request_failed'},500,origin)}}
 // 運営者への通知（毎日の定期実行）：多くの利用者で同期が失敗している・止まっている、または定期処理で失敗があれば、ALERT_WEBHOOK_URL（Slack・Discord などの Webhook）に送る。未設定なら Workers のログに残すだけ
-export async function alertOperator(env,store,log=[],now=new Date()){const h=health(await store.adminUsers().then(rows=>rows.map(userRow)),now),lines=[...(h.alert?[h.message]:[]),...log.slice(0,10).map(x=>'定期処理：'+x)];if(!lines.length)return null;const text='saboro の運営通知\n'+lines.join('\n');console.error(text);
- if(env.ALERT_WEBHOOK_URL)await fetch(env.ALERT_WEBHOOK_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,content:text.slice(0,1900)})});return text}
+export async function alertOperator(env,store,log=[],now=new Date(),url='https://coursecue.hrk-6888.workers.dev/'){const h=health(await store.adminUsers().then(rows=>rows.map(userRow)),now),{calendar}=await currentCalendar(env,store,url).catch(()=>({calendar:null})),lines=[...(h.alert?[h.message]:[]),...(calendar&&needsUpdate(calendar,now)?[`学年暦（${calendar.term}、${calendarEnd(calendar)} まで）の更新が必要です。管理者画面の「学年暦」で新しい学年暦の PDF の URL を入れてください`]:[]),...log.slice(0,10).map(x=>'定期処理：'+x)];if(!lines.length)return null;const text='saboro の運営通知\n'+lines.join('\n');console.error(text);
+ // Discord は content（2000 文字まで）、Slack などは text で受け取る
+ if(env.ALERT_WEBHOOK_URL){const discord=/^https:\/\/(\w+\.)?discord(app)?\.com\/api\/webhooks\//.test(env.ALERT_WEBHOOK_URL),r=await fetch(env.ALERT_WEBHOOK_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(discord?{content:text.slice(0,1900)}:{text})});if(!r.ok)console.error('saboro: 通知の送信に失敗',r.status)}return text}
 export default {async fetch(req,env,ctx){return handle(req,env,d1Store(env.DB),ctx)},
  // 毎日の定期実行（wrangler.jsonc の triggers）：SaBoRo の AI の Batch の受け取りと、無料分を超えた分の請求
  async scheduled(event,env,ctx){const store=d1Store(env.DB);ctx.waitUntil(runAiDaily(env,store).catch(e=>[`定期処理が止まりました：${e.message}`]).then(async log=>{if(log.length)console.error('saboro: AI の定期処理',log.join(' / '));await alertOperator(env,store,log).catch(e=>console.error('saboro: 通知できません',e.message))}))}};

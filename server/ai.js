@@ -74,3 +74,17 @@ export async function runAiDaily(env,store,now=new Date()){const log=[];
    if(!sub)await stripe(env,'invoices',{customer,auto_advance:'true',collection_method:'charge_automatically',pending_invoice_items_behavior:'include',description},key+'-invoice');
    await store.markAiBilled(g.account,cutoff,day)}catch(e){log.push(`charge ${g.account}: ${e.message}`)}}}
  await store.cleanupAiRequests(new Date(now.getTime()-3*86400e3).toISOString(),new Date(now.getTime()-30*86400e3).toISOString());return log}
+// 学年暦の PDF を読み取る（管理者画面から。こちらの API キーで 1 回だけ作る）。返すのは確かめる前の学年暦（server/calendar.js の checkCalendar で確かめてから保存する）
+// term：どの学期を読むか（例「2027 春学期」。空なら PDF の次に始まる学期）
+const CAL_DAYS=['月','火','水','木','金','土'];
+export const CALENDAR_SCHEMA={type:'object',properties:{term:{type:'string'},rounds:{type:'object',properties:Object.fromEntries(CAL_DAYS.map(d=>[d,{type:'array',items:{type:'string'}}])),required:CAL_DAYS,additionalProperties:false}},required:['term','rounds'],additionalProperties:false};
+export async function readCalendarPdf(env,{url,term=''}){if(!env.SABORO_ANTHROPIC_API_KEY)throw Error('SaBoRo課題サポートの API キーが設定されていません');if(!/^https:\/\/[^\s]{1,300}$/.test(url||''))throw Error('https で始まる PDF の URL を入れてください');
+ const r=await fetch(url,{redirect:'follow'});if(!r.ok)throw Error(`PDF を取得できません（${r.status}）`);const buf=new Uint8Array(await r.arrayBuffer());if(buf.length>20e6)throw Error('PDF が大きすぎます（20MB まで）');if(String.fromCharCode(...buf.slice(0,5))!=='%PDF-')throw Error('PDF ではありません');
+ let bin='';for(let i=0;i<buf.length;i+=0x8000)bin+=String.fromCharCode(...buf.subarray(i,i+0x8000));
+ const text=`添付は日本の大学の学年暦（PDF）。${term?`「${term}」`:'これから始まる（今が学期中ならその）学期'}について、曜日ごとに第1回から最終回までの授業日を抜き出す。
+- rounds の各曜日に、その曜日の授業を行う日を YYYY-MM-DD で、第1回から順に並べる（通常 15 回）。祝日でも授業を行う日は含め、休講日・休業期間は含めない
+- 振替授業（例：水曜日に月曜日の授業を行う日）は、行う授業の曜日（この例では月）の一覧に、その日付で入れる
+- 土曜の授業がなければ土は空の配列。学期の授業日が読み取れない曜日も空の配列にする（推測しない）
+- term は「2027 春学期」のように、年度と学期の名前で書く`;
+ const message=await makeClient(env.SABORO_ANTHROPIC_API_KEY).messages.create({model:MODEL,max_tokens:16000,output_config:{effort:'high',format:{type:'json_schema',schema:CALENDAR_SCHEMA}},messages:[{role:'user',content:[{type:'document',source:{type:'base64',media_type:'application/pdf',data:btoa(bin)}},{type:'text',text}]}]});
+ const o=outcome(message);if(!o.text)throw Error(`読み取れませんでした（${o.reason}）`);let c;try{c=JSON.parse(o.text)}catch{throw Error('読み取った結果の形が不正です')}return {...c,source:url,usage:message.usage||{},costUsd:costUsd(message.usage||{},{model:message.model||MODEL})}}
