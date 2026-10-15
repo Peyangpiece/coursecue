@@ -34,6 +34,8 @@ export const shortError=e=>{const m=String(e?.message||e||'');if(/Timeout \d+ms 
 export const closeDialog=async d=>{if(d.type()==='prompt')return;await (['alert','beforeunload'].includes(d.type())?d.accept():d.dismiss()).catch(()=>{})};
 // 出席コードの入力が出たタブを本人に渡したことを、同期の授業の読み取りに知らせる
 export class PromptHandOver extends Error{constructor(message=''){super('出席コードの入力画面を本人に渡しました');this.prompt=message}}
+// 回答欄（提出前のページにだけある入力欄・選択肢）
+const ANSWER_FIELDS='input[name]:not([type=hidden]):not([type=submit]):not([type=button]),textarea[name],select[name]';
 const watchPrompt=p=>{if(!p.promptSeen)p.promptSeen=new Promise(r=>p.on('dialog',d=>{if(d.type()!=='prompt')return;p.handedOver=true;p.bringToFront().catch(()=>{});r(d.message())}));return p.promptSeen};
 // 渡したタブで出席コードの入力がまだ開いているか（開いている間はページの処理が止まり、2 秒で応答しない）
 const promptOpen=async p=>!p.isClosed()&&await Promise.race([p.evaluate(()=>1).then(()=>false,()=>false),new Promise(r=>setTimeout(()=>r(true),2000))]);
@@ -155,14 +157,16 @@ const todo=this.aiAvailable!==false?queue.filter(t=>t.status==='ready'&&(t.type=
  async taskPage(t){await this.releasePage(t.id);const p=await (await this.page()).context().newPage();p.on('dialog',closeDialog);this.pending.set(t.id,p);return p}
  async releasePage(id){for(const m of [this.held,this.pending]){const p=m.get(id);m.delete(id);if(p&&!p.isClosed())await p.close().catch(()=>{})}}
  async settlePage(t){const p=this.pending.get(t.id);this.pending.delete(t.id);if(!p||p.isClosed())return;const keep=['code','answered'].includes(t.status)||(/\/board\//.test(t.url||'')&&['draft','wait'].includes(t.status));if(!keep){await p.close().catch(()=>{});return}
- // 残したタブは本人が操作するので、確認の画面を自動で閉じない（本人が提出の確認に答えられるように）
- p.removeAllListeners('dialog');p.on('dialog',()=>{});this.held.set(t.id,p);await p.bringToFront().catch(()=>{})}
+ // 残したタブは本人が操作する。ここで出る確認（提出の確認・ページを離れる確認など）は本人が押した操作から出るので「OK」で進める
+ // （受け取るだけで答えないと、ブラウザを動かす仕組みの決まりでページが確認の返事を待ったまま止まる）。出席コードの入力（prompt）は本人に任せる
+ p.removeAllListeners('dialog');p.on('dialog',d=>{if(d.type()!=='prompt')d.accept().catch(()=>{})});this.held.set(t.id,p);await p.bringToFront().catch(()=>{})}
  // SaBoRo の画面で本人が入れた出席コードを選び、入力済みの回答と一緒に提出する（本人が提出を確かめて押したときだけ呼ばれる）
  // 入力済みのタブが閉じられていれば、生成済みの回答で入力し直してから
  async enterAttendance(t,raw){if(aiForbidden(this.state,t,this.courses()[t.course]?.name))throw Error('この回は AI の利用が禁止されているため、saboro からは提出しません。manabo で提出してください');const code=String(raw||'').normalize('NFKC').trim();if(!code)throw Error('出席コードを入れてください');if(t.status==='done')return;let p=this.held.get(t.id);if(!p||p.isClosed()){await this.process(t,false,{urgent:true});p=this.held.get(t.id)}if(t.status!=='code'||!p||p.isClosed())throw Error(t.action||'出席コードの欄のあるページを開けませんでした');const questions=await this.questionsOf(p),codes=questions.filter(q=>attendance(q.text));if(codes.length!==1)throw Error('出席コードの欄を特定できません。manabo ブラウザで入力してください');const q=codes[0],same=v=>String(v||'').normalize('NFKC').replace(/\s+/g,'')===code.replace(/\s+/g,'');let value=code;if(['select','radio'].includes(q.type)){const o=q.options.find(o=>o.value&&(same(o.value)||same(o.text)));if(!o)throw Error(`出席コード「${code}」は選択肢にありません`);value=o.value}const control=p.locator(`[name="${q.name.replace(/"/g,'\\"')}"]`);if(q.type==='select')await control.selectOption(value);else if(q.type==='radio'){for(const c of await control.all())if(await c.getAttribute('value')===value)await c.check()}else await control.fill(value);const answer={...t.generation,answers:[...(t.generation?.answers||[]).filter(a=>a.name!==q.name),{name:q.name,value,values:[],evidence:'本人が入力した出席コード'}]};await this.submitForm(t,p,questions,answer,{attendanceCode:true});if(t.status==='done')await this.releasePage(t.id);else{t.action=t.action||'manabo で提出結果を確認してください';await this.save()}}
  // 待機中のタブで本人が提出を終えていれば、提出済みにしてタブを閉じる（同期の前に確かめる）
  // 入力済みのタブは同期と別のタブなので、出席コード待ち・提出待ちがあっても同期は止めない
- async collectSubmitted(){for(const [id,p] of [...this.held]){const t=this.state.tasks.find(x=>x.id===id);if(!t){await this.releasePage(id);continue}if(p.isClosed())continue;const text=await p.locator('body').innerText().catch(()=>'');if(p.url().startsWith(LMS)&&/提出が完了|回答が完了|解答が完了|送信しました|提出しました/.test(text)){t.status='done';t.submittedAt=new Date().toISOString();t.action='';t.submissionIntent=null;await this.releasePage(id)}}}
+ async collectSubmitted(){for(const [id,p] of [...this.held]){const t=this.state.tasks.find(x=>x.id===id);if(!t){await this.releasePage(id);continue}if(p.isClosed())continue;const text=await p.locator('body').innerText().catch(()=>''),answering=await p.locator(ANSWER_FIELDS).count().catch(()=>0);// 全問に答えると「回答が完了」と出るクイズがあるので、回答欄が残っている間（提出前）は提出済みにせず、ページも閉じない
+if(p.url().startsWith(LMS)&&!answering&&/提出が完了|回答が完了|解答が完了|送信しました|提出しました/.test(text)){t.status='done';t.submittedAt=new Date().toISOString();t.action='';t.submissionIntent=null;await this.releasePage(id)}}}
  // 「待機中のブラウザ」：入力済みで待っているタブがあればそれを前に出す
  async showBrowser(){if(!this.visible)await this.switchBrowser(true);const p=[...this.held.values()].filter(x=>!x.isClosed()).at(-1)||[...this.promptTabs.values()].filter(x=>!x.isClosed()).at(-1)||await this.page();await p.bringToFront().catch(()=>{})}
  // 画面に出す／出さないを切り替える。裏で開いていた本人の操作待ち（出席コードの入力画面・回答を入れた提出待ちの課題）は、切り替えたブラウザで開き直す（回答は作り直さず入れ直すだけ）
