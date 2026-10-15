@@ -28,7 +28,7 @@
     "playwright": "^1.64.0",
     "electron-updater": "^6.8.9"
   },
-  "version": "1.0.38",
+  "version": "1.0.39",
   "description": "saboro デスクトップ：授業・課題・提出状況・出席を管理する",
   "main": "desktop/main.js",
   "build": {
@@ -43,6 +43,7 @@
       "local/**",
       "dist/icon-512.png",
       "dist/academic-calendar.json",
+      "dist/profile-form.js",
       "dist/saboro-logo.svg",
       "package.json",
       "!local/keychain",
