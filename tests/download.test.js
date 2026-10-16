@@ -270,6 +270,24 @@ test('同じ資料の 4up・2up があれば 1up（印なし）だけをダウ�
   assert.equal(layoutOf('第3回ケース 対面.pptx'), 1);
   assert.equal(layoutOf('第3回 1up.pdf'), 1);
   assert.equal(layoutOf('第4回 upload.pdf'), 1, 'up で始まる語は印ではない');
+  assert.equal(layoutOf('第2回 コーポレートファイナンスⅡ（資金調達①）_配布用（2分割バージョン）.pdf'), 2);
+  assert.equal(layoutOf('第2回 コーポレートファイナンスⅡ（資金調達①）_配布用（4分割バージョン）.pdf'), 4);
+  assert.equal(layoutOf('第2回 コーポレートファイナンスⅡ（資金調達①）_配布用（分割なしバージョン）.pdf'), 1);
+  assert.equal(
+    layoutBase('第2回 コーポレートファイナンスⅡ（資金調達①）_配布用（分割なしバージョン）.pdf'),
+    layoutBase('第2回 コーポレートファイナンスⅡ（資金調達①）_配布用（4分割バージョン）.pdf'),
+    '分割なし・2分割・4分割は同じ資料の形式違い'
+  );
+  assert.deepEqual(
+    preferLayout([
+      {name: '第2回 配布用（4分割バージョン）.pdf'},
+      {name: '第2回 配布用（分割なしバージョン）.pdf'},
+      {name: '第2回 配布用（2分割バージョン）.pdf'},
+      {name: '第3回 配布用（2分割）.pdf'}
+    ]).map(e => e.name),
+    ['第2回 配布用（分割なしバージョン）.pdf', '第3回 配布用（2分割）.pdf'],
+    '分割なしだけを保存し、分割なしがない組はそのまま'
+  );
   assert.equal(layoutBase('第3回ケース 対面（4up）.pdf'), layoutBase('第3回ケース 対面.pptx'));
   const es = [
     {name: '第3回 4up.pdf'},
@@ -435,5 +453,64 @@ test('お知らせに付いているファイルも、その授業のフォル�
   assert.deepEqual(
     m.noticeFiles['103904'].map(x => x.name),
     ['教室変更のお知らせ.pdf', '教室変更のお知らせ（4up）']
+  );
+});
+
+// manabo のお知らせ欄は [+] の見出しだけが出ていて、本文と付いているファイルは開くと出る。読む前に開き、ファイルを集める
+const toggle =
+  "var b=this.parentNode.querySelector('.body');b.style.display=b.style.display==='none'?'':'none';return false";
+const noticePage = `<a id="button-logout">ログアウト</a><div id="div-class-directories"><table><tr><td>第1回 オリエンテーション</td></tr></table></div><div class="panel"><div class="panel-heading"><span class="icon"></span>お知らせ</div><div class="panel-body"><div class="news"><a href="#" class="a-open-news" onclick="${toggle}"><img src="/img/plus.gif">【第01回，09/25】配布資料 &amp; 復習用動画</a><div class="body" style="display:none">配布資料・講義で使用します <a href="https://chukyo-u-ac-jp.zoom.us/rec/share/x">https://chukyo-u-ac-jp.zoom.us/rec/share/x</a> <a href="/file/11/">第1回 コーポレートファイナンスⅡ（ガイダンス）_配布用.pdf</a></div></div><div class="news"><a href="#" class="a-open-news" onclick="${toggle}"><img src="/img/plus.gif">【第02回，10/02】配布資料 &amp; 復習用動画</a><div class="body" style="display:none">教室は 0803 です <a href="/file/12/">第2回 コーポレートファイナンスⅡ（資金調達①）_配布用（分割なしバージョン）.pdf</a> <a href="/file/13/">第2回 コーポレートファイナンスⅡ（資金調達①）_配布用（2分割バージョン）.pdf</a> <a href="/file/14/">第2回 コーポレートファイナンスⅡ（資金調達①）_配布用（4分割バージョン）.pdf</a></div></div></div></div>`;
+test('お知らせ欄の折りたたまれた項目を開いてから読み、付いているファイル（分割なしだけ）を授業のフォルダに保存する', async t => {
+  const browser = await chromium.launch({headless: true});
+  t.after(() => browser.close());
+  const ctx = await browser.newContext();
+  await ctx.route('**/*', r => r.fulfill({contentType: 'text/html; charset=utf-8', body: noticePage}));
+  const p = await ctx.newPage();
+  await p.goto('https://manabo.cnc.chukyo-u.ac.jp/class/103904/');
+  const state = {
+    tasks: [],
+    materials: [],
+    settings: {autoGenerate: false},
+    courses: [{name: 'コーポレート・ファイナンスⅡ', id: '103904'}]
+  };
+  const m = new Manabo({
+    root: '/nonexistent',
+    work: '/tmp',
+    state,
+    save: async () => {},
+    credentials: async () => null,
+    ai: async () => {}
+  });
+  m.ctx = ctx;
+  assert.equal(await m.expandNotices(p), 2, '見出しを一度ずつ押す（画像と見出しの両方を押して閉じ直さない）');
+  assert.deepEqual(
+    await p.evaluate(() => [...document.querySelectorAll('.body')].map(b => b.style.display)),
+    ['', ''],
+    '本文が開く'
+  );
+  const {classInfo} = await import('../local/manabo.js');
+  const info = await p.evaluate(classInfo);
+  assert.match(info.notice, /教室は 0803 です/, '開いた本文を読む');
+  assert.deepEqual(
+    info.noticeFiles.map(f => f.url.replace('https://manabo.cnc.chukyo-u.ac.jp', '')),
+    ['/file/11/', '/file/12/', '/file/13/', '/file/14/'],
+    'Zoom などファイル以外のリンクは含めない'
+  );
+  assert.deepEqual(
+    m.wantedFiles(info.noticeFiles).map(f => f.url.replace('https://manabo.cnc.chukyo-u.ac.jp', '')),
+    ['/file/11/', '/file/12/'],
+    '2分割・4分割は保存せず分割なしだけ'
+  );
+  // 同期の流れでも、授業ページを読んだあとにお知らせのファイルを保存する
+  m.page = async () => (m.p = p);
+  m.cubics = async () => {};
+  const got = [];
+  m.download = async (e, course) => {
+    got.push(course + ':' + e.url.replace('https://manabo.cnc.chukyo-u.ac.jp', ''));
+  };
+  await m.sync();
+  assert.deepEqual(
+    got.filter(x => x.includes('/file/1')),
+    ['コーポレート・ファイナンスⅡ:/file/11/', 'コーポレート・ファイナンスⅡ:/file/12/']
   );
 });
