@@ -189,6 +189,72 @@ test('回答は「だ・である調」で、感想は「思った・わかっ�
   assert.match(p, /同じ文末を二文続けず/);
   assert.match(p, /AIが組み立てた例です/);
 });
+// 文章の質：段落の組み立て・AI らしい定型の回避・人が書いたような揺らぎ・読み返しを指示し、残った言い回しは本人に知らせる
+test('大学生が自分で書いたように見える本文を指示し、AI らしい言い回しが残っていれば注意点で知らせる', async () => {
+  const {prompt, WRITING_RULE, stiffPhrases, stiffNote, cleanAnswer, writingStyle} = await import(
+    '../local/generate.js'
+  );
+  const p = prompt({title: 'レポート'}, [], '');
+  assert(p.includes(WRITING_RULE));
+  for (const w of [
+    '段落は一つの話題につき一つ',
+    '「本レポートでは」「本稿では」ではなく',
+    '中身のない総括',
+    '反対の見方や例外に一度は触れる',
+    '「〜ではないだろうか」の反語を二度以上使わない',
+    '文頭の「また」「さらに」「そして」「このように」に頼らず',
+    '「〜である」「〜だ」の文末を四文以上続けず',
+    '十〜二十字の短い文も時々入れて',
+    '考えが動いた過程',
+    '断定と迷いを混ぜる',
+    '書き終えたら本文を読み返し'
+  ])
+    assert.ok(p.includes(w), w);
+  assert.match(
+    p,
+    /小テストの記述や一問一答は、答えを最初の一文で書く決まりのとおりにし/,
+    '短い記述には段落や締めの工夫を求めない'
+  );
+  assert.match(writingStyle('seed-a', 't1'), /最後は.*終える。$/, '締めくくり方も利用者ごと・課題ごとに変える');
+  // 一度で目立つもの・繰り返しで目立つもの・三つそろうと目立つもの。「」の中は対象外
+  assert.deepEqual(stiffPhrases('以上のことから、努力が大切だと考える。'), [
+    '「以上のことから」「まとめると」などの総括'
+  ]);
+  assert.deepEqual(stiffPhrases('本レポートでは需要について述べる。'), ['「本レポートでは」']);
+  assert.deepEqual(stiffPhrases('努力することが重要である。'), []);
+  assert.deepEqual(stiffPhrases('努力することが重要である。継続することが重要である。'), [
+    '「〜ことが重要である」の繰り返し'
+  ]);
+  assert.deepEqual(stiffPhrases('まず資料を読んだ。次に考えた。最後にまとめた。'), ['「まず・次に・最後に」の並べ方']);
+  assert.deepEqual(stiffPhrases('まず資料を読んだ。次に考えた。'), []);
+  assert.deepEqual(stiffPhrases('先生は「以上のことから」と言った。まずは一つ。'), []);
+  assert.deepEqual(stiffPhrases('需要が増えると価格は上がる。最初はそう思っていたが、資料の例は違った。'), []);
+  const q = [
+    {name: 'essay', type: 'textarea'},
+    {name: 'pick', type: 'radio'}
+  ];
+  const base = {grounded: true, needsUser: [], notes: ['一般知識で推定'], answers: []};
+  const out = cleanAnswer(
+    {
+      ...base,
+      draft: '本レポートでは述べる。',
+      answers: [
+        {name: 'essay', value: 'まとめると楽しかった。', values: [], evidence: 'e'},
+        {name: 'pick', value: '以上のことから', values: [], evidence: 'e'}
+      ]
+    },
+    q
+  );
+  assert.deepEqual(out.notes, [
+    '一般知識で推定',
+    stiffNote(['「本レポートでは」', '「以上のことから」「まとめると」などの総括'])
+  ]);
+  assert.match(out.notes[1], /^AIが書いたように見えやすい言い回しが残っています（「本レポートでは」、/);
+  assert.match(out.notes[1], /提出前に自分の言葉に直してください$/);
+  const twice = cleanAnswer(out, q);
+  assert.equal(twice.notes.length, 2, '二度整形しても重ねない');
+  assert.deepEqual(cleanAnswer({...base, draft: '需要が増えると価格は上がる。'}, q).notes, ['一般知識で推定']);
+});
 test('記述の回答に「です・ます」が残っていれば notes で知らせ、引用の中や選択式は対象外', async () => {
   const {cleanAnswer, politeEnding, POLITE_NOTE} = await import('../local/generate.js');
   const q = [
