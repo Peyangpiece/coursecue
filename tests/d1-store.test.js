@@ -1044,3 +1044,27 @@ test('AI の予約：月の「課題生成」の回数（記録済み＋作っ�
   assert.equal(await p.same(s => s.countAccountsSince(at(25))), 1);
   assert.equal(await p.same(s => s.countAccountsSince(at(0))), 2);
 });
+test('出席コードの共有：授業・日・利用者で 1 件（上書き）。別の日・別の授業は出ない', async t => {
+  for (const store of [d1Store(await openD1(t)), memoryStore()]) {
+    const put = (account, code, day = '2026-10-16', created = '2026-10-16T01:00:00Z') =>
+      store.putAttendanceCode({course: '103901', day, account, code, created});
+    await put('u1', '1111');
+    await put('u2', '2222', '2026-10-16', '2026-10-16T01:00:01Z');
+    await put('u1', '1112', '2026-10-16', '2026-10-16T01:00:02Z');
+    await put('u3', '3333', '2026-10-15');
+    const rows = await store.listAttendanceCodes('103901', '2026-10-16');
+    assert.deepEqual(
+      rows.map(r => [r.account, r.code]),
+      [
+        ['u2', '2222'],
+        ['u1', '1112']
+      ],
+      '古い順。u1 は上書き'
+    );
+    assert.deepEqual(await store.listAttendanceCodes('103902', '2026-10-16'), []);
+    assert.deepEqual(
+      (await store.listAttendanceCodes('103901', '2026-10-15')).map(r => r.code),
+      ['3333']
+    );
+  }
+});

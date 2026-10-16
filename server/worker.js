@@ -16,8 +16,10 @@ const KINDS = [
   'link',
   'attendance',
   'prompt',
-  'seen'
+  'seen',
+  'attcheck'
 ];
+const todayJst = () => new Date().toLocaleDateString('sv-SE', {timeZone: 'Asia/Tokyo'});
 const json = (data, status = 200, origin = '') =>
   new Response(JSON.stringify(data), {
     status,
@@ -93,6 +95,23 @@ export function d1Store(db) {
         )
         .bind(status, result, now, id, account)
         .run();
+    },
+    // 出席コードの共有：その日・その授業の分を利用者ごとに 1 件（上書き）
+    async putAttendanceCode(c) {
+      await db
+        .prepare(
+          'INSERT INTO attendance_codes(course,day,account,code,created) VALUES(?,?,?,?,?) ON CONFLICT(course,day,account) DO UPDATE SET code=excluded.code,created=excluded.created'
+        )
+        .bind(c.course, c.day, c.account, c.code, c.created)
+        .run();
+    },
+    async listAttendanceCodes(course, day) {
+      return (
+        await db
+          .prepare('SELECT account,code,created FROM attendance_codes WHERE course=? AND day=? ORDER BY created')
+          .bind(course, day)
+          .all()
+      ).results;
     },
     async findAccount(hash) {
       const row = await db
@@ -508,7 +527,8 @@ export function memoryStore() {
     subs = new Map(),
     aiUsage = [],
     aiRequests = new Map(),
-    aiInflight = new Map();
+    aiInflight = new Map(),
+    attendanceCodes = [];
   const upsert = p => {
     const i = payments.findIndex(x => x.id === p.id);
     if (i < 0) payments.push({...p});
@@ -555,6 +575,17 @@ export function memoryStore() {
         j.updated = now;
         if (j.kind === 'credentials') j.payload = '{}';
       }
+    },
+    async putAttendanceCode(c) {
+      const i = attendanceCodes.findIndex(x => x.course === c.course && x.day === c.day && x.account === c.account);
+      if (i < 0) attendanceCodes.push({...c});
+      else Object.assign(attendanceCodes[i], {code: c.code, created: c.created});
+    },
+    async listAttendanceCodes(course, day) {
+      return attendanceCodes
+        .filter(x => x.course === course && x.day === day)
+        .sort((x, y) => x.created.localeCompare(y.created))
+        .map(({account, code, created}) => ({account, code, created}));
     },
     async findAccount(h) {
       const a = accounts.find(a => a.ownerHash === h || a.deviceHash === h);
@@ -942,6 +973,28 @@ export async function handle(req, env, store, ctx) {
       return json({id, status: 'pending'}, 202, origin);
     }
     if (u.pathname === '/api/jobs' && req.method === 'GET') return json(await store.listJobs(account), 200, origin);
+    // 出席コードの共有：PC が manabo に入れたコードを授業（manabo の授業 ID）とその日（日本時間）で残し、画面は同じ授業の他の利用者の分を「他ユーザーの入力コード」として出す
+    if (u.pathname === '/api/attendance-codes' && req.method === 'POST' && agent) {
+      const d = await req.json().catch(() => null),
+        course = String(d?.course || '').trim(),
+        code = String(d?.code || '').trim();
+      if (!course || course.length > 100 || !code || code.length > 32) return json({error: 'invalid'}, 400, origin);
+      await store.putAttendanceCode({course, day: todayJst(), account, code, created: new Date().toISOString()});
+      return json({ok: true}, 200, origin);
+    }
+    if (u.pathname === '/api/attendance-codes' && req.method === 'GET' && owner) {
+      const course = String(u.searchParams.get('course') || '').trim();
+      if (!course || course.length > 100) return json({error: 'invalid'}, 400, origin);
+      const day = todayJst(),
+        users = new Map();
+      for (const r of await store.listAttendanceCodes(course, day))
+        if (r.account !== account) users.set(r.code, (users.get(r.code) || 0) + 1);
+      const codes = [...users]
+        .map(([code, n]) => ({code, users: n}))
+        .sort((a, b) => b.users - a.users)
+        .slice(0, 10);
+      return json({day, codes}, 200, origin);
+    }
     if (u.pathname === '/api/agent/claim' && req.method === 'POST' && agent) {
       const billing = await billingFor(store, account);
       const row = await store.claimJob(account, new Date().toISOString(), billing.allowed ? [] : PAID_KINDS);

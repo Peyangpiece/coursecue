@@ -325,7 +325,8 @@ function todayPanel() {
             info.zoom
               ? `<a href="${esc(info.zoom)}" target="_blank" rel="noopener">Zoom</a>${info.pass ? ` パスコード <code>${esc(info.pass)}</code>` : ''}`
               : '',
-            ...mats.map(m => (typeof materialLink === 'function' ? materialLink(m) : esc(m.name)))
+            ...mats.map(m => (typeof materialLink === 'function' ? materialLink(m) : esc(m.name))),
+            typeof manaboLink === 'function' ? manaboLink(s.i, 'manabo') : ''
           ].filter(Boolean);
         return `<li><button class="task" data-session="${s.i}:${s.round}"><span class="task-main"><span class="task-title">${s.period ? `${s.period}限 ` : ''}${esc(courses[s.i])}</span><span class="meta">第${s.round}回${info.room ? ` · ${esc(info.room)}` : ''}</span></span><span class="right">${modeLabel(info.mode)}${markLabel(info.attendance)}</span></button>${extra.length ? `<div class="materials" style="padding:2px 12px 8px">${extra.join(' ')}</div>` : ''}</li>`;
       })
@@ -352,7 +353,7 @@ function openSession(i, r) {
     )}</select><small>休講を選ぶと出席の集計から外れます。${(() => {
       const p = plannedMode(i, +r);
       return p ? `<span style="display:block">${esc(p.file)}：「${esc(p.evidence)}」</span>` : '';
-    })()}</small></div><div class="field"><label for="ss-room">教室</label><input class="form-control" id="ss-room" value="${esc(s.room || '')}" placeholder="授業の既定（${esc(cfg.room || '未設定')}）"></div><div class="field"><label for="ss-att">出席</label><select class="form-control" id="ss-att">${options(MARKS, s.attendance, '未記録')}</select></div><div class="field"><label for="ss-note">メモ</label><input class="form-control" id="ss-note" value="${esc(s.note || '')}" maxlength="200"></div><div class="actions"><button class="btn btn-primary" id="ss-save">保存</button><button class="btn" id="ss-course">授業の設定を変更</button></div>`,
+    })()}</small></div><div class="field"><label for="ss-room">教室</label><input class="form-control" id="ss-room" value="${esc(s.room || '')}" placeholder="授業の既定（${esc(cfg.room || '未設定')}）"></div><div class="field"><label for="ss-att">出席</label><select class="form-control" id="ss-att">${options(MARKS, s.attendance, '未記録')}</select></div><div class="field"><label for="ss-note">メモ</label><input class="form-control" id="ss-note" value="${esc(s.note || '')}" maxlength="200"></div><div class="actions"><button class="btn btn-primary" id="ss-save">保存</button><button class="btn" id="ss-course">授業の設定を変更</button>${typeof manaboLink === 'function' ? manaboLink(i, 'manabo で開く', 'btn') : ''}</div>`,
     'ss-att',
     `session:${i}.${r}`
   );

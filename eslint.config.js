@@ -16,6 +16,7 @@ const shared = {
   removedCourse: 'readonly',
   panel: 'readonly',
   materialLink: 'readonly',
+  manaboLink: 'readonly',
   openDrawer: 'readonly',
   toast: 'readonly',
   // timetable.js が定義し app.js が使う

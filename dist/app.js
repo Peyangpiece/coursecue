@@ -19,6 +19,12 @@ const academicCalendar = () =>
 let courses = [];
 // manabo の授業 ID。未設定（''）の授業は Mac サービスが同期時に授業一覧から探して state.courseIds に入れる
 const courseIdOf = i => state?.courses?.[i]?.id || state?.courseIds?.[courses[i]] || '';
+// manabo への直接リンク。授業 ID が分かる授業はその授業ページ、分からなければ manabo のトップ。
+// スマホでは saboro が manabo を自動操作できない（自動操作は PC のアプリが行う）ので、本人が manabo を開いて操作する入口を各所に出す
+const LMS = 'https://manabo.cnc.chukyo-u.ac.jp';
+const manaboCourseUrl = i => (courseIdOf(i) ? `${LMS}/class/${encodeURIComponent(courseIdOf(i))}/` : LMS + '/');
+const manaboLink = (i, label = 'manabo で開く', cls = 'btn btn-sm') =>
+  `<a class="${cls}" href="${esc(manaboCourseUrl(i))}" target="_blank" rel="noopener">${esc(label)}</a>`;
 // 同期した状態に授業一覧（Mac が manabo から取ったもの）があればそれを使う。古い Mac の状態なら固定の一覧
 function adoptCourses() {
   if (key && Array.isArray(state?.courses)) courses = state.courses.map(c => c.name);
@@ -513,7 +519,7 @@ function promptCode(name, message) {
   return new Promise(resolve => {
     const d = document.getElementById('dialog'),
       prev = document.activeElement;
-    d.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-text"><div class="modal-header" id="dialog-title">${esc(name)}：manabo の入力</div><div class="modal-body"><p id="dialog-text" style="margin:0 0 10px">${esc(message || '出席コードを入力してください')}</p><input class="form-control" id="dialog-input" inputmode="numeric" autocomplete="off" aria-label="出席コード"></div><div class="modal-footer"><button class="btn" id="dialog-cancel">あとで</button><button class="btn btn-primary" id="dialog-ok">OK</button></div></div>`;
+    d.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-text"><div class="modal-header" id="dialog-title">${esc(name)}：manabo の入力</div><div class="modal-body"><p id="dialog-text" style="margin:0 0 10px">${esc(message || '出席コードを入力してください')}</p><input class="form-control" id="dialog-input" inputmode="numeric" autocomplete="off" aria-label="出席コード"><div class="muted" id="dialog-others" style="margin-top:8px">他ユーザーの入力コード：確認中…</div></div><div class="modal-footer">${courses.indexOf(name) >= 0 ? manaboLink(courses.indexOf(name), 'manabo で自分で入れる', 'btn') : ''}<button class="btn" id="dialog-cancel">あとで</button><button class="btn btn-primary" id="dialog-ok">OK</button></div></div>`;
     d.classList.add('open');
     const done = v => {
       d.classList.remove('open');
@@ -524,6 +530,7 @@ function promptCode(name, message) {
     };
     dialogDone = () => done(null);
     const input = document.getElementById('dialog-input');
+    otherCodes(name);
     document.getElementById('dialog-ok').onclick = () => done(input.value.trim());
     document.getElementById('dialog-cancel').onclick = () => done(null);
     input.onkeydown = e => {
@@ -534,6 +541,83 @@ function promptCode(name, message) {
     };
     input.focus();
   });
+}
+// 入力の画面の「他ユーザーの入力コード」：同じ授業（manabo の授業 ID）の他の利用者が今日入れたコード（クラウドの /api/attendance-codes）。押すと入力欄に入る
+async function otherCodes(name) {
+  const el = document.getElementById('dialog-others'),
+    i = courses.indexOf(name);
+  if (!el) return;
+  try {
+    const d = await api('/api/attendance-codes?course=' + encodeURIComponent(courseIdOf(i) || name));
+    if (!el.isConnected) return;
+    el.innerHTML = d.codes?.length
+      ? `他ユーザーの入力コード：${d.codes.map(c => `<button type="button" class="btn btn-sm" data-code="${esc(c.code)}">${esc(c.code)}${c.users > 1 ? `<small class="muted"> ×${c.users}</small>` : ''}</button>`).join(' ')}`
+      : '他ユーザーの入力コード：まだありません';
+    el.querySelectorAll('[data-code]').forEach(b => {
+      b.onclick = () => {
+        const input = document.getElementById('dialog-input');
+        if (!input) return;
+        input.value = b.dataset.code;
+        input.focus();
+      };
+    });
+  } catch {
+    if (el.isConnected) el.textContent = '他ユーザーの入力コード：取得できませんでした';
+  }
+}
+// 「出席確認」：PC に授業ページを開かせ、出席コードの入力が出ているかだけ確かめる（クラウドの仕事 attcheck）。
+// 出ていれば入力の画面を出し、出ていなければ「現在、出席は受け付けておりません」。結果は授業の情報にも出す（state.attendanceCheck）
+function attendanceCheckRow(i) {
+  const c = state.attendanceCheck?.[courses[i]];
+  if (!key || !c) return '';
+  return `<tr><th>出席確認</th><td>${c.open ? '<span class="attn">出席コードの入力が出ています</span>' : '現在、出席は受け付けておりません'} <span class="muted">（${when(c.at)} 確認）</span></td></tr>`;
+}
+async function waitJob(id, limit = 90000) {
+  const started = Date.now();
+  for (;;) {
+    await new Promise(r => setTimeout(r, 2000));
+    const current = (await api('/api/jobs')).find(j => j.id === id);
+    if (current && ['done', 'waiting', 'failed'].includes(current.status))
+      return {...current, result: typeof current.result === 'string' ? JSON.parse(current.result) : current.result};
+    if (Date.now() - started > limit)
+      throw Error(dev() + ' の応答がありません（アプリが起動しているか確かめてください）');
+  }
+}
+async function checkAttendance(i) {
+  const name = courses[i];
+  if (!key) {
+    toast('manabo連携が必要です');
+    return;
+  }
+  if (!state.features?.includes('attcheck')) {
+    toast(dev() + ' のアプリを新しいバージョンにすると使えます');
+    return;
+  }
+  if (state.prompts?.[name]) {
+    showPrompts(name);
+    return;
+  }
+  const id = `attcheck-${i}`;
+  setBusy(id, '確認中…');
+  try {
+    const queued = await api('/api/jobs', 'POST', {kind: 'attcheck', task: null, payload: {course: name}});
+    const current = await waitJob(queued.id);
+    await load();
+    if (state.prompts?.[name]) {
+      toast(`${name}：出席コードの入力が出ています`);
+      showPrompts(name);
+    } else
+      toast(
+        current.status === 'done'
+          ? '現在、出席は受け付けておりません'
+          : briefError(current.result?.message || '確認できませんでした')
+      );
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    setBusy(id, '');
+    render();
+  }
 }
 // 入力待ちの出席コード（PC の状態 state.prompts）。一度出した入力は、同じものをもう一度自動では出さない（ホームの「入力する」で出せる）
 const promptShown = new Set();
@@ -574,7 +658,7 @@ function promptPanel() {
   return list
     .map(
       p =>
-        `<div class="alert alert-warning"><strong>${esc(p.name)}</strong>：manabo で出席コードの入力画面が出ています（${when(p.at)}）。<button class="btn btn-primary" data-prompt="${esc(p.name)}" style="margin-left:8px">入力する</button></div>`
+        `<div class="alert alert-warning"><strong>${esc(p.name)}</strong>：manabo で出席コードの入力画面が出ています（${when(p.at)}）。<button class="btn btn-primary" data-prompt="${esc(p.name)}" style="margin-left:8px">入力する</button>${courses.indexOf(p.name) >= 0 ? `<span style="margin-left:8px">${manaboLink(courses.indexOf(p.name), 'manabo で自分で入れる', 'btn')}</span>` : ''}</div>`
     )
     .join('');
 }
@@ -704,7 +788,7 @@ function courseHeader(i) {
       return banned.length
         ? `<span class="attn">禁止の回：${banned.map(r => `第${r}回`).join('、')}</span> <span class="muted">（その回の資料）</span>`
         : '<span class="muted">禁止の記載なし（その回の資料から判断）</span>';
-    })()}</td></tr><tr><th>次回</th><td>${next ? `第${next[0]}回 ${typeof dayLabel === 'function' ? dayLabel(next[1]) : next[1]}${next[1] === today ? ' <span class="label draft">今日</span>' : ''}` : '<span class="muted">予定なし</span>'}</td></tr>${s ? `<tr><th>出席</th><td>出席 ${s.出席}・遅刻 ${s.遅刻}・欠席 ${s.欠席}・公欠 ${s.公欠}${cfg.limit != null ? `（欠席の上限 ${cfg.limit}回）` : ''}${s.未記録 ? ` <span class="attn">未記録 ${s.未記録}</span>` : ''}</td></tr>` : ''}</table><div class="actions"><button class="btn btn-sm" data-coursecfg="${i}">授業の設定</button><button class="btn btn-sm" data-attendance="${i}">出席を記録</button><button class="btn btn-sm" data-view="timetable">時間割へ</button>${key && state.features?.includes('removecourse') ? `<button class="btn btn-sm" id="removecourse-${i}" data-removecourse="${i}">この授業を削除</button>` : ''}</div>`
+    })()}</td></tr><tr><th>次回</th><td>${next ? `第${next[0]}回 ${typeof dayLabel === 'function' ? dayLabel(next[1]) : next[1]}${next[1] === today ? ' <span class="label draft">今日</span>' : ''}` : '<span class="muted">予定なし</span>'}</td></tr>${s ? `<tr><th>出席</th><td>出席 ${s.出席}・遅刻 ${s.遅刻}・欠席 ${s.欠席}・公欠 ${s.公欠}${cfg.limit != null ? `（欠席の上限 ${cfg.limit}回）` : ''}${s.未記録 ? ` <span class="attn">未記録 ${s.未記録}</span>` : ''}</td></tr>` : ''}${attendanceCheckRow(i)}</table><div class="actions"><button class="btn btn-sm" data-coursecfg="${i}">授業の設定</button><button class="btn btn-sm" data-attendance="${i}">出席を記録</button><button class="btn btn-sm" data-view="timetable">時間割へ</button>${key ? `<button class="btn btn-sm" id="attcheck-${i}" data-attcheck="${i}">出席確認</button>` : ''}${key ? manaboLink(i) : ''}${key && state.features?.includes('removecourse') ? `<button class="btn btn-sm" id="removecourse-${i}" data-removecourse="${i}">この授業を削除</button>` : ''}</div>`
   );
 }
 // 左のディレクトリ。スマホでは manabo と同じくボタンで開閉する
@@ -934,6 +1018,7 @@ function render() {
   document.getElementById('status').innerHTML = (
     key
       ? [
+          `<a href="${LMS}/" target="_blank" rel="noopener">manabo を開く</a>`,
           `自動確認 ${state.settings?.time || '16:30'}`,
           offline
             ? `<span class="status-alert">${esc(offline)}（15秒ごとに再試行）</span>`
@@ -1335,6 +1420,7 @@ function bindView() {
           go(e.dataset.stat === 'needs' ? 'needs' : 'tasks', null, e.dataset.stat === 'needs' ? 'all' : e.dataset.stat))
     );
   document.querySelectorAll('[data-prompt]').forEach(e => (e.onclick = () => showPrompts(e.dataset.prompt)));
+  document.querySelectorAll('[data-attcheck]').forEach(e => (e.onclick = () => checkAttendance(+e.dataset.attcheck)));
   document.querySelectorAll('[data-seen]').forEach(e => (e.onclick = () => job('seen', null, {all: true})));
   document.querySelectorAll('[data-filter]').forEach(
     e =>
@@ -1614,7 +1700,7 @@ async function connectFrom(candidate) {
   if (
     !(await ownedLocally(candidate)) &&
     !(await ask(
-      '別の接続先に切り替えようとしています。自分のパソコンの saboro の「saboroを接続」から開いた場合だけ「接続する」を押してください。他の人から送られたリンクなら切り替えないでください（manabo のパスワードを他人に渡してしまうおそれがあります）。',
+      '別の接続先に切り替えようとしています。自分のパソコンの saboro の「saboroを接続」から開いた場合か、自分のパソコンに出した「スマホと連携」の QR コードを読んだ場合だけ「接続する」を押してください。他の人から送られたリンクなら切り替えないでください（manabo のパスワードを他人に渡してしまうおそれがあります）。',
       '接続する',
       true
     ))

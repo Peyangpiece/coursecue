@@ -4,7 +4,7 @@
 export const ACTIVE = ['active', 'trialing', 'past_due'];
 // 月額（税込・円）。特定商取引法に基づく表記と同じ固定値（site/public/tokushoho.html と必ず同時に変える。tests/site.test.js で照らす）。管理画面の「支払い画面に出す月額」が 0 ならこの値を出す
 export const MONTHLY_YEN = 2500;
-export const PAID_KINDS = ['sync', 'generate', 'submit', 'supplement', 'attendance', 'prompt'];
+export const PAID_KINDS = ['sync', 'generate', 'submit', 'supplement', 'attendance', 'prompt', 'attcheck'];
 // subs：この利用者の定期支払い（顧客 ID を通して対応したもの）
 export function billingOf({account, settings = {}, plan, subs = []}) {
   const required = !!settings.requirePayment && plan !== 'free',

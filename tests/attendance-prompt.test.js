@@ -15,7 +15,7 @@ test('PC：prompt の仕事で開いたままの入力画面にコードを渡�
       "job.kind==='prompt'){",
       /[\s\S]{0,300}?/,
       'await lms.answerPrompt(name,job.payload?.code);await save();',
-      /[\s\S]{0,40}?/,
+      /[\s\S]{0,300}?/, // 入れたコードの共有（/api/attendance-codes）を挟む
       'await lms.sync({course:i});'
     )
   );

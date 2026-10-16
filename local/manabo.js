@@ -350,6 +350,8 @@ const watchPrompt = p => {
   }
   return p.promptSeen;
 };
+// 「出席確認」で授業ページを開いたあと、入力（prompt）が出るのを待つ時間（ページの処理が落ち着いてから）
+const ATTENDANCE_CHECK_GRACE = 1500;
 // 渡したタブで出席コードの入力がまだ開いているか（開いている間はページの処理が止まり、2 秒で応答しない）
 const promptOpen = async p =>
   !p.isClosed() &&
@@ -1316,6 +1318,43 @@ export class Manabo {
     if (!this.state.prompts?.[name]) return;
     const {[name]: _gone, ...rest} = this.state.prompts;
     this.state.prompts = rest;
+  }
+  // 「出席確認」：授業ページを開いて、出席コードの入力（prompt）が出るかだけを確かめる。出れば同期のときと同じくタブを本人に渡し（notePrompt。画面に入力が出る）、
+  // 出なければタブを閉じて「受け付けていない」を残す（state.attendanceCheck）。課題・資料は読まない
+  async checkAttendance(i) {
+    const name = this.courses()[i].name,
+      open = this.promptTabs.get(name);
+    if (open && (await promptOpen(open))) {
+      this.noteAttendance(name, true);
+      return true;
+    }
+    this.promptTabs.delete(name);
+    this.clearPrompt(name);
+    const id = courseIdOf(i, this.state);
+    if (!id) throw Error(`${name}：manabo の授業 ID が分からないため確かめられません（先に同期してください）`);
+    await this.login();
+    const p = await this.ctx.newPage();
+    p.on('dialog', closeDialog);
+    const seen = watchPrompt(p);
+    const settled = p
+      .goto(`${LMS}/class/${id}/`, {waitUntil: 'domcontentloaded'})
+      .then(() => p.waitForLoadState('networkidle', {timeout: 8000}).catch(() => {}))
+      .then(() => new Promise(r => setTimeout(r, ATTENDANCE_CHECK_GRACE)))
+      .then(() => null);
+    settled.catch(() => {});
+    const message = await Promise.race([settled, seen]);
+    if (message === null) {
+      await p.close().catch(() => {});
+      this.noteAttendance(name, false);
+      return false;
+    }
+    this.promptTabs.set(name, p);
+    this.notePrompt(name, i, message);
+    this.noteAttendance(name, true);
+    return true;
+  }
+  noteAttendance(name, open) {
+    this.state.attendanceCheck = {...this.state.attendanceCheck, [name]: {open, at: new Date().toISOString()}};
   }
   // SaBoRo の画面で入れた出席コードを、開いたままの入力画面（manabo の prompt）に渡す。渡したあとページの処理が終わるのを待ち、もう一度入力を求められなければタブを閉じる
   async answerPrompt(name, code) {

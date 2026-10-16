@@ -25,7 +25,8 @@ import {dirname, join} from 'node:path';
 import {mkdir, readFile, writeFile, rm} from 'node:fs/promises';
 import {createHash, timingSafeEqual} from 'node:crypto';
 import {Manabo} from './manabo.js';
-import {LEGACY_COURSES, courseNames, contentType, removeCourse, restoreCourse} from './core.js';
+import QRCode from 'qrcode';
+import {LEGACY_COURSES, courseNames, courseIdOf, contentType, removeCourse, restoreCourse} from './core.js';
 import {requestAllowed} from './local-server.js';
 import {
   createGenerator,
@@ -150,7 +151,7 @@ if (!state.settings?.downloadDir && !state.rootAdopted) {
   state.rootAdopted = true;
 }
 state.defaultDownloadDir = materialsRoot();
-state.features = ['pickfolder', 'attendance', 'removecourse', 'aipolicy']; // AI の使用量：1 回ごとに usage.jsonl に追記し、月ごとの集計を状態に持つ（画面に出す。料金を決めるための実測用）
+state.features = ['pickfolder', 'attendance', 'removecourse', 'aipolicy', 'attcheck']; // AI の使用量：1 回ごとに usage.jsonl に追記し、月ごとの集計を状態に持つ（画面に出す。料金を決めるための実測用）
 const usageFile = usageLog(join(work, 'usage.jsonl'));
 async function recordUsage(e) {
   state.usage = addUsage(state.usage, e);
@@ -391,6 +392,11 @@ async function run(job) {
       if (i < 0) throw Error('その授業は見つかりません');
       await lms.answerPrompt(name, job.payload?.code);
       await save();
+      // 入れたコードを同じ授業の利用者と共有する（画面の入力の「他ユーザーの入力コード」）。共有に失敗しても出席の処理は続ける
+      await api('/api/attendance-codes', 'POST', {
+        course: courseIdOf(i, state) || name,
+        code: String(job.payload?.code ?? '').trim()
+      }).catch(() => {});
       try {
         await lms.sync({course: i});
       } catch (e) {
@@ -401,6 +407,18 @@ async function run(job) {
       }
       await save();
       return {ok: true, message: `${name} の出席コードを入れました`};
+    } else if (job.kind === 'attcheck') {
+      // 「出席確認」：授業ページを開き、出席コードの入力が出ているかだけ確かめる（出ていれば画面に入力が出る）
+      const name = String(job.payload?.course || ''),
+        i = courseNames(state).indexOf(name);
+      if (i < 0) throw Error('その授業は見つかりません');
+      const open = await lms.checkAttendance(i);
+      await save();
+      return {
+        ok: true,
+        open,
+        message: open ? `${name}：出席コードの入力が出ています` : '現在、出席は受け付けておりません'
+      };
     } else if (job.kind === 'seen') {
       // 新着のお知らせを「確認した」：見た印に加え、新着から消す（keys で選んだものだけ、または all で全部）
       const keys = Array.isArray(job.payload?.keys) ? job.payload.keys.map(String) : [],
@@ -525,13 +543,14 @@ const setup = `<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="
 <section class="panel"><h2><span class="mark" aria-hidden="true"></span>1. manabo の ID とパスワード</h2><div class="body"><form id="form" method="post" action="/credentials"><div class="field"><label for="id">ログインID</label><input class="form-control" id="id" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required></div><div class="field"><label for="pw">パスワード</label><input class="form-control" id="pw" name="password" type="password" autocomplete="current-password" required><small id="pw-saved" hidden>パスワードは保存済みです。変えるときだけ入力してください（空のままなら保存済みのものを使います）。</small></div><small>この Mac/PC にだけ暗号化して保存します。クラウドには送りません。</small><div class="actions"><button class="btn btn-primary">保存して manabo に接続を確認</button></div></form><p class="note" id="inapp" hidden>アプリの画面では、ブラウザ（Safari・Chrome など）に保存したパスワードを使えません。保存済みのパスワードで入れるときは <a href="/setup#browser" target="_blank" rel="noopener">ブラウザでこの画面を開く</a>。保存したら、この画面に戻って 3. の「saboroを接続」を押してください。</p><p id="result"></p></div></section>
 <section class="panel"><h2><span class="mark" aria-hidden="true"></span>2. SaBoRo課題サポート</h2><div class="body"><p id="ai">確認中…</p><small>課題の回答は saboro が自動で作ります。設定は要りません。</small></div></section>
 <section class="panel"><h2><span class="mark" aria-hidden="true"></span>3. saboro を接続</h2><div class="body"><p>この画面を saboro に接続します。以後はどの端末からでも同じ接続キーで使えます。</p><div class="actions"><a class="btn btn-primary" href="/pair">saboroを接続</a><a class="btn" href="/browser">manabo ブラウザを開く</a></div><small>manabo ブラウザは、出席コードの入力など本人の操作が必要なときに使います。</small></div></section>
-<section class="panel"><h2><span class="mark" aria-hidden="true"></span>4. 過去のレポート（任意）</h2><div class="body"><p>自分で書いたレポートを 1〜3 本選ぶと、文体（文の長さ・書き出しや締めくくりの癖・よく使う言い回し）と、自分についての情報を読み取ります。回答があなたの書いたような文章になります。</p><div class="field"><input class="form-control" id="reports" type="file" multiple accept=".docx,.pdf,.txt,.md"></div><small>Word（.docx）・PDF・テキスト、1 本 8 MB まで。ファイルはこのパソコンの中で読み、本文だけを AI に 1 回送ります（運営者のサーバーには保存しません）。この読み取りは月の回数に数えません。</small><div class="actions"><button class="btn" id="readreports" type="button">読み取る</button></div><p id="reportresult"></p><div class="note"><b>ChatGPT・Claude の履歴から読み取る（任意）</b><p>ボタンを押すと ChatGPT（または Claude）がブラウザで開きます。設定の「データコントロール」（Claude は「プライバシー」）で「データをエクスポート」を押し、届いたメールのリンクからダウンロードしてください。ダウンロードした zip は、このパソコンが「ダウンロード」フォルダから自動で見つけて読み取ります（3 時間まで待ちます）。</p><small>zip はこのパソコンの中で読み、学業に関係するあなたのメッセージだけを AI に送ります。それ以外の会話は送りません。運営者のサーバーには保存しません。</small><div class="actions"><button class="btn" id="chatgpt" type="button">ChatGPT の履歴を取り込む</button><button class="btn" id="claude" type="button">Claude の履歴を取り込む</button></div><p id="chatstate"></p><div id="chatsuggest" hidden><label for="chattext">読み取った「自分について」の候補（直してから足せます）</label><textarea class="form-control" id="chattext" rows="5" style="height:auto"></textarea><div class="actions"><button class="btn btn-primary" id="chatadd" type="button">5. の「自分について」に足す</button><button class="btn" id="chatclose" type="button">閉じる</button></div></div></div></div></section>
-<section class="panel"><h2><span class="mark" aria-hidden="true"></span>5. 自分について（任意）</h2><div class="body"><p>当てはまるものを選んでください。「自分の考え」「自分の経験を踏まえて」など、自分について聞かれる設問の回答に使います。</p><div id="pfwrap"></div><div class="field"><label for="profile">そのほか自分について（自由記述・任意）</label><textarea class="form-control" id="profile" rows="5" maxlength="2000" style="height:auto" placeholder="例：経営学部3年。飲食店のアルバイトを2年続けていて、新人の指導もしている。テニスサークルに所属。将来はマーケティングの仕事に就きたい。"></textarea><small>「あなたの考え」「自分の経験を踏まえて」など、自分について聞かれる設問の回答に使います。</small></div><div class="field"><label for="style">文体</label><textarea class="form-control" id="style" rows="4" maxlength="1000" style="height:auto" placeholder="4. で過去のレポートを読み取ると入ります。自分で書いてもかまいません。"></textarea></div><div class="actions"><button class="btn btn-primary" id="saveprofile" type="button">保存</button></div><p id="profileresult"></p></div></section></main>
-<script src="/profile-form.js"></script><script>const $=id=>document.getElementById(id);if(window.ProfileForm)$('pfwrap').innerHTML=ProfileForm.profileFormHtml({});const connectionText={connected:'manabo に接続できています。',ready:'保存済みです。接続はまだ確認していません。',attention:'manabo に接続できませんでした。ID とパスワードを確かめてください。'};async function status(){try{const d=await (await fetch('/status')).json();if(!d.configured)return;document.title='設定 — saboro';$('pagename').textContent='設定';$('crumbname').textContent='設定';$('intro').textContent='manabo の ID とパスワード・SaBoRo課題サポート・saboro との接続の設定です。変えるところだけ入力してください。';$('saved-back').hidden=false;$('id').value=d.username;if(!$('profile').value)$('profile').value=d.profile||'';if(window.ProfileForm)$('pfwrap').innerHTML=ProfileForm.profileFormHtml(d.profileForm);if(!$('style').value)$('style').value=d.style||'';$('pw').required=false;$('pw').placeholder='••••••••（保存済み）';$('pw-saved').hidden=false;if(!$('result').textContent)$('result').textContent=connectionText[d.connection]||''}catch{}}status();if(/Electron\\//.test(navigator.userAgent))$('inapp').hidden=false;$('readreports').onclick=async()=>{const out=$('reportresult'),files=[...$('reports').files];if(!files.length||files.length>3){out.textContent='レポートを 1〜3 本選んでください。';return}out.textContent='読み取り中…（1 分ほどかかります）';try{const list=await Promise.all(files.map(f=>new Promise((ok,ng)=>{if(f.size>8e6){ng(Error('1 本 8 MB までにしてください'));return}const r=new FileReader();r.onload=()=>ok({name:f.name,data:String(r.result).split(',')[1]||''});r.onerror=()=>ng(Error('ファイルを読めませんでした'));r.readAsDataURL(f)})));const d=await (await fetch('/reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({files:list})})).json();if(!d.ok){out.textContent=d.message||'読み取れませんでした。';return}$('style').value=d.style;const have=$('profile').value.trim(),add=d.profile.split('\\n').map(x=>x.trim()).filter(x=>x&&!have.includes(x));$('profile').value=[have,...add].filter(Boolean).join('\\n').slice(0,2000);out.textContent='読み取りました。5. の内容を確かめて、直してから「保存」を押してください。'}catch(e){out.textContent=e.message||'読み取れませんでした。'}};
+<section class="panel" id="phone"><h2><span class="mark" aria-hidden="true"></span>4. スマホと連携</h2><div class="body"><p>スマホのカメラでこの QR コードを読むと、同じ接続キーで saboro が開きます。課題・締切・時間割・お知らせの確認、同期の指示、出席コードの入力ができます（manabo の自動操作はこのパソコンが行うので、パソコンが起動している必要があります）。</p><p><img src="/qr.svg" alt="スマホと連携する QR コード" width="220" height="220" style="display:block;border:1px solid #ddd;border-radius:4px"></p><small>開いたら、iPhone は Safari の共有メニューから「ホーム画面に追加」、Android は Chrome のメニューから「ホーム画面に追加」を選ぶと、アプリのように使えます。QR コードには接続キーが入っています。他の人に見せないでください。</small></div></section>
+<section class="panel"><h2><span class="mark" aria-hidden="true"></span>5. 過去のレポート（任意）</h2><div class="body"><p>自分で書いたレポートを 1〜3 本選ぶと、文体（文の長さ・書き出しや締めくくりの癖・よく使う言い回し）と、自分についての情報を読み取ります。回答があなたの書いたような文章になります。</p><div class="field"><input class="form-control" id="reports" type="file" multiple accept=".docx,.pdf,.txt,.md"></div><small>Word（.docx）・PDF・テキスト、1 本 8 MB まで。ファイルはこのパソコンの中で読み、本文だけを AI に 1 回送ります（運営者のサーバーには保存しません）。この読み取りは月の回数に数えません。</small><div class="actions"><button class="btn" id="readreports" type="button">読み取る</button></div><p id="reportresult"></p><div class="note"><b>ChatGPT・Claude の履歴から読み取る（任意）</b><p>ボタンを押すと ChatGPT（または Claude）がブラウザで開きます。設定の「データコントロール」（Claude は「プライバシー」）で「データをエクスポート」を押し、届いたメールのリンクからダウンロードしてください。ダウンロードした zip は、このパソコンが「ダウンロード」フォルダから自動で見つけて読み取ります（3 時間まで待ちます）。</p><small>zip はこのパソコンの中で読み、学業に関係するあなたのメッセージだけを AI に送ります。それ以外の会話は送りません。運営者のサーバーには保存しません。</small><div class="actions"><button class="btn" id="chatgpt" type="button">ChatGPT の履歴を取り込む</button><button class="btn" id="claude" type="button">Claude の履歴を取り込む</button></div><p id="chatstate"></p><div id="chatsuggest" hidden><label for="chattext">読み取った「自分について」の候補（直してから足せます）</label><textarea class="form-control" id="chattext" rows="5" style="height:auto"></textarea><div class="actions"><button class="btn btn-primary" id="chatadd" type="button">6. の「自分について」に足す</button><button class="btn" id="chatclose" type="button">閉じる</button></div></div></div></div></section>
+<section class="panel"><h2><span class="mark" aria-hidden="true"></span>6. 自分について（任意）</h2><div class="body"><p>当てはまるものを選んでください。「自分の考え」「自分の経験を踏まえて」など、自分について聞かれる設問の回答に使います。</p><div id="pfwrap"></div><div class="field"><label for="profile">そのほか自分について（自由記述・任意）</label><textarea class="form-control" id="profile" rows="5" maxlength="2000" style="height:auto" placeholder="例：経営学部3年。飲食店のアルバイトを2年続けていて、新人の指導もしている。テニスサークルに所属。将来はマーケティングの仕事に就きたい。"></textarea><small>「あなたの考え」「自分の経験を踏まえて」など、自分について聞かれる設問の回答に使います。</small></div><div class="field"><label for="style">文体</label><textarea class="form-control" id="style" rows="4" maxlength="1000" style="height:auto" placeholder="5. で過去のレポートを読み取ると入ります。自分で書いてもかまいません。"></textarea></div><div class="actions"><button class="btn btn-primary" id="saveprofile" type="button">保存</button></div><p id="profileresult"></p></div></section></main>
+<script src="/profile-form.js"></script><script>const $=id=>document.getElementById(id);if(window.ProfileForm)$('pfwrap').innerHTML=ProfileForm.profileFormHtml({});const connectionText={connected:'manabo に接続できています。',ready:'保存済みです。接続はまだ確認していません。',attention:'manabo に接続できませんでした。ID とパスワードを確かめてください。'};async function status(){try{const d=await (await fetch('/status')).json();if(!d.configured)return;document.title='設定 — saboro';$('pagename').textContent='設定';$('crumbname').textContent='設定';$('intro').textContent='manabo の ID とパスワード・SaBoRo課題サポート・saboro との接続の設定です。変えるところだけ入力してください。';$('saved-back').hidden=false;$('id').value=d.username;if(!$('profile').value)$('profile').value=d.profile||'';if(window.ProfileForm)$('pfwrap').innerHTML=ProfileForm.profileFormHtml(d.profileForm);if(!$('style').value)$('style').value=d.style||'';$('pw').required=false;$('pw').placeholder='••••••••（保存済み）';$('pw-saved').hidden=false;if(!$('result').textContent)$('result').textContent=connectionText[d.connection]||''}catch{}}status();if(/Electron\\//.test(navigator.userAgent))$('inapp').hidden=false;$('readreports').onclick=async()=>{const out=$('reportresult'),files=[...$('reports').files];if(!files.length||files.length>3){out.textContent='レポートを 1〜3 本選んでください。';return}out.textContent='読み取り中…（1 分ほどかかります）';try{const list=await Promise.all(files.map(f=>new Promise((ok,ng)=>{if(f.size>8e6){ng(Error('1 本 8 MB までにしてください'));return}const r=new FileReader();r.onload=()=>ok({name:f.name,data:String(r.result).split(',')[1]||''});r.onerror=()=>ng(Error('ファイルを読めませんでした'));r.readAsDataURL(f)})));const d=await (await fetch('/reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({files:list})})).json();if(!d.ok){out.textContent=d.message||'読み取れませんでした。';return}$('style').value=d.style;const have=$('profile').value.trim(),add=d.profile.split('\\n').map(x=>x.trim()).filter(x=>x&&!have.includes(x));$('profile').value=[have,...add].filter(Boolean).join('\\n').slice(0,2000);out.textContent='読み取りました。6. の内容を確かめて、直してから「保存」を押してください。'}catch(e){out.textContent=e.message||'読み取れませんでした。'}};
 const post=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
 async function chat(){try{const d=await (await fetch('/status')).json(),j=d.chatImport,g=d.profileSuggestion,out=$('chatstate');if(j)out.textContent=j.status==='reading'?j.source+' の履歴を読み取っています…':j.status==='failed'?'読み取れませんでした（'+(j.error||'不明なエラー')+'）。もう一度ボタンを押してください。':j.source+' の書き出しの zip を待っています（「ダウンロード」フォルダに入ると自動で読み取ります）。';else if(!g)out.textContent='';if(g&&$('chatsuggest').hidden){if(g.text){$('chattext').value=g.text;$('chatsuggest').hidden=false;out.textContent=g.source+' の会話 '+g.count+' 件から読み取りました。内容を確かめて足してください。'}else out.textContent=g.message||'読み取れる内容がありませんでした。'}}catch{}}
 const startChat=async source=>{const d=await (await post('/chat-import',{source})).json();if(d.ok){window.open(d.url,'_blank');$('chatsuggest').hidden=true}chat()};$('chatgpt').onclick=()=>startChat('chatgpt');$('claude').onclick=()=>startChat('claude');
-$('chatadd').onclick=async()=>{const have=$('profile').value.trim(),add=$('chattext').value.split('\\n').map(x=>x.trim()).filter(x=>x&&!have.includes(x));$('profile').value=[have,...add].filter(Boolean).join('\\n').slice(0,2000);await post('/chat-import/stop');$('chatsuggest').hidden=true;$('chatstate').textContent='足しました。5. の「保存」を押すと使われます。'};$('chatclose').onclick=async()=>{await post('/chat-import/stop');$('chatsuggest').hidden=true;$('chatstate').textContent=''};chat();setInterval(chat,5000);
+$('chatadd').onclick=async()=>{const have=$('profile').value.trim(),add=$('chattext').value.split('\\n').map(x=>x.trim()).filter(x=>x&&!have.includes(x));$('profile').value=[have,...add].filter(Boolean).join('\\n').slice(0,2000);await post('/chat-import/stop');$('chatsuggest').hidden=true;$('chatstate').textContent='足しました。6. の「保存」を押すと使われます。'};$('chatclose').onclick=async()=>{await post('/chat-import/stop');$('chatsuggest').hidden=true;$('chatstate').textContent=''};chat();setInterval(chat,5000);
 $('saveprofile').onclick=async()=>{const out=$('profileresult');try{const r=await fetch('/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile:$('profile').value,style:$('style').value,profileForm:window.ProfileForm?ProfileForm.readProfileForm($('pfwrap')):undefined})});out.textContent=r.ok?'保存しました。次に作る回答から使います。':'保存できませんでした。'}catch{out.textContent='保存できませんでした。'}};
 async function ai(){try{const d=await (await fetch('/ai-status')).json();$('ai').innerHTML=d.ok?'<b class="ok">使えます</b>':'<b class="ng">今は使えません</b>（お支払いの状態や接続を確かめてください）'}catch{$('ai').textContent='サービスに接続できませんでした。'}}ai();
 $('form').onsubmit=async e=>{e.preventDefault();const out=$('result');out.textContent='保存して接続を確認中…';const r=await fetch('/credentials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('id').value,password:$('pw').value})});$('pw').value='';if(!r.ok){out.textContent='保存できませんでした。';return}status();try{const v=await fetch('/verify',{method:'POST'});const d=await v.json();out.textContent='保存しました。'+d.message}catch{out.textContent='保存しました。接続の確認は後でできます。'}};</script></html>`;
@@ -588,6 +607,22 @@ http
             profileSuggestion: state.profileSuggestion || null
           })
         );
+        return;
+      }
+      // スマホと連携：接続キー入りの URL を QR コードにして出す（この画面の中だけ。別のサイトからは requestAllowed が断る）
+      if (req.url === '/qr.svg') {
+        const svg = await QRCode.toString(apiBase + '/#connect=' + encodeURIComponent(owner), {
+          type: 'svg',
+          margin: 1,
+          width: 220
+        });
+        res
+          .writeHead(200, {
+            'Content-Type': 'image/svg+xml',
+            'Cache-Control': 'no-store',
+            'Referrer-Policy': 'no-referrer'
+          })
+          .end(svg);
         return;
       }
       if (req.url === '/logo.svg') {
