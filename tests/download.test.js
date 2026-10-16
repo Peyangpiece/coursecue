@@ -549,3 +549,23 @@ test('manabo の作り（お知らせ欄は AJAX で入り、見出しの処理�
   assert.equal(await m.expandNotices(p), 2, '二度目も押せる（開いた項目を閉じるが、本文は残るのでファイルは集まる）');
   assert.deepEqual((await p.evaluate(classInfo)).noticeFiles.length, 4);
 });
+// お知らせのファイルは {url, name} だけで text がない。hash(undefined) で落ちて「ファイルは保存されたのに記録がない（画面の資料欄に出ない）」になっていた
+test('text のないファイル（お知らせの添付）も保存して記録し、失敗したら要対応に出す', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'coursecue-notice-dl-'));
+  t.after(() => rm(base, {recursive: true, force: true}));
+  const state = {tasks: [], materials: [], settings: {}};
+  const {m} = fakeManabo(base, state);
+  await m.download({url: 'https://manabo.cnc.chukyo-u.ac.jp/file/9/', name: '教室変更のお知らせ.pdf'}, '管理会計Ⅱ');
+  assert.deepEqual(await readdir(join(base, '管理会計Ⅱ')), ['第9回_資料.pdf']);
+  assert.equal(state.materials.length, 1, 'ファイルだけでなく記録も作る');
+  assert.equal(state.materials[0].course, '管理会計Ⅱ');
+  assert.match(state.materials[0].textHash, /^[0-9a-f]{64}$/);
+  const {src, rx} = await import('./source.js');
+  assert.match(
+    src('local/manabo.js'),
+    rx(
+      'await this.download(e,name).catch(err=>infoIssues.push(`${name}：お知らせのファイル「${e.name||e.url}」を保存できません（'
+    ),
+    'お知らせの保存の失敗は握りつぶさず要対応に出す'
+  );
+});

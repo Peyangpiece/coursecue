@@ -151,7 +151,7 @@ export function classInfo() {
   const noticeFiles = box
     ? [...box.querySelectorAll('a[href]')]
         .filter(a => /\/file\//.test(a.getAttribute('href') || ''))
-        .map(a => ({url: a.href, name: (a.textContent || '').trim()}))
+        .map(a => ({url: a.href, name: (a.textContent || '').trim(), text: (a.textContent || '').trim()}))
     : [];
   return {syllabus, rows, notice, noticeFiles};
 }
@@ -1292,7 +1292,12 @@ export class Manabo {
     await this.applyCalendar(p, id);
     const syllabus = await this.readSyllabus(i, p);
     // お知らせに付いているファイルも、その授業のフォルダに保存する
-    for (const e of this.wantedFiles(this.noticeFiles?.[id] || [])) await this.download(e, name).catch(() => {});
+    for (const e of this.wantedFiles(this.noticeFiles?.[id] || []))
+      await this.download(e, name).catch(err =>
+        infoIssues.push(
+          `${name}：お知らせのファイル「${e.name || e.url}」を保存できません（${String(err.message).slice(0, 80)}）`
+        )
+      );
     try {
       const dirs = await this.directories(p);
       this.state.plannedModes = {
@@ -1644,7 +1649,7 @@ export class Manabo {
         name,
         path: file,
         sha256: h,
-        textHash: hash(entry.text),
+        textHash: hash(String(entry.text ?? entry.name ?? '')),
         downloadedAt: new Date().toISOString()
       }
     ];
