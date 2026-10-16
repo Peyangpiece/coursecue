@@ -329,7 +329,7 @@ details summary{cursor:pointer}
 .drawer .actions.sticky{position:sticky;bottom:0;z-index:1;margin:15px -15px 0;padding:10px 15px;background:#fff;border-top:1px solid #ddd;box-shadow:0 -4px 10px rgba(0,0,0,.05)}
 
 /* 資料：ファイル名（Mac で開く）と manabo の2つを並べる */
-.material{display:inline-flex}
+.material{display:inline-flex;max-width:100%}.material .btn:first-child{min-width:0;white-space:normal;word-break:break-all;text-align:left}
 .material .btn:first-child{border-radius:3px 0 0 3px}
 .material .btn-alt{margin-left:-1px;border-radius:0 3px 3px 0;color:var(--muted);font-size:11px}
 

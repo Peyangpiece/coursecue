@@ -227,6 +227,7 @@ function refreshTray() {
     Menu.buildFromTemplate([
       {label: 'saboro を開く', click: () => openWindow(home())},
       {label: '設定', click: () => openWindow('http://127.0.0.1:8766/setup')},
+      {label: 'スマホと連携（QR コード）', click: () => openWindow('http://127.0.0.1:8766/setup#phone')},
       {label: '資料のフォルダを開く', click: () => shell.openPath(materialsFolder())},
       {type: 'separator'},
       prepared

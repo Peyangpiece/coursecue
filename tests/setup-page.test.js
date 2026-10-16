@@ -13,9 +13,9 @@ const setupHtml = () => {
 };
 test('最初の設定に「過去のレポート（任意）」と「自分について（任意）」を出し、画面のスクリプトが読み込める', () => {
   const html = setupHtml();
-  assert.match(html, /4\. 過去のレポート（任意）/);
+  assert.match(html, /5\. 過去のレポート（任意）/);
   assert.match(html, /id="reports" type="file" multiple accept="\.docx,\.pdf,\.txt,\.md"/);
-  assert.match(html, /5\. 自分について（任意）/);
+  assert.match(html, /6\. 自分について（任意）/);
   assert.match(html, /id="style"/);
   assert.match(html, /運営者のサーバーには保存しません/);
   const js = html.slice(html.lastIndexOf('<script>') + 8, html.lastIndexOf('</script>'));
