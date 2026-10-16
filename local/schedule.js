@@ -28,7 +28,7 @@ export function classDates(state, i, cal = calendar) {
   for (const d of Object.values(state.schedules?.[id] || {})) if (typeof d === 'string') dates.add(d);
   return dates;
 }
-// その日の授業（開始時刻つき）。曜日・時限が分からない授業、CUBICS で休講の回、削除した授業は除く
+// その日の授業（開始時刻つき）。曜日・時限が分からない授業、CUBICS・お知らせで休講の回、削除した授業は除く
 export function sessionsOn(state, date, cal = calendar) {
   const campus = state.settings?.campus || '名古屋';
   return courseList(state)
@@ -37,7 +37,11 @@ export function sessionsOn(state, date, cal = calendar) {
       const {weekday, period} = courseSlot(state, i),
         start = periodStart(period, campus);
       if (!weekday || !start || !classDates(state, i, cal).has(date)) return null;
-      if ((state.cubics?.events || []).some(e => e.course === c.name && e.date === date && e.status === '休講'))
+      if (
+        [...(state.cubics?.events || []), ...(state.noticeEvents || [])].some(
+          e => e.course === c.name && e.date === date && e.status === '休講'
+        )
+      )
         return null;
       return {i, name: c.name, date, period, start};
     })

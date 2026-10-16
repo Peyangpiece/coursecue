@@ -1,4 +1,11 @@
-import {checkDownloadDir, pickFolder, openableMaterial, defaultDownloadRoot, desktopDir} from './download-dir.js';
+import {
+  checkDownloadDir,
+  pickFolder,
+  openableMaterial,
+  defaultDownloadRoot,
+  desktopDir,
+  adoptMaterialsRoot
+} from './download-dir.js';
 import {dueClassSyncs, CAMPUSES} from './schedule.js';
 import {mergeTasks} from './task-identity.js';
 import {dropSpareTasks} from './content-resolution.js';
@@ -133,6 +140,15 @@ async function save() {
   });
 }
 if (!state.courses) state.courses = LEGACY_COURSES.map(([name, id]) => ({name, id}));
+// 既定の保存先が変わっても、以前の場所に保存した資料を使い続ける（保存先を選んでいない人だけ、一度だけ）
+if (!state.settings?.downloadDir && !state.rootAdopted) {
+  const adopted = adoptMaterialsRoot(state.materials, {defaultRoot: materialsRoot()});
+  if (adopted) {
+    state.settings = {...state.settings, downloadDir: adopted};
+    console.error('saboro: 以前の資料の保存先を使います', adopted);
+  }
+  state.rootAdopted = true;
+}
 state.defaultDownloadDir = materialsRoot();
 state.features = ['pickfolder', 'attendance', 'removecourse', 'aipolicy']; // AI の使用量：1 回ごとに usage.jsonl に追記し、月ごとの集計を状態に持つ（画面に出す。料金を決めるための実測用）
 const usageFile = usageLog(join(work, 'usage.jsonl'));
@@ -147,6 +163,7 @@ const lms = new Manabo({
   save,
   trash: platform.trash,
   quarantine: platform.quarantine,
+  notify: platform.notify || null,
   credentials: async () => {
     const s = keychain('get', 'manabo');
     return s ? JSON.parse(s) : null;
@@ -384,6 +401,18 @@ async function run(job) {
       }
       await save();
       return {ok: true, message: `${name} の出席コードを入れました`};
+    } else if (job.kind === 'seen') {
+      // 新着のお知らせを「確認した」：見た印に加え、新着から消す（keys で選んだものだけ、または all で全部）
+      const keys = Array.isArray(job.payload?.keys) ? job.payload.keys.map(String) : [],
+        all = job.payload?.all === true,
+        hit = n => all || keys.includes(n.key);
+      for (const n of (state.newNotices || []).filter(hit))
+        state.noticeSeen = {
+          ...state.noticeSeen,
+          [n.course]: [...new Set([...(state.noticeSeen?.[n.course] || []), n.key])]
+        };
+      state.newNotices = (state.newNotices || []).filter(n => !hit(n));
+      await save();
     } else if (job.kind === 'settings') {
       const {
         time,
@@ -756,6 +785,12 @@ async function tick() {
         state.classSynced = {[day]: {...(state.classSynced?.[day] || {}), [s.name]: new Date().toISOString()}};
         try {
           await run({kind: 'sync', payload: {course: s.name}});
+          // 授業開始の同期で資料を保存したら OS の通知で知らせる（アプリ：OS の通知、Mac のサービス：通知センター）
+          const r = state.courseSummary?.[s.name];
+          if (r?.materials > 0 && platform.notify)
+            await Promise.resolve(platform.notify('saboro', `${s.name}：資料 ${r.materials} 件を保存しました`)).catch(
+              () => {}
+            );
         } catch (e) {
           state.lastError = e.message;
           state.lastErrorAt = new Date().toISOString();

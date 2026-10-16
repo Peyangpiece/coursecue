@@ -75,6 +75,22 @@ function courseConfig(i) {
 }
 const cubicsEvent = (i, date) =>
   date && state.cubics?.events?.find(e => e.course === courses[i] && e.date === date && e.status !== '補講');
+// お知らせから読み取った休講（PC の state.noticeEvents）と、その回のお知らせ（Zoom・教室）
+const noticeEvent = (i, date) =>
+  date && (state.noticeEvents || []).find(e => e.course === courses[i] && e.date === date);
+const noticeFor = (i, r) => (state.notices?.[courses[i]] || []).find(n => n.round === +r) || null;
+// その回の資料（PC に保存した記録。回は記録の round か名前の「第N回」）
+const roundMaterials = (i, r) =>
+  (state.materials || []).filter(
+    m =>
+      m.course === courses[i] &&
+      (Number(m.round) ||
+        Number(
+          String(m.name || '')
+            .normalize('NFKC')
+            .match(/第\s*0?(\d+)\s*回/)?.[1] || 0
+        )) === +r
+  );
 const infoRows = i => {
   const info = courseInfo(i),
     labels = {
@@ -123,16 +139,22 @@ function sessionInfo(i, r) {
   r = +r;
   const c = courseConfig(i),
     s = session(i, r),
-    ev = cubicsEvent(i, courseDates(i)[r]),
+    date = courseDates(i)[r],
+    ev = cubicsEvent(i, date),
+    nev = noticeEvent(i, date),
+    notice = noticeFor(i, r),
     plan = plannedMode(i, r);
   return {
     plan,
-    mode: s.mode || (ev?.status === '休講' ? '休講' : '') || plan?.mode || c.mode || '',
-    room: s.room || (ev?.status === '授業変更' && ev.room) || c.room || '',
+    mode: s.mode || (ev?.status === '休講' || nev?.status === '休講' ? '休講' : '') || plan?.mode || c.mode || '',
+    room: s.room || (ev?.status === '授業変更' && ev.room) || notice?.room || c.room || '',
     attendance: s.attendance || '',
     note: s.note || '',
     changed: ev?.status === '授業変更',
-    official: ev?.status || ''
+    official: ev?.status || (nev ? `${nev.status}（お知らせ）` : ''),
+    zoom: notice?.zoom || '',
+    pass: notice?.pass || '',
+    notice
   };
 }
 // 状態への反映（Mac 側の bridge.js にも同じ規則がある）
@@ -298,7 +320,14 @@ function todayPanel() {
         const info = sessionInfo(s.i, s.round);
         if (s.makeup)
           return `<li><div class="task"><span class="task-main"><span class="task-title">${s.period ? `${s.period}限 ` : ''}${esc(courses[s.i])}</span><span class="meta">補講${s.room ? ` · ${esc(s.room)}` : ''}</span></span><span class="right"><span class="label mode-makeup">補講</span></span></div></li>`;
-        return `<li><button class="task" data-session="${s.i}:${s.round}"><span class="task-main"><span class="task-title">${s.period ? `${s.period}限 ` : ''}${esc(courses[s.i])}</span><span class="meta">第${s.round}回${info.room ? ` · ${esc(info.room)}` : ''}</span></span><span class="right">${modeLabel(info.mode)}${markLabel(info.attendance)}</span></button></li>`;
+        const mats = roundMaterials(s.i, s.round),
+          extra = [
+            info.zoom
+              ? `<a href="${esc(info.zoom)}" target="_blank" rel="noopener">Zoom</a>${info.pass ? ` パスコード <code>${esc(info.pass)}</code>` : ''}`
+              : '',
+            ...mats.map(m => (typeof materialLink === 'function' ? materialLink(m) : esc(m.name)))
+          ].filter(Boolean);
+        return `<li><button class="task" data-session="${s.i}:${s.round}"><span class="task-main"><span class="task-title">${s.period ? `${s.period}限 ` : ''}${esc(courses[s.i])}</span><span class="meta">第${s.round}回${info.room ? ` · ${esc(info.room)}` : ''}</span></span><span class="right">${modeLabel(info.mode)}${markLabel(info.attendance)}</span></button>${extra.length ? `<div class="materials" style="padding:2px 12px 8px">${extra.join(' ')}</div>` : ''}</li>`;
       })
       .join('')}</ul>`,
     {flush: true, tools: '<button class="linklike" data-view="timetable">時間割へ</button>'}

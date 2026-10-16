@@ -15,6 +15,7 @@ const shared = {
   job: 'readonly',
   removedCourse: 'readonly',
   panel: 'readonly',
+  materialLink: 'readonly',
   openDrawer: 'readonly',
   toast: 'readonly',
   // timetable.js が定義し app.js が使う

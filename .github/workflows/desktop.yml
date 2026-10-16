@@ -127,4 +127,7 @@ jobs:
           cp "release/saboro-$v-mac-x64.dmg" release/saboro-mac-x64.dmg
           cp "release/saboro-$v-win-x64.exe" release/saboro-win-x64.exe
           ls -la release
-          gh release create "${{ steps.version.outputs.tag }}" --repo "$DIST_REPO" --latest --title "saboro ${{ steps.version.outputs.tag }}" --notes "Mac は .dmg（Apple シリコンは arm64、Intel は x64）、Windows は .exe を入れてください。Apple の署名がないため、Mac は初回に開こうとして止められたあと「システム設定 → プライバシーとセキュリティ」の「このまま開く」、Windows は SmartScreen の「詳細情報 → 実行」が必要です。" release/*.dmg release/*.zip release/*.blockmap release/*.exe release/latest*.yml
+          # 「最新版」の印は、公開済みのどのバージョンより新しいときだけ付ける（手動実行で古いバージョンを作り直しても latest にしない）
+          newest=$(gh api repos/$DIST_REPO/releases --paginate --jq '.[] | select(.draft|not) | .tag_name' | sed 's/^v//' | sort -V | tail -1)
+          if [ -z "$newest" ] || [ "$(printf '%s\n%s\n' "$newest" "$v" | sort -V | tail -1)" = "$v" ]; then latest=--latest; else latest=--latest=false; fi
+          gh release create "${{ steps.version.outputs.tag }}" --repo "$DIST_REPO" $latest --title "saboro ${{ steps.version.outputs.tag }}" --notes "Mac は .dmg（Apple シリコンは arm64、Intel は x64）、Windows は .exe を入れてください。Apple の署名がないため、Mac は初回に開こうとして止められたあと「システム設定 → プライバシーとセキュリティ」の「このまま開く」、Windows は SmartScreen の「詳細情報 → 実行」が必要です。" release/*.dmg release/*.zip release/*.blockmap release/*.exe release/latest*.yml

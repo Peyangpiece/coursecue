@@ -3,7 +3,7 @@ import {currentCalendar, needsUpdate, calendarEnd} from './calendar.js';
 import {handleStripe} from './stripe.js';
 import {billingOf, PAID_KINDS} from './billing.js';
 import {handleAi, aiStatus, runAiDaily} from './ai.js';
-const origins = ['https://coursecue.hrk-6888.workers.dev', 'https://coursecue-2026.web.app'];
+const origins = ['https://coursecue.hrk-6888.workers.dev'];
 const KINDS = [
   'sync',
   'generate',
@@ -15,7 +15,8 @@ const KINDS = [
   'timetable',
   'link',
   'attendance',
-  'prompt'
+  'prompt',
+  'seen'
 ];
 const json = (data, status = 200, origin = '') =>
   new Response(JSON.stringify(data), {
@@ -899,6 +900,7 @@ export async function handle(req, env, store, ctx) {
         {
           ...(value ? JSON.parse(value) : {tasks: [], materials: [], connection: 'not_configured'}),
           deployed: env.DEPLOYED_SHA || '',
+          latestVersion: env.APP_VERSION || '',
           billing,
           ai
         },

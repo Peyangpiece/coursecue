@@ -97,7 +97,8 @@ jobs:
         run: sig=$(node local/deploy-key.js sign "$GITHUB_SHA") && echo "sig=$sig" >> "$GITHUB_OUTPUT"
         env:
           DEPLOY_SIGNING_KEY: ${{ secrets.DEPLOY_SIGNING_KEY }}
-      - run: npx wrangler deploy --var DEPLOYED_SHA:${{ github.sha }} --var DEPLOYED_SIG:${{ steps.sign.outputs.sig }}
+      # APP_VERSION：デスクトップアプリの最新のバージョン（package.json）。画面は、つないでいるアプリがこれより古ければ更新の案内を出す
+      - run: npx wrangler deploy --var DEPLOYED_SHA:${{ github.sha }} --var DEPLOYED_SIG:${{ steps.sign.outputs.sig }} --var APP_VERSION:$(node -p "require('./package.json').version")
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - name: Record deployed commit

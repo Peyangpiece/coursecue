@@ -39,7 +39,28 @@ const taskTypes = ['課題', 'レポート', 'クイズ'];
 const sec = ms => `${Math.max(1, Math.round(ms / 1000))}秒`;
 // 「前回の同期」：manabo の内容を反映し終えた時刻（state.lastSync）と、かかった時間。同期を押しても時刻が変わらなければ、まだ終わっていない
 const lastSyncText = () =>
-  `前回の同期 ${state.lastSync ? `${esc(when(state.lastSync))} に反映` : ''}${syncTimingText() ? `${state.lastSync ? '・' : ''}${esc(syncTimingText())}` : ''}`;
+  `前回の同期 ${state.lastSync ? `${esc(when(state.lastSync))} に反映` : ''}${syncTimingText() ? `${state.lastSync ? '・' : ''}${esc(syncTimingText())}` : ''}${syncSummaryText() ? `<br>${esc(syncSummaryText())}` : ''}`;
+// 今回の同期で何をしたか（PC の state.syncSummary）：授業 n・資料 m 件保存・お知らせ k 件・失敗 j
+function syncSummaryText(sm = state.syncSummary) {
+  if (!sm || sm.scope !== 'all') return '';
+  return `授業 ${sm.courses} 件・資料 ${sm.materials} 件保存・お知らせ ${sm.notices} 件${sm.newNotices ? `（新着 ${sm.newNotices}）` : ''}・失敗 ${sm.failures} 件`;
+}
+const courseSummaryText = name => {
+  const r = state.courseSummary?.[name];
+  return r ? `資料 ${r.materials} 件保存・お知らせ ${r.notices} 件${r.failures ? `・失敗 ${r.failures} 件` : ''}` : '';
+};
+// バージョンの比較（1.0.43 < 1.0.44）
+const newerVersion = (a, b) => {
+  const x = String(a || '')
+      .split('.')
+      .map(Number),
+    y = String(b || '')
+      .split('.')
+      .map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++)
+    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+};
 function syncTimingText() {
   const t = state.syncTiming;
   if (!t?.total) return '';
@@ -88,6 +109,11 @@ function attentionPanel() {
   if (state.aiMissing)
     lines.push(
       `この ${dev()} では SaBoRo課題サポートを使えないため、回答の作成と授業情報の読み取りを省いています。${setupLink}`
+    );
+  // アプリが最新のバージョンより古い（クラウドが公開時のバージョンを知らせる）：更新の案内
+  if (state.runtime === 'desktop' && state.version && newerVersion(state.latestVersion, state.version))
+    lines.push(
+      `新しいバージョン ${esc(state.latestVersion)} があります（いまは ${esc(state.version)}）。${state.os === 'win32' ? '画面右下の saboro のアイコンを右クリック' : 'メニューバーの saboro'} →「新しいバージョンを確認」から更新してください。`
     );
   const {undated, other} = issueSummary(state.issues || []);
   if (undated.length)
@@ -390,7 +416,9 @@ async function job(kind, task = null, payload = {}, buttonFor = null) {
                 ? '対応づけを予約しました。次の同期で締切・提出状況を確認します'
                 : kind === 'prompt'
                   ? '出席コードを送りました（' + dev() + ' が manabo に入れます）'
-                  : '処理を予約しました'
+                  : kind === 'seen'
+                    ? 'お知らせを確認済みにします'
+                    : '処理を予約しました'
     );
     if (['generate', 'sync', 'settings', 'attendance'].includes(kind)) {
       const buttonId = buttonFor || (kind === 'sync' ? 'sync' : kind === 'settings' ? 'savesettings' : 'generate');
@@ -526,6 +554,20 @@ async function showPrompts(force = null) {
     promptBusy = false;
   }
 }
+// 新着のお知らせ（PC の state.newNotices）。「確認した」で PC に見た印を付けて消す
+function noticePanel() {
+  const list = state.newNotices || [];
+  if (!list.length) return '';
+  return `<div class="alert alert-info"><strong>新しいお知らせ ${list.length} 件</strong><ul class="notes" style="margin:6px 0">${list
+    .slice(0, 20)
+    .map(
+      n =>
+        `<li>${esc(n.course)}：${esc(n.title)}${n.date ? ` <span class="muted">（${esc(jpDate(n.date))}）</span>` : ''}</li>`
+    )
+    .join(
+      ''
+    )}</ul>${list.length > 20 ? `<p class="muted">ほか ${list.length - 20} 件</p>` : ''}<button class="btn btn-sm" data-seen="all">確認した</button></div>`;
+}
 function promptPanel() {
   const list = pendingPrompts();
   if (!list.length) return '';
@@ -637,7 +679,8 @@ function personalSection(t) {
 function courseSyncTools(i) {
   if (!key) return '';
   const at = [state.lastSync, state.courseSynced?.[courses[i]]].filter(Boolean).sort().at(-1);
-  return `${at ? `<span class="muted">${esc(when(at))} に確認</span> ` : ''}<button class="linklike" id="synccourse">この授業を同期</button>`;
+  const sm = courseSummaryText(courses[i]);
+  return `${at ? `<span class="muted">${esc(when(at))} に確認${sm ? `（${esc(sm)}）` : ''}</span> ` : ''}<button class="linklike" id="synccourse">この授業を同期</button>`;
 }
 function courseHeader(i) {
   if (typeof courseConfig !== 'function') return '';
@@ -787,6 +830,32 @@ function probeLocal() {
       if (view === 'courses') render();
     });
 }
+// 資料を回ごとにまとめる（記録の round、なければ名前の「第N回」。どちらもなければ「その他」）
+const materialRound = m =>
+  Number(m.round) ||
+  Number(
+    String(m.name || '')
+      .normalize('NFKC')
+      .match(/第\s*0?(\d+)\s*回/)?.[1] || 0
+  );
+function materialsByRound(mats) {
+  const groups = new Map();
+  for (const m of mats) {
+    const r = materialRound(m);
+    groups.set(r, [...(groups.get(r) || []), m]);
+  }
+  const rounds = [...groups.keys()].sort((a, b) => (a || 99) - (b || 99));
+  if (rounds.length === 1 && rounds[0] === 0) return `<div class="materials">${mats.map(materialLink).join('')}</div>`;
+  return rounds
+    .map(
+      r =>
+        `<h3 class="sub" style="margin:8px 0 4px">${r ? `第${r}回` : 'その他'}</h3><div class="materials">${groups
+          .get(r)
+          .map(materialLink)
+          .join('')}</div>`
+    )
+    .join('');
+}
 function materialLink(m) {
   const manabo = `<a class="btn btn-sm" href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.name)}</a>`;
   if (!m.sha256) return manabo;
@@ -918,6 +987,7 @@ function render() {
       ['done', '提出済み', state.tasks.filter(t => !pending(t)).length]
     ];
     html += promptPanel();
+    html += noticePanel();
     html += attentionPanel();
     if (typeof todayPanel === 'function') html += todayPanel();
     html += panel(
@@ -950,7 +1020,7 @@ function render() {
         html += panel(
           `${esc(courses[selectedCourse])} - 資料`,
           mats.length
-            ? `<div class="materials">${mats.map(materialLink).join('')}</div><p class="muted" style="margin:10px 0 0">${macOutdated() ? `<span class="attn">${dev()} サービスがまだ新しいバージョン（${esc(state.deployed.slice(0, 7))}）に切り替わっていないため、${dev()} のファイルはまだ開けません。</span> ` : ''}${localOk === false && !isMac ? 'この端末からは manabo で開きます。' + dev() + ' 上のブラウザなら、保存したファイルをそのまま開けます。' : '資料名で ' + dev() + ' に保存したファイルを、「manabo」で manabo 上のファイルを開きます。'}</p>`
+            ? `${materialsByRound(mats)}<p class="muted" style="margin:10px 0 0">${macOutdated() ? `<span class="attn">${dev()} サービスがまだ新しいバージョン（${esc(state.deployed.slice(0, 7))}）に切り替わっていないため、${dev()} のファイルはまだ開けません。</span> ` : ''}${localOk === false && !isMac ? 'この端末からは manabo で開きます。' + dev() + ' 上のブラウザなら、保存したファイルをそのまま開けます。' : '資料名で ' + dev() + ' に保存したファイルを、「manabo」で manabo 上のファイルを開きます。'}</p>`
             : '<p class="empty">資料はまだ取得されていません</p>'
         );
     }
@@ -1265,6 +1335,7 @@ function bindView() {
           go(e.dataset.stat === 'needs' ? 'needs' : 'tasks', null, e.dataset.stat === 'needs' ? 'all' : e.dataset.stat))
     );
   document.querySelectorAll('[data-prompt]').forEach(e => (e.onclick = () => showPrompts(e.dataset.prompt)));
+  document.querySelectorAll('[data-seen]').forEach(e => (e.onclick = () => job('seen', null, {all: true})));
   document.querySelectorAll('[data-filter]').forEach(
     e =>
       (e.onclick = () => {

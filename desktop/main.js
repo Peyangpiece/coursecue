@@ -1,6 +1,6 @@
 // saboro デスクトップ：Mac と Windows で、ターミナルなしに同期・生成を動かす常駐アプリ。
 // 秘密は OS の仕組み（macOS キーチェーン / Windows DPAPI）で暗号化し、設定は画面の 3 手順だけ
-import {app, BrowserWindow, Tray, Menu, shell, dialog, safeStorage, nativeImage, net} from 'electron';
+import {app, BrowserWindow, Tray, Menu, shell, dialog, safeStorage, nativeImage, net, Notification} from 'electron';
 import {join, dirname, basename} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {
@@ -123,12 +123,18 @@ globalThis.saboroPlatform = {
   },
   pickFolder,
   register,
+  // OS の通知（授業開始の同期で資料を保存したとき・出席コードの入力が出たとき）。Windows は AppUserModelID がないと出ない
+  notify: (title, body) => {
+    if (!Notification.isSupported()) return;
+    new Notification({title: String(title).slice(0, 100), body: String(body).slice(0, 200)}).show();
+  },
   restart: () => {
     app.relaunch();
     app.exit(0);
   },
   version: app.getVersion()
 };
+if (process.platform === 'win32') app.setAppUserModelId('jp.coursecue.saboro');
 // 画面：まず設定（Mac/PC 内のサービスが出す画面）。「saboroを接続」で saboro 本体へ移る
 function page(html) {
   return (
