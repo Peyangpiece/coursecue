@@ -1,16 +1,16 @@
 import { createHash } from 'node:crypto';
 export const LMS='https://manabo.cnc.chukyo-u.ac.jp';
-// 最初の利用者（2026 秋学期）の授業。新しい利用者は manabo の授業一覧から自動で取る（state.courses）
+// 学籍番号などの ID（英字＋6 桁以上の数字）を本文から除く。manabo のページ本文・シラバス・課題の説明をクラウドへ送る前に通す
+export const scrubIds=t=>String(t||'').replace(/[A-Za-z]\d{6,}/g,'');
+// 最初の利用者（2026 秋学期）の授業。状態に courses がない（最初の利用者の古い状態）ときだけの引き継ぎ用で、新しい利用者は空（courses:[]）から始まり manabo の授業一覧から自動で入る。画面（dist）には持たない
 export const LEGACY_COURSES=[['人材マネジメントⅡ','103578'],['コーポレートファイナンスⅡ','103901'],['国際ビジネス戦略','103576'],['サービス・マーケティング','103573'],['意思決定論','103889'],['管理会計Ⅱ','103904'],['マーケティング戦略','103572'],['ボランティア','103736'],['経営科学Ⅱ','103887'],['経済言論Ⅱ','103914'],['言葉と文化','104493'],['ゼミナールⅣ','']];
 // manabo の授業 ID が未設定（''）の授業は、同期のときに manabo の授業一覧から名前で探して state.courseIds に記録する
-// 利用者の授業一覧（[{name,id}]）。state.courses がなければ最初の利用者の固定一覧。t.course はこの並びの番号なので、並びは追加だけで変えない
+// 利用者の授業一覧（[{name,id}]）。同期のはじめに manabo の授業一覧から入る。courses がない古い状態だけ最初の利用者の一覧。t.course はこの並びの番号なので、並びは追加だけで変えない
 export const courseList=state=>state?.courses??LEGACY_COURSES.map(([name,id])=>({name,id}));
 export const courseNames=state=>courseList(state).map(c=>c.name);
 export const courseIdOf=(i,state)=>courseList(state)[i]?.id||state?.courseIds?.[courseList(state)[i]?.name]||'';
 // manabo の授業一覧のリンクの文字から授業名を取り出す（「（月曜／3限）」などの付記を除く）
 export const courseNameOf=text=>String(text||'').replace(/\s+/g,' ').trim().replace(/[（(][^（()）]*[曜限時][^（()）]*[)）]\s*$/,'').trim();
-// 授業の既定の曜日・時限・教室（本人が時間割で設定していないときだけ入れる）
-export const COURSE_DEFAULTS={'ゼミナールⅣ':{weekday:'月',period:4,room:'521'}};
 // 授業一覧のリンクの文字から授業を探す（全角半角・ローマ数字・空白の違いは無視）
 const nameKey=s=>String(s||'').normalize('NFKC').replace(/\s+/g,'').replace(/II/g,'Ⅱ').replace(/IV/g,'Ⅳ').replace(/III/g,'Ⅲ');
 // 授業一覧のリンクから授業を更新する：ID が同じものは既存、名前が同じで ID のないものには ID を入れ、それ以外は末尾に足す。消えた授業は残す（課題が番号で参照しているため）
@@ -21,7 +21,7 @@ export function restoreCourse(state,name){const c=(state.courses||[]).find(c=>c.
 // 課題の AI 利用の方針。その回の授業資料と課題の説明に「生成AIの使用を禁止」などの記載があれば禁止とする（AI がない端末でも判断できるよう文の照合で行う）
 // 禁止の回の課題でも回答は参考として作るが、saboro から manabo への提出はしない（レポート・掲示板は入力もしない。クイズは回答の入力まで行い、提出は本人）。記載のない回はこれまでどおり
 const AI_WORD='(?:生成\\s*AI|生成系\\s*AI|対話型\\s*AI|ChatGPT|Chat\\s*GPT|Copilot|Gemini|Claude|AI\\s*ツール|人工知能|(?<![A-Za-z])AI(?![A-Za-z]))';
-const AI_FORBID=new RegExp(`${AI_WORD}[^。\\n]{0,40}(?:禁止|不可|認めない|認められない|認めません|(?:使用|利用|使)(?:わ|し)?ないこと|(?:使用|利用)(?:は|を)?(?:しない|できない|できません)|用いないこと|用いてはいけない|使ってはいけない)|(?:禁止|不可)[^。\\n]{0,20}${AI_WORD}`);
+const AI_FORBID=new RegExp(`${AI_WORD}[^。\\n]{0,40}(?:禁止|不可(?![欠能避分逆思侵視抗測])|認めない|認められない|認めません|(?:使用|利用|使)(?:わ|し)?ないこと|(?:使用|利用)(?:は|を)?(?:しない|できない|できません)|用いないこと|用いてはいけない|使ってはいけない)|(?:禁止|不可(?![欠能避分逆思侵視抗測]))[^。\\n]{0,20}${AI_WORD}`);
 const AI_ALLOWED=/禁止(?:し|では|は)?(?:ない|ありません|しません)|不可ではない|(?:使用|利用|使)して(?:も)?(?:よい|良い|構わない|かまわない|可)|許可|認め(?:る|ます)(?!ん)|活用してください|使ってください/;
 export function aiPolicyFrom(sources){for(const m of sources||[]){for(const line of String(m.text||'').split(/\n|。/)){const l=line.replace(/\s+/g,' ').trim();if(l&&AI_FORBID.test(l)&&!AI_ALLOWED.test(l))return {forbidden:true,evidence:l.slice(0,200),file:m.file}}}return null}
 // 自分の設定（授業の設定の「AI の利用」）があればそれを、なければその回の資料から判断した結果（t.aiPolicy）を使う
@@ -38,7 +38,8 @@ export const roundOf=s=>{const t=normalizeRounds(s);const m=t.match(/第\s*(\d+)
 const FULL=d=>String(d).replace(/\d/g,x=>String.fromCharCode(0xff10+Number(x)));const KAN=n=>n<10?KANJI[n]:n===10?'十':n<20?'十'+KANJI[n-10]:String(n);
 export const roundPattern=n=>`第\\s*(?:${n}|${FULL(n)}|${KAN(n)})\\s*回`;
 export const contentType=url=>/\/quiz\//.test(url)?'クイズ':/\/board\//.test(url)?'掲示板':'レポート';
-export const attendance=s=>/出席.{0,12}(コード|番号|確認)|attendance.{0,12}code/i.test(s);
+// 出席コードの入力欄か（「出席確認」だけの設問は、感想などを書く通常の設問にもあるので対象にしない）
+export const attendance=s=>/出席.{0,12}(コード|番号)|attendance.{0,12}code/i.test(s);
 export function lectureDate(title,schedule,round){const m=title.match(/(?:(20\d{2})[年/.-])?(\d{1,2})[月/.-](\d{1,2})日?/);if(m){const year=Number(m[1]||2026)+(Number(m[2])<4&&!m[1]?1:0);return `${year}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`}return schedule?.[round]||null}
 export const inWindow=(date,now=new Date())=>{if(!date)return false;const today=new Date(now).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});return Math.abs(new Date(date+'T00:00:00Z')-new Date(today+'T00:00:00Z'))<=7*86400000};
 // 締切：「受講期間: ～ 10月13日(火) 00:00」のように範囲の終わりを優先し、「10月13日 00:00 ～」のような開始だけの日時は締切にしない

@@ -11,8 +11,10 @@ const viaFinder=['on run argv','tell application "Finder"','activate',`set p to 
 const direct=['on run argv','activate',`set p to choose folder with prompt "${prompt}" default location (POSIX file (item 1 of argv))`,'return POSIX path of p','end run'];
 const ask=(run,script,start,timeout)=>new Promise(resolve=>run('osascript',[...script.flatMap(l=>['-e',l]),start],{timeout},(err,stdout,stderr)=>resolve({err,out:String(stdout||'').trim(),text:String(err?.message||'')+String(stderr||err?.stderr||'')})));
 export async function pickFolder(current,{run=execFile,home=homedir(),timeout=300000}={}){const start=current&&existsSync(current)?current:home;let r=await ask(run,viaFinder,start,timeout);if(r.err&&!/-128|User canceled|キャンセル/.test(r.text)&&!r.err.killed)r=await ask(run,direct,start,timeout);if(r.err){if(/-128|User canceled|キャンセル/.test(r.text))return null;if(r.err.killed)throw Error('フォルダの選択が時間切れになりました。もう一度押してください');throw Error('Mac でフォルダの選択画面を開けませんでした')}return r.out.replace(/\/$/,'')||null}
-// 画面の「資料」から開くファイル。記録済みの資料（sha256 で指定）のうち、ダウンロード先の中にあるものだけ返す
-export function openableMaterial(materials,id,root){if(!/^[0-9a-f]{64}$/.test(String(id||'')))return null;const m=(materials||[]).find(m=>m.sha256===id&&inside(m.path,root));return m&&existsSync(m.path)?m.path:null}
+// 画面の「資料」から開くファイル。記録済みの資料（sha256 で指定）のうち、ダウンロード先の中にある書類・画像・音声・動画だけ返す
+// （実行できるもの（.app・.command・.exe・.sh・スクリプトなど）や書庫は既定のアプリで開かない。manabo のリンクから開く）
+export const OPENABLE=/\.(pdf|docx?|pptx?|xlsx?|csv|txt|md|rtf|od[tps]|png|jpe?g|gif|webp|heic|mp4|mov|m4a|mp3|wav)$/i;
+export function openableMaterial(materials,id,root){if(!/^[0-9a-f]{64}$/.test(String(id||'')))return null;const m=(materials||[]).find(m=>m.sha256===id&&inside(m.path,root));return m&&OPENABLE.test(m.path)&&existsSync(m.path)?m.path:null}
 
 // 以前の同期で「名前 (2).pdf」として保存してしまった複製の候補：ダウンロード先の中の記録のうち「(n)」付きの名前のもの。元の名前のファイルのパスも返す
 export function duplicateCandidates(materials,root){const out=[];for(const m of materials||[]){if(!inside(m.path,root))continue;const match=basename(m.path).match(/^(.+) \((\d+)\)(\.[^.]+)$/);if(!match)continue;out.push({record:m,base:join(dirname(m.path),match[1]+match[3])})}return out}
