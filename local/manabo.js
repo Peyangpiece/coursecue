@@ -2233,7 +2233,8 @@ export class Manabo {
         })
       ); // SaBoRo の AI は、急がない回答を Batch（半額）で作る。本人が頼んだとき・締切まで 24 時間以内ならすぐ作る。Batch の結果が出るまでは「作成中」で止め、結果が出たらアプリが同じ処理をやり直す
     const soon = !!t.dueAt && new Date(t.dueAt) - Date.now() < 24 * 3600e3;
-    let generated = t.generationKey === generationKey && t.generation ? t.generation : null;
+    // 高度な生成は、同じ内容で作った回答があっても作り直す（高性能なモデルで作り直すのが目的のため）
+    let generated = t.generationKey === generationKey && t.generation && !advanced ? t.generation : null;
     if (!generated) {
       try {
         generated = await this.ai({...t, questions, description: text}, source, supplement, {

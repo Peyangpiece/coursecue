@@ -92,7 +92,8 @@ test('特定商取引法に基づく表記の料金の条件（60 回・1 ドル
   assert.ok(h.includes(`毎月 ${TERMS.included} 回まで月額に含みます`));
   assert.ok(h.includes(`1 ドル＝${TERMS.usdJpy} 円`));
   assert.ok(h.includes(`${TERMS.markup} 倍を使用料`));
-  assert.ok(h.includes(`毎月 ${ADVANCED_LIMIT} 回まで`));
+  assert.ok(h.includes(`高度な生成は毎月 ${ADVANCED_LIMIT} 回まで月額に含み`));
+  assert.ok(h.includes(`${ADVANCED_LIMIT + 1} 回目以降は（月 ${TERMS.included} 回の範囲内でも）`));
   assert.ok(h.includes('月額 2,500円（税込）'));
   assert.ok(h.includes('回答を作成できなかった回は、回数に数えず'));
 });

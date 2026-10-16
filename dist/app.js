@@ -409,7 +409,19 @@ async function load() {
   }
 }
 // 出力が上限で途切れた課題で、今月の高度な生成がまだ使えるか
-const advancedLeft = t => t.status === 'wait' && !!t.advancedOffer && t.advancedOffer.used < t.advancedOffer.limit;
+// 高度な生成（高性能なモデル・出力の上限を広げて作る）：出す課題は dist/task-rules.js の判定（ファイルで提出・期末や中間のレポート・字数が 1000 字以上）か、出力が上限で途切れた課題。
+// 月の無料の回数（state.ai.advanced.limit）を超えたら、超過分として請求できる人（paid）だけ有料で使える
+const advancedUsage = t => t.advancedOffer || state.ai?.advanced || {used: 0, limit: 3, paid: false};
+const advancedLeft = t => {
+  if (!key || aiRule(t).forbidden || t.type === 'クイズ') return false;
+  if (!t.advancedOffer && !(typeof TaskRules === 'object' && TaskRules.advancedEligible(t))) return false;
+  const a = advancedUsage(t);
+  return a.used < a.limit || !!a.paid;
+};
+const advancedLabel = t => {
+  const a = advancedUsage(t);
+  return a.used < a.limit ? `高度な生成を使う（${a.used}/${a.limit}）` : '高度な生成を使う（有料）';
+};
 async function job(kind, task = null, payload = {}, buttonFor = null) {
   if (!key) {
     toast('manabo連携が必要です');
@@ -1689,7 +1701,7 @@ function detail(id) {
     body += `<details class="drawer-section" open><summary>manabo の課題と対応づける <span class="label wait">要選択</span></summary><p class="muted" style="margin:8px 0">同じ回に課題が複数あり、どれがこの課題か特定できませんでした。選ぶと次の同期から締切・提出状況を確認します。</p><div class="field"><label for="linkcandidate">manabo の課題</label><select class="form-control" id="linkcandidate">${t.candidates.map(c => `<option value="${esc(c.url)}">${esc(c.title)}</option>`).join('')}</select></div><div class="actions" style="margin-top:0"><button class="btn btn-primary" id="linktask">この課題に対応づける</button></div></details>`;
   body += `<h3><label for="answer">回答・下書き</label></h3><textarea class="form-control" id="answer">${esc(t.answer)}</textarea>`;
   if (key)
-    body += `<details class="drawer-section"${t.status === 'wait' || t.supplement ? ' open' : ''}><summary><label for="supplement">本人の経験・補足</label>${t.status === 'wait' ? ' <span class="label wait">要入力</span>' : ''}</summary><textarea class="form-control" id="supplement">${esc(t.supplement || '')}</textarea><small class="muted" style="display:block;margin-top:5px">資料だけで書けない内容（自分の経験など）を書くと、生成に反映します。</small></details>${t.status === 'code' && !state.features?.includes('attendance') ? '<p class="muted">出席コードはアプリ（Mac/PC）を新しいバージョンにすると、ここから入れて提出できます。いまは「待機中のブラウザ」で入れてください。</p>' : ''}${aiRule(t).forbidden ? aiNotice(aiRule(t), quiz) : ''}${t.status === 'code' && state.features?.includes('attendance') && !aiRule(t).forbidden ? `<div class="drawer-section" id="attendance"><div class="field"><label for="attcode">出席コード</label><div class="course-edit"><input class="form-control" id="attcode" inputmode="numeric" autocomplete="off" placeholder="授業で示された出席コード"><button class="btn btn-primary" id="attsubmit">出席コードを入れて提出</button></div><small>出席コード以外の回答は入力済みです。出席コードを選び、入力済みの回答と一緒に manabo に提出します。</small></div></div>` : ''}${personalSection(t)}<div class="actions sticky">${personalTask(t) ? '<button class="btn btn-primary" id="personalask">質問に答えて生成</button>' : `<button class="btn btn-primary" id="generate">${quiz ? '回答開始・自動回答' : '課題を生成'}</button>`}${advancedLeft(t) ? `<button class="btn" id="advanced">高度な生成を使う（${t.advancedOffer.used}/${t.advancedOffer.limit}）</button>` : ''}<button class="btn" id="save">保存</button>${t.url ? `<a class="btn" href="${esc(t.url)}" target="_blank" rel="noopener">manaboで開く</a>` : ''}${['code', 'answered'].includes(t.status) || (quiz && t.generation) ? '<a class="btn" href="http://127.0.0.1:8766/browser" target="_blank" rel="noopener">待機中のブラウザ</a>' : ''}<button class="btn" id="download">ダウンロード</button>${!['done', 'code', 'unknown', 'answered'].includes(t.status) && !quiz && !aiRule(t).forbidden ? '<button class="btn btn-danger submit-btn" id="submit" title="提出すると取り消せません">manaboに提出…</button>' : ''}</div>`;
+    body += `<details class="drawer-section"${t.status === 'wait' || t.supplement ? ' open' : ''}><summary><label for="supplement">本人の経験・補足</label>${t.status === 'wait' ? ' <span class="label wait">要入力</span>' : ''}</summary><textarea class="form-control" id="supplement">${esc(t.supplement || '')}</textarea><small class="muted" style="display:block;margin-top:5px">資料だけで書けない内容（自分の経験など）を書くと、生成に反映します。</small></details>${t.status === 'code' && !state.features?.includes('attendance') ? '<p class="muted">出席コードはアプリ（Mac/PC）を新しいバージョンにすると、ここから入れて提出できます。いまは「待機中のブラウザ」で入れてください。</p>' : ''}${aiRule(t).forbidden ? aiNotice(aiRule(t), quiz) : ''}${t.status === 'code' && state.features?.includes('attendance') && !aiRule(t).forbidden ? `<div class="drawer-section" id="attendance"><div class="field"><label for="attcode">出席コード</label><div class="course-edit"><input class="form-control" id="attcode" inputmode="numeric" autocomplete="off" placeholder="授業で示された出席コード"><button class="btn btn-primary" id="attsubmit">出席コードを入れて提出</button></div><small>出席コード以外の回答は入力済みです。出席コードを選び、入力済みの回答と一緒に manabo に提出します。</small></div></div>` : ''}${personalSection(t)}<div class="actions sticky">${personalTask(t) ? '<button class="btn btn-primary" id="personalask">質問に答えて生成</button>' : `<button class="btn btn-primary" id="generate">${quiz ? '回答開始・自動回答' : '課題を生成'}</button>`}${advancedLeft(t) ? `<button class="btn" id="advanced">${advancedLabel(t)}</button>` : ''}<button class="btn" id="save">保存</button>${t.url ? `<a class="btn" href="${esc(t.url)}" target="_blank" rel="noopener">manaboで開く</a>` : ''}${['code', 'answered'].includes(t.status) || (quiz && t.generation) ? '<a class="btn" href="http://127.0.0.1:8766/browser" target="_blank" rel="noopener">待機中のブラウザ</a>' : ''}<button class="btn" id="download">ダウンロード</button>${!['done', 'code', 'unknown', 'answered'].includes(t.status) && !quiz && !aiRule(t).forbidden ? '<button class="btn btn-danger submit-btn" id="submit" title="提出すると取り消せません">manaboに提出…</button>' : ''}</div>`;
   else
     body += `<details class="drawer-section"><summary>課題情報を変更する</summary><div class="field"><label for="edit-title">課題名</label><input class="form-control" id="edit-title" value="${esc(t.title)}"></div><div class="field"><label for="edit-course">授業</label><select class="form-control" id="edit-course">${courses.map((c, i) => (removedCourse(i) && i !== t.course ? '' : `<option value="${i}"${i === t.course ? ' selected' : ''}>${esc(c)}</option>`)).join('')}</select></div><div class="field"><label for="edit-type">種類</label><select class="form-control" id="edit-type">${[...new Set([...taskTypes, t.type || '課題'])].map(v => `<option${v === (t.type || '課題') ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select></div><div class="field"><label for="edit-due">締切</label><input class="form-control" id="edit-due" type="datetime-local" value="${localInput(t.dueAt)}"></div></details><div class="actions sticky"><button class="btn btn-primary" id="save">保存</button><button class="btn" id="togglestatus">${pending(t) ? '提出済みにする' : '未提出に戻す'}</button><button class="btn" id="download">ダウンロード</button><button class="btn" id="deletetask">削除</button></div><p class="muted" style="margin-top:10px">自動回答・課題生成はmanabo連携時に利用できます。</p>`;
   openDrawer(t.title, body, undefined, 'task:' + id);
@@ -1756,10 +1768,12 @@ function detail(id) {
     const adv = document.getElementById('advanced');
     if (adv)
       adv.onclick = async () => {
-        const a = t.advancedOffer;
+        const a = advancedUsage(t);
         if (
           !(await ask(
-            `出力の上限を広げて作り直します。高度な生成は月 ${a.limit} 回までで、今月は ${a.used} 回使っています。使いますか？`,
+            a.used < a.limit
+              ? `高性能なモデル（Opus）で、出力の上限を広げて作ります。高度な生成は月 ${a.limit} 回まで月額に含み、今月は ${a.used} 回使っています。使いますか？`
+              : `今月の高度な生成の無料分（${a.limit} 回）は使い切っています。この回は実際にかかった費用の 1.5 倍を使用料として請求します（高性能なモデルのため通常より高く、1 回数十円〜百円程度）。使いますか？`,
             '使う'
           ))
         )

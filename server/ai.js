@@ -14,12 +14,17 @@ export const MODEL = 'claude-sonnet-5-5',
   DAILY_LIMIT = 200,
   MAX_INFLIGHT = 5,
   LABELS = ['課題生成', '授業情報の読み取り', '質問の作成', '文体の読み取り', '会話の読み取り'];
-// 高度な生成：出力が上限で途切れた課題を、本人が選んだときだけ出力の上限を広げて作り直す（月 ADVANCED_LIMIT 回まで。使用量の mode は advanced）
-export const ADVANCED_TOKENS = 64000,
+// 高度な生成：本人が選んだときだけ、高性能なモデル（ADVANCED_MODEL）で出力の上限を広げて作る（使用量の mode は advanced）。
+// 月 ADVANCED_LIMIT 回までは月額に含み、それ以降は超過分として請求できる人だけ実費×倍率で使える（請求できない人は止める）
+export const ADVANCED_MODEL = 'claude-opus-5-5',
+  ADVANCED_TOKENS = 64000,
   ADVANCED_LIMIT = 3,
   TRUNCATED = '出力が上限で途切れました';
 // 1M トークンあたりのドル（通常料金）。キャッシュの書き込みは 5 分のキャッシュ（入力の 1.25 倍）。Batch はすべて半額
-export const PRICES = {'claude-sonnet-5-5': {input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5}};
+export const PRICES = {
+  'claude-sonnet-5-5': {input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5},
+  'claude-opus-5-5': {input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5}
+};
 // 知らないモデル名（将来の変更など）は高めの料金で費用を見積もる（運営者の費用の目安。料金表にないモデルの分は利用者に請求しない）
 const FALLBACK_PRICE = {input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5};
 export function costUsd(usage = {}, {model = MODEL, batch = false} = {}) {
@@ -53,8 +58,8 @@ export function setAiTestHooks({client, fetch: f, terms} = {}) {
   if (f) stripeFetch = f;
   if (terms) TERMS = {...TERMS, ...terms};
 }
-const params = (text, schema, maxTokens = MAX_TOKENS) => ({
-  model: MODEL,
+const params = (text, schema, maxTokens = MAX_TOKENS, model = MODEL) => ({
+  model,
   max_tokens: maxTokens,
   output_config: {effort: 'high', format: {type: 'json_schema', schema}},
   messages: [{role: 'user', content: text}]
@@ -87,7 +92,7 @@ export async function aiStatus(store, env, account, now = new Date()) {
       used: stats.count,
       overageYen: Math.round(stats.chargeMicro / 1e6),
       overage,
-      advanced: {used: stats.advanced || 0, limit: ADVANCED_LIMIT}
+      advanced: {used: stats.advanced || 0, limit: ADVANCED_LIMIT, paid: overage}
     };
   // 無料分は「課題生成の回数が無料分に達するまで、かつ実費が上限に達するまで」。回数に達した後は超過分として請求できる人だけ続けて使える
   // 無料分の実費の上限（freeOver）は、請求しない分（無料分の 60 回と、回数に数えない処理）の合計に対して常に見る。回数が無料分に達する前は全部を止め、達した後は請求できる人は課題生成を続けられるが、請求しない処理（質問の作成など）は止める
@@ -113,8 +118,13 @@ async function record(store, {account, label, mode, message, settings, now = new
     model = message?.model || MODEL,
     usd = costUsd(usage, {model, batch: mode === 'batch'}),
     ok = !!outcome(message).text;
+  // 高度な生成は月の無料の回数（ADVANCED_LIMIT）を超えた分も請求の対象（60 回の中でも）
   const stats = await store.aiMonthStats(account, month),
-    billable = ok && !FREE_LABELS.includes(label) && !!PRICES[model] && stats.count >= s.included;
+    billable =
+      ok &&
+      !FREE_LABELS.includes(label) &&
+      !!PRICES[model] &&
+      (stats.count >= s.included || (mode === 'advanced' && (stats.advanced || 0) >= ADVANCED_LIMIT));
   await store.addAiUsage({
     id: crypto.randomUUID(),
     account,
@@ -255,7 +265,9 @@ export async function handleAi(req, u, env, store, account, {json, origin, ctx})
   if (advanced && (d.mode !== 'now' || d.label !== '課題生成')) return json({error: 'invalid'}, 400, origin);
   const status = await aiStatus(store, env, account, now);
   if (!status.available) return json({error: status.reason}, 403, origin);
-  if (advanced && status.advanced.used >= ADVANCED_LIMIT) return json({error: 'advanced_limit'}, 403, origin);
+  // 高度な生成：無料の回数を使い切ったら、超過分として請求できる人だけ続けて使える
+  if (advanced && status.advanced.used >= ADVANCED_LIMIT && !status.overage)
+    return json({error: 'advanced_limit'}, 403, origin);
   if (status.freeOver && FREE_LABELS.includes(d.label)) return json({error: 'limit'}, 403, origin);
   const settings = await store.getAdminSettings(),
     client = makeClient(env.SABORO_ANTHROPIC_API_KEY);
@@ -275,7 +287,7 @@ export async function handleAi(req, u, env, store, account, {json, origin, ctx})
       mode: advanced ? 'advanced' : d.mode,
       month,
       monthLimit: d.label === '課題生成' && !status.overage ? status.included : null,
-      advancedLimit: advanced ? ADVANCED_LIMIT : null
+      advancedLimit: advanced && !status.overage ? ADVANCED_LIMIT : null
     }))
   )
     return json({error: 'busy'}, 429, origin);
@@ -308,7 +320,7 @@ export async function handleAi(req, u, env, store, account, {json, origin, ctx})
     let out;
     try {
       const message = await client.messages
-        .stream(params(d.text, d.schema, advanced ? ADVANCED_TOKENS : MAX_TOKENS))
+        .stream(params(d.text, d.schema, advanced ? ADVANCED_TOKENS : MAX_TOKENS, advanced ? ADVANCED_MODEL : MODEL))
         .finalMessage();
       await record(store, {account, label: d.label, mode: advanced ? 'advanced' : 'now', message, settings, now}).catch(
         () => {}
@@ -320,7 +332,14 @@ export async function handleAi(req, u, env, store, account, {json, origin, ctx})
             status: 'failed',
             reason: o.reason,
             ...(o.truncated
-              ? {truncated: true, advanced: {used: status.advanced.used + (advanced ? 1 : 0), limit: ADVANCED_LIMIT}}
+              ? {
+                  truncated: true,
+                  advanced: {
+                    used: status.advanced.used + (advanced ? 1 : 0),
+                    limit: ADVANCED_LIMIT,
+                    paid: status.overage
+                  }
+                }
               : {})
           };
     } catch (e) {

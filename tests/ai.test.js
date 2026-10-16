@@ -282,6 +282,53 @@ test('同時に送られても、同時に作るのは 5 件まで（作り終�
   await Promise.all(rs.filter(r => r.status === 200).map(r => r.text()));
   assert.equal((await ask(store, {mode: 'now'})).status, 200, '作り終えたら受け付ける');
 });
+test('高度な生成は Opus 5.5 で作り、無料の 3 回を使い切ったら、超過分として請求できる人だけ実費×1.5 で続けて使える', async () => {
+  const seen = [];
+  setAiTestHooks({
+    client: () => ({
+      messages: {
+        stream: p => {
+          seen.push(p.model);
+          return {
+            finalMessage: async () => ({
+              model: p.model,
+              stop_reason: 'end_turn',
+              content: [{type: 'text', text: '{"draft":"ok"}'}],
+              usage: {input_tokens: 100000, output_tokens: 20000}
+            })
+          };
+        }
+      }
+    })
+  });
+  const {store, id} = await setup();
+  const go = (b, e) => ask(store, {mode: 'now', ...b}, e);
+  for (let i = 0; i < 3; i++) assert.equal((await go({advanced: true})).status, 200);
+  assert.deepEqual(seen, ['claude-opus-5-5', 'claude-opus-5-5', 'claude-opus-5-5']);
+  const u = store.aiUsage.at(-1);
+  assert.equal(u.model, 'claude-opus-5-5');
+  assert.equal(u.cost_usd, 0.8, 'Opus の料金（入力 $4・出力 $20）');
+  assert.equal(u.billable, 0, '3 回までは月額に含む');
+  assert.deepEqual((await status(store)).advanced, {used: 3, limit: 3, paid: false});
+  assert.equal((await go({advanced: true})).status, 403, '請求できない人は止める');
+  await store.linkStripeCustomer('cus_1', id);
+  await store.upsertSubscription({
+    subscription: 'sub_1',
+    customer: 'cus_1',
+    status: 'active',
+    periodEnd: null,
+    cancelAtPeriodEnd: false,
+    eventAt: 1
+  });
+  const e = {...env, STRIPE_API_KEY: 'rk_test'};
+  assert.deepEqual((await status(store, e)).advanced, {used: 3, limit: 3, paid: true});
+  assert.equal((await go({advanced: true}, e)).status, 200, '請求できる人は 4 回目も使える');
+  const paid = store.aiUsage.at(-1);
+  assert.equal(paid.billable, 1, '60 回の中でも請求');
+  assert.equal(paid.charge_micro, 180e6, '$0.8×150 円×1.5＝180 円');
+  assert.equal((await go({})).status, 200);
+  assert.equal(store.aiUsage.at(-1).billable, 0, '通常の生成は 60 回まで無料のまま');
+});
 test('出力が上限で途切れたら知らせ、高度な生成（出力 64000 トークン）は月 3 回まで。Batch で途切れた場合も知らせる', async () => {
   let seen = [];
   const msg = stop => ({
@@ -307,16 +354,20 @@ test('出力が上限で途切れたら知らせ、高度な生成（出力 6400
     status: 'failed',
     reason: '出力が上限で途切れました',
     truncated: true,
-    advanced: {used: 0, limit: 3}
+    advanced: {used: 0, limit: 3, paid: false}
   });
   assert.equal(seen.at(-1), 32000);
-  assert.deepEqual((await go({advanced: true})).advanced, {used: 1, limit: 3}, '高度な生成でも途切れたら回数は使う');
+  assert.deepEqual(
+    (await go({advanced: true})).advanced,
+    {used: 1, limit: 3, paid: false},
+    '高度な生成でも途切れたら回数は使う'
+  );
   assert.equal(seen.at(-1), 64000);
   assert.equal(store.aiUsage.at(-1).mode, 'advanced');
   stop = 'end_turn';
   assert.equal((await go({advanced: true})).status, 'done');
   await go({advanced: true});
-  assert.deepEqual((await status(store)).advanced, {used: 3, limit: 3});
+  assert.deepEqual((await status(store)).advanced, {used: 3, limit: 3, paid: false});
   const over = await ask(store, {mode: 'now', advanced: true});
   assert.equal(over.status, 403);
   assert.deepEqual(await over.json(), {error: 'advanced_limit'});
@@ -698,5 +749,5 @@ test('同時に送られても、月の無料分の回数（請求できない�
   assert.equal(adv.filter(r => r.status === 200).length, 3, '高度な生成は同時でも月 3 回まで');
   open2();
   await Promise.all(adv.filter(r => r.status === 200).map(r => r.text()));
-  assert.deepEqual((await status(st)).advanced, {used: 3, limit: 3});
+  assert.deepEqual((await status(st)).advanced, {used: 3, limit: 3, paid: false});
 });
