@@ -437,7 +437,7 @@ test('お知らせのダイアログは閉じ、出席コードの入力は開�
   await m.ctx.route(/\/class\/2\/$/, r =>
     r.fulfill({
       contentType: 'text/html; charset=utf-8',
-      body: '<script>document.title=String(prompt("出席コードを入力してください"))</script><div id="div-class-directories"></div>'
+      body: '<script>let c=prompt("出席コードを入力してください");if(c!=="1234")c=prompt("出席コードが違います");document.title=String(c);fetch("/attend?code="+c)</script><div id="div-class-directories"></div>'
     })
   );
   const visited = [];
@@ -456,8 +456,31 @@ test('お知らせのダイアログは閉じ、出席コードの入力は開�
   assert(tab && !tab.isClosed(), '出席コードの入力のタブは閉じない');
   visited.length = 0;
   await m.sync();
-  assert(s.issues.includes('管理会計Ⅱ：出席コードの入力画面が開いています（manabo ブラウザで入力してください）'));
+  assert(
+    s.issues.includes(
+      '管理会計Ⅱ：出席コードの入力画面が開いています（SaBoRo の画面か manabo ブラウザで入力してください）'
+    )
+  );
   assert(!visited.some(u => u.endsWith('/class/2/')), '入力待ちの授業は開き直さない');
+  assert.equal(
+    s.prompts['管理会計Ⅱ'].message,
+    '出席コードを入力してください',
+    'SaBoRo の画面に同じ入力を出すため状態に残す'
+  );
+  assert.equal(s.prompts['管理会計Ⅱ'].course, 1);
+  // SaBoRo の画面で入れた出席コードを開いたままの入力画面に渡す。違えばもう一度求められ、合えば入力画面を閉じる
+  await assert.rejects(m.answerPrompt('経営科学Ⅱ', '1234'), /入力画面はもう開いていません/);
+  await assert.rejects(m.answerPrompt('管理会計Ⅱ', ' '), /出席コードを入れてください/);
+  await assert.rejects(m.answerPrompt('管理会計Ⅱ', '0000'), /もう一度入力を求められました（出席コードが違います）/);
+  assert.equal(s.prompts['管理会計Ⅱ'].message, '出席コードが違います');
+  visited.length = 0;
+  await m.answerPrompt('管理会計Ⅱ', '1234');
+  assert(
+    visited.some(u => u.endsWith('/attend?code=1234')),
+    '入れたコードが manabo のページに渡る'
+  );
+  assert.equal(s.prompts['管理会計Ⅱ'], undefined, '入れたら画面の入力は消す');
+  assert(!m.promptTabs.has('管理会計Ⅱ') && tab.isClosed(), '入力画面のタブを閉じる');
 });
 // 同期の進み具合を「授業 n/N（授業名）」で出し、AI が使えない端末では回答を作らない
 test('同期中は読んでいる授業と件数を出し、AI が使えない端末では回答の作成を省く', async t => {

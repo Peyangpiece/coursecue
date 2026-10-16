@@ -14,7 +14,8 @@ const KINDS = [
   'verify',
   'timetable',
   'link',
-  'attendance'
+  'attendance',
+  'prompt'
 ];
 const json = (data, status = 200, origin = '') =>
   new Response(JSON.stringify(data), {

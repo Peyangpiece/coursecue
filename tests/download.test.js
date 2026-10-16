@@ -365,3 +365,75 @@ test('「資料」で開けるのは書類・画像・音声・動画だけ。.c
     await rm(dir, {recursive: true, force: true});
   }
 });
+test('ダウンロード先の既定：デスクトップの「<西暦>_<学期名>」（学年暦の学期から）。アプリはデスクトップの場所を COURSECUE_DESKTOP で渡す', async () => {
+  const {termFolder, desktopDir, defaultDownloadRoot} = await import('../local/download-dir.js');
+  assert.equal(termFolder('2026 秋学期'), '2026_秋学期');
+  assert.equal(termFolder('2027春学期'), '2027_春学期');
+  assert.equal(termFolder(''), 'saboro', '学期が分からなければ saboro');
+  assert.equal(termFolder('2026 秋/学期'), '2026_秋_学期', 'フォルダ名に使えない文字は置き換える');
+  assert.equal(desktopDir('/Users/u'), join('/Users/u', 'Desktop'));
+  assert.equal(
+    defaultDownloadRoot({desktop: '/Users/u/Desktop', term: '2026 秋学期'}),
+    join('/Users/u/Desktop', '2026_秋学期')
+  );
+  const prev = process.env.COURSECUE_DESKTOP;
+  process.env.COURSECUE_DESKTOP = '/Users/u/OneDrive/Desktop';
+  try {
+    assert.equal(desktopDir('/Users/u'), '/Users/u/OneDrive/Desktop');
+    assert.equal(defaultDownloadRoot({term: '2026 秋学期'}), join('/Users/u/OneDrive/Desktop', '2026_秋学期'));
+  } finally {
+    if (prev === undefined) delete process.env.COURSECUE_DESKTOP;
+    else process.env.COURSECUE_DESKTOP = prev;
+  }
+  const {src, rx} = await import('./source.js');
+  assert.match(
+    src('local/bridge.js'),
+    rx('process.env.COURSECUE_ROOT||defaultDownloadRoot({desktop:desktopDir(),term:calendar.term})')
+  );
+  const main = src('desktop/main.js');
+  assert.match(main, rx("COURSECUE_DESKTOP:app.getPath('desktop'),"));
+  assert.match(main, rx("return defaultDownloadRoot({desktop:app.getPath('desktop'),term});"));
+  assert.doesNotMatch(main, /COURSECUE_ROOT/);
+});
+// 授業ページのお知らせに付いているファイルも、その授業のフォルダに保存する
+test('お知らせに付いているファイルも、その授業のフォルダにダウンロードする', async t => {
+  const browser = await chromium.launch({headless: true});
+  t.after(() => browser.close());
+  const ctx = await browser.newContext();
+  const body = page.replace(
+    '<div id="div-class-contents">',
+    '<div class="panel"><div class="panel-heading">お知らせ</div><div class="panel-body">教室が変わります。<a href="/file/9/">教室変更のお知らせ.pdf</a> <a href="/file/9/?layout=4up">教室変更のお知らせ（4up）</a> <a href="/content/5/">第5回 資料ページ</a></div></div><div id="div-class-contents">'
+  );
+  await ctx.route('**/*', r => r.fulfill({contentType: 'text/html; charset=utf-8', body}));
+  const p = await ctx.newPage();
+  const state = {
+    tasks: [],
+    materials: [],
+    settings: {autoGenerate: false},
+    schedules: {},
+    courses: [{name: '管理会計Ⅱ', id: '103904'}]
+  };
+  const m = new Manabo({
+    root: '/nonexistent',
+    work: '/tmp',
+    state,
+    save: async () => {},
+    credentials: async () => null,
+    ai: async () => {}
+  });
+  m.ctx = ctx;
+  m.page = async () => (m.p = p);
+  m.cubics = async () => {};
+  const got = [];
+  m.download = async (e, course) => {
+    got.push(course + ':' + e.url.replace('https://manabo.cnc.chukyo-u.ac.jp', ''));
+  };
+  await m.sync();
+  assert(got.includes('管理会計Ⅱ:/file/9/'), 'お知らせのファイルを授業のフォルダに保存：' + got.join(' '));
+  assert(!got.includes('管理会計Ⅱ:/file/9/?layout=4up'), '印刷形式違いは 1up だけ');
+  assert(!got.some(x => x.includes('/content/5/')), 'ファイル以外のリンクは保存しない');
+  assert.deepEqual(
+    m.noticeFiles['103904'].map(x => x.name),
+    ['教室変更のお知らせ.pdf', '教室変更のお知らせ（4up）']
+  );
+});
