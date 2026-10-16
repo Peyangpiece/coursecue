@@ -1068,3 +1068,32 @@ test('出席コードの共有：授業・日・利用者で 1 件（上書き�
     );
   }
 });
+test('Web Push：鍵は 1 組（上書き）。購読は endpoint で 1 件（上書き）、利用者ごとの一覧と利用者の一覧、解除は本人のときだけ', async t => {
+  for (const store of [d1Store(await openD1(t)), memoryStore()]) {
+    assert.equal(await store.getPushKeys(), null);
+    await store.putPushKeys({publicKey: 'p', privateJwk: {d: '1'}});
+    await store.putPushKeys({publicKey: 'q', privateJwk: {d: '2'}});
+    assert.deepEqual(await store.getPushKeys(), {publicKey: 'q', privateJwk: {d: '2'}});
+    const sub = (endpoint, account, created) => ({endpoint, account, p256dh: 'k' + endpoint, auth: 'a', created});
+    await store.putPushSubscription(sub('https://p/1', 'u1', '2026-10-16T00:00:02Z'));
+    await store.putPushSubscription(sub('https://p/2', 'u1', '2026-10-16T00:00:01Z'));
+    await store.putPushSubscription(sub('https://p/3', 'u2', '2026-10-16T00:00:03Z'));
+    await store.putPushSubscription({...sub('https://p/1', 'u1', '2026-10-16T00:00:04Z'), auth: 'b'});
+    assert.deepEqual(
+      (await store.listPushSubscriptions('u1')).map(s => [s.endpoint, s.auth]),
+      [
+        ['https://p/2', 'a'],
+        ['https://p/1', 'b']
+      ],
+      '古い順。同じ endpoint は上書き'
+    );
+    assert.deepEqual((await store.listPushAccounts()).sort(), ['u1', 'u2']);
+    await store.deletePushSubscription('u2', 'https://p/1');
+    assert.equal((await store.listPushSubscriptions('u1')).length, 2, '他人の購読は消せない');
+    await store.deletePushSubscription('u1', 'https://p/1');
+    assert.deepEqual(
+      (await store.listPushSubscriptions('u1')).map(s => s.endpoint),
+      ['https://p/2']
+    );
+  }
+});

@@ -3,6 +3,7 @@ import {currentCalendar, needsUpdate, calendarEnd} from './calendar.js';
 import {handleStripe} from './stripe.js';
 import {billingOf, PAID_KINDS} from './billing.js';
 import {handleAi, aiStatus, runAiDaily} from './ai.js';
+import {vapidKeys, pushAccount, pushDeadlines, stateEvents, DEFAULT_SUBJECT} from './push.js';
 const origins = ['https://coursecue.hrk-6888.workers.dev'];
 const KINDS = [
   'sync',
@@ -20,6 +21,8 @@ const KINDS = [
   'attcheck'
 ];
 const todayJst = () => new Date().toLocaleDateString('sv-SE', {timeZone: 'Asia/Tokyo'});
+// VAPID の sub（プッシュサービスへの連絡先。URL でよい）
+const pushSubject = env => env.VAPID_SUBJECT || DEFAULT_SUBJECT;
 const json = (data, status = 200, origin = '') =>
   new Response(JSON.stringify(data), {
     status,
@@ -112,6 +115,39 @@ export function d1Store(db) {
           .bind(course, day)
           .all()
       ).results;
+    },
+    // Web Push：VAPID の鍵と購読
+    async getPushKeys() {
+      const row = await db.prepare('SELECT value FROM push_keys WHERE id=?').bind('vapid').first();
+      return row ? JSON.parse(row.value) : null;
+    },
+    async putPushKeys(v) {
+      await db
+        .prepare('INSERT INTO push_keys(id,value) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value')
+        .bind('vapid', JSON.stringify(v))
+        .run();
+    },
+    async putPushSubscription(s) {
+      await db
+        .prepare(
+          'INSERT INTO push_subscriptions(endpoint,account,p256dh,auth,created) VALUES(?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET account=excluded.account,p256dh=excluded.p256dh,auth=excluded.auth,created=excluded.created'
+        )
+        .bind(s.endpoint, s.account, s.p256dh, s.auth, s.created)
+        .run();
+    },
+    async deletePushSubscription(account, endpoint) {
+      await db.prepare('DELETE FROM push_subscriptions WHERE account=? AND endpoint=?').bind(account, endpoint).run();
+    },
+    async listPushSubscriptions(account) {
+      return (
+        await db
+          .prepare('SELECT endpoint,p256dh,auth,created FROM push_subscriptions WHERE account=? ORDER BY created')
+          .bind(account)
+          .all()
+      ).results;
+    },
+    async listPushAccounts() {
+      return (await db.prepare('SELECT DISTINCT account FROM push_subscriptions').all()).results.map(r => r.account);
     },
     async findAccount(hash) {
       const row = await db
@@ -528,7 +564,9 @@ export function memoryStore() {
     aiUsage = [],
     aiRequests = new Map(),
     aiInflight = new Map(),
-    attendanceCodes = [];
+    attendanceCodes = [],
+    pushSubs = new Map();
+  let pushKeys = null;
   const upsert = p => {
     const i = payments.findIndex(x => x.id === p.id);
     if (i < 0) payments.push({...p});
@@ -586,6 +624,27 @@ export function memoryStore() {
         .filter(x => x.course === course && x.day === day)
         .sort((x, y) => x.created.localeCompare(y.created))
         .map(({account, code, created}) => ({account, code, created}));
+    },
+    async getPushKeys() {
+      return pushKeys;
+    },
+    async putPushKeys(v) {
+      pushKeys = JSON.parse(JSON.stringify(v));
+    },
+    async putPushSubscription(s) {
+      pushSubs.set(s.endpoint, {...s});
+    },
+    async deletePushSubscription(account, endpoint) {
+      if (pushSubs.get(endpoint)?.account === account) pushSubs.delete(endpoint);
+    },
+    async listPushSubscriptions(account) {
+      return [...pushSubs.values()]
+        .filter(s => s.account === account)
+        .sort((x, y) => x.created.localeCompare(y.created))
+        .map(({endpoint, p256dh, auth, created}) => ({endpoint, p256dh, auth, created}));
+    },
+    async listPushAccounts() {
+      return [...new Set([...pushSubs.values()].map(s => s.account))];
     },
     async findAccount(h) {
       const a = accounts.find(a => a.ownerHash === h || a.deviceHash === h);
@@ -945,13 +1004,63 @@ export async function handle(req, env, store, ctx) {
     if (u.pathname === '/api/state' && req.method === 'POST' && agent) {
       const value = await req.text();
       if (value.length > 2000000) return json({error: 'too_large'}, 413, origin);
+      let next;
       try {
-        JSON.parse(value);
+        next = JSON.parse(value);
       } catch {
         return json({error: 'invalid'}, 400, origin);
       }
+      // 通知を受け取る端末がある利用者は、前の状態と比べて「出席コードの入力」「新しいお知らせ」を送る（応答は待たせない）
+      const subscribed = (await store.listPushSubscriptions(account)).length > 0;
+      const prev = subscribed ? await store.getState(account) : null;
       await store.putState(account, value);
+      if (subscribed) {
+        let before = null;
+        try {
+          before = prev ? JSON.parse(prev) : null;
+        } catch {}
+        const events = stateEvents(before, next);
+        if (events.length) {
+          const work = (async () => {
+            for (const ev of events) await pushAccount(store, account, ev, pushSubject(env));
+          })();
+          if (ctx?.waitUntil) ctx.waitUntil(work);
+          else await work;
+        }
+      }
       return json({ok: true}, 200, origin);
+    }
+    // Web Push（接続キーで）：公開鍵、購読の登録と解除、テスト送信
+    if (u.pathname === '/api/push/key' && req.method === 'GET' && owner)
+      return json({publicKey: (await vapidKeys(store)).publicKey}, 200, origin);
+    if (u.pathname === '/api/push/subscribe' && req.method === 'POST' && owner) {
+      const d = await req.json().catch(() => null),
+        endpoint = String(d?.endpoint || ''),
+        p256dh = String(d?.keys?.p256dh || ''),
+        auth = String(d?.keys?.auth || '');
+      if (
+        !/^https:\/\/[^\s]{1,1000}$/.test(endpoint) ||
+        !/^[A-Za-z0-9_-]{80,100}$/.test(p256dh) ||
+        !/^[A-Za-z0-9_-]{16,32}$/.test(auth)
+      )
+        return json({error: 'invalid'}, 400, origin);
+      await store.putPushSubscription({endpoint, account, p256dh, auth, created: new Date().toISOString()});
+      return json({ok: true}, 200, origin);
+    }
+    if (u.pathname === '/api/push/unsubscribe' && req.method === 'POST' && owner) {
+      const d = await req.json().catch(() => null);
+      if (!d?.endpoint) return json({error: 'invalid'}, 400, origin);
+      await store.deletePushSubscription(account, String(d.endpoint));
+      return json({ok: true}, 200, origin);
+    }
+    if (u.pathname === '/api/push/test' && req.method === 'POST' && owner) {
+      const sent = await pushAccount(
+        store,
+        account,
+        {title: 'saboro のテスト通知', body: 'この端末で通知を受け取れます。', url: '/#v=settings', tag: 'test'},
+        pushSubject(env)
+      );
+      return json({sent}, 200, origin);
     }
     if (u.pathname === '/api/jobs' && req.method === 'POST' && owner) {
       const data = await req.json();
@@ -1075,7 +1184,7 @@ export default {
   async fetch(req, env, ctx) {
     return handle(req, env, d1Store(env.DB), ctx);
   },
-  // 毎日の定期実行（wrangler.jsonc の triggers）：SaBoRo の AI の Batch の受け取りと、無料分を超えた分の請求
+  // 毎日の定期実行（wrangler.jsonc の triggers）：SaBoRo の AI の Batch の受け取りと、無料分を超えた分の請求。締切が近い課題の通知（Web Push）
   async scheduled(event, env, ctx) {
     const store = d1Store(env.DB);
     ctx.waitUntil(
@@ -1085,6 +1194,11 @@ export default {
           if (log.length) console.error('saboro: AI の定期処理', log.join(' / '));
           await alertOperator(env, store, log).catch(e => console.error('saboro: 通知できません', e.message));
         })
+    );
+    ctx.waitUntil(
+      pushDeadlines(store, Date.now(), pushSubject(env)).catch(e =>
+        console.error('saboro: 締切の通知を送れません', e.message)
+      )
     );
   }
 };

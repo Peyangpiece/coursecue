@@ -413,7 +413,7 @@ test('設定に「自分について」と「文体」を出し、過去のレ�
   );
   assert.match(html, /id="profile"[^>]*>経営学部</);
   assert.match(html, /id="style"[^>]*>短い文が多い</);
-  assert.match(html, /4\. 過去のレポート/);
+  assert.match(html, /5\. 過去のレポート/);
   assert.match(html, /127\.0\.0\.1:8766\/setup/);
 });
 test('設定の「自分について」はアンケートで選べ、選んだ答えに印が付く', () => {

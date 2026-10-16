@@ -37,3 +37,7 @@ CREATE TABLE IF NOT EXISTS ai_inflight (id TEXT PRIMARY KEY, account TEXT NOT NU
 CREATE INDEX IF NOT EXISTS ai_inflight_account ON ai_inflight(account, created);
 -- 出席コードの共有：同じ授業（manabo の授業 ID。なければ授業名）の利用者がその日に入れた出席コード。1 人 1 授業 1 日 1 件（入れ直せば上書き）。画面の入力に「他ユーザーの入力コード」として出す
 CREATE TABLE IF NOT EXISTS attendance_codes (course TEXT NOT NULL, day TEXT NOT NULL, account TEXT NOT NULL, code TEXT NOT NULL, created TEXT NOT NULL, PRIMARY KEY(course, day, account));
+-- Web Push：VAPID の鍵（id='vapid'。最初に使うとき 1 度だけ作る）と、利用者ごとの購読（端末の endpoint と鍵）
+CREATE TABLE IF NOT EXISTS push_keys (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint TEXT PRIMARY KEY, account TEXT NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, created TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS push_subscriptions_account ON push_subscriptions(account);
