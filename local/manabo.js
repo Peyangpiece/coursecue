@@ -366,14 +366,12 @@ export class Manabo {
   }
   async directories(p) {
     return (
-      await p
-        .locator('#div-class-directories .a-open-contents')
-        .evaluateAll(es =>
-          es.map(e => ({
-            title: (e.closest('tr')?.previousElementSibling?.innerText || e.textContent).trim(),
-            directory: e.getAttribute('directory_id')
-          }))
-        )
+      await p.locator('#div-class-directories .a-open-contents').evaluateAll(es =>
+        es.map(e => ({
+          title: (e.closest('tr')?.previousElementSibling?.innerText || e.textContent).trim(),
+          directory: e.getAttribute('directory_id')
+        }))
+      )
     ).map(d => ({...d, round: roundOf(d.title)}));
   }
   async openDirectory(p, d) {
@@ -1463,7 +1461,7 @@ export class Manabo {
   async download(entry, course) {
     const here = m => inside(m.path, this.root);
     if (this.state.materials.some(m => m.url === entry.url && here(m))) return;
-    const p = await this.page();
+    await this.page();
     const r = await this.ctx.request.get(validLms(entry.url));
     if (!r.ok() || r.headers()['content-type']?.includes('text/html')) return;
     const data = await r.body(),

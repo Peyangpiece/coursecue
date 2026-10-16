@@ -57,7 +57,7 @@ curl -fsSL https://coursecue.hrk-6888.workers.dev/install.sh | bash
 - Macが起動・ログイン中のみ動作。クライアントだけではmanaboを操作しない
 
 ## 検証
-`npm test`。実際の大学サイトに送信しないネットワーク模擬フォームで、提出完了・重複防止・出席コード待機を確認。
+`npm test`（整形の確認 `npm run format:check` → `npm run lint` → テスト。整形は Prettier（`.prettierrc.json`：1 行 120 文字・シングルクォート）、lint は ESLint（`eslint.config.js`。間違いの検出だけ）。書いたあとは `npm run format` で整える。整形だけのコミットは `.git-blame-ignore-revs` に記録し、`git config blame.ignoreRevsFile .git-blame-ignore-revs` で blame から飛ばせる）。実際の大学サイトに送信しないネットワーク模擬フォームで、提出完了・重複防止・出席コード待機を確認。
 Codex生成は短い検証問題で実行確認済み。実際のmanaboのログイン・課題提出は、本人の認証情報入力後に検証が必要。
 
 ## 公開

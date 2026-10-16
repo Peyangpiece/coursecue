@@ -14,8 +14,8 @@ import {findExportZip, readExport, selectStudy} from './chat-import.js';
 import {spawn, execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {dirname, join} from 'node:path';
-import {mkdir, readFile, writeFile, readdir, stat, rm} from 'node:fs/promises';
-import {randomBytes, createHash, timingSafeEqual} from 'node:crypto';
+import {mkdir, readFile, writeFile, rm} from 'node:fs/promises';
+import {createHash, timingSafeEqual} from 'node:crypto';
 import {Manabo} from './manabo.js';
 import {LEGACY_COURSES, courseNames, contentType, removeCourse, restoreCourse} from './core.js';
 import {requestAllowed} from './local-server.js';
@@ -522,20 +522,18 @@ http
       }
       if (req.url === '/status') {
         const c = savedCredentials();
-        res
-          .writeHead(200, {'Content-Type': 'application/json', 'Cache-Control': 'no-store'})
-          .end(
-            JSON.stringify({
-              configured: !!c?.password,
-              username: c?.username || '',
-              connection: state.connection || '',
-              profile: state.settings?.profile || '',
-              profileForm: state.settings?.profileForm || {},
-              style: state.settings?.style || '',
-              chatImport: state.chatImport || null,
-              profileSuggestion: state.profileSuggestion || null
-            })
-          );
+        res.writeHead(200, {'Content-Type': 'application/json', 'Cache-Control': 'no-store'}).end(
+          JSON.stringify({
+            configured: !!c?.password,
+            username: c?.username || '',
+            connection: state.connection || '',
+            profile: state.settings?.profile || '',
+            profileForm: state.settings?.profileForm || {},
+            style: state.settings?.style || '',
+            chatImport: state.chatImport || null,
+            profileSuggestion: state.profileSuggestion || null
+          })
+        );
         return;
       }
       if (req.url === '/logo.svg') {

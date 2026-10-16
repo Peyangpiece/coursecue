@@ -12,3 +12,4 @@ site/public/
 *.sql
 *.swift
 *.sh
+*.webmanifest
