@@ -769,7 +769,7 @@ async function tick() {
   }
 }
 // 公開に成功したコミットまで自動更新し、launchd に再起動させる。COURSECUE_AUTO_UPDATE=0 で無効
-// 再起動。launchd（npm run install:agent）配下なら終了するだけで KeepAlive が起動し直す。npm start で動かしているときは、新しい版のプロセスを自分で起こしてから終了する
+// 再起動。launchd（npm run install:agent）配下なら終了するだけで KeepAlive が起動し直す。npm start で動かしているときは、新しいバージョンのプロセスを自分で起こしてから終了する
 function restart() {
   if (platform.restart) {
     platform.restart();

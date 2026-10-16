@@ -1,5 +1,5 @@
 import {join} from 'node:path';
-// Mac：新しい版の .dmg をアプリ自身がダウンロードする（「ダウンロード」を押したらすぐ始まり、ブラウザーや GitHub のページを経由しない）
+// Mac：新しいバージョンの .dmg をアプリ自身がダウンロードする（「ダウンロード」を押したらすぐ始まり、ブラウザーや GitHub のページを経由しない）
 // 名前は配布物と同じ saboro-<版>-mac-<CPU>.dmg にする（入れ替えたあと、installer-cleanup.js がゴミ箱に入れられるように）
 // 途中のものは .download を付けて保存し、終わってから名前を変える（途中のファイルを .dmg として開いたり片付けたりしない）
 export const macInstallerName = (version, arch) => `saboro-${version}-mac-${arch === 'arm64' ? 'arm64' : 'x64'}.dmg`;
@@ -20,7 +20,7 @@ export function installerDigest(files, name) {
 // fetch：ダウンロードに使う関数（Electron の net.fetch）。fs：exists・write（Response の本体を書き出す）・rename・remove・hash（ファイルの sha512 を base64 で）。onProgress：0〜1（大きさが分からないときは null）
 // sha512：配布物の sha512（installerDigest）。「ダウンロード」フォルダに同じ名前のものがあっても、sha512 が合うときだけ使い、合わなければ消して落とし直す（ほかのアプリも書ける場所のため）
 export async function downloadInstaller({version, arch, downloads, sha512, fetch, fs, onProgress = () => {}}) {
-  if (!sha512) throw Error('新しい版を確かめるための値（sha512）が配布物の情報にありません');
+  if (!sha512) throw Error('新しいバージョンを確かめるための値（sha512）が配布物の情報にありません');
   const file = join(downloads, macInstallerName(version, arch)),
     part = file + '.download';
   if (await fs.exists(file)) {
@@ -51,7 +51,7 @@ export async function downloadInstaller({version, arch, downloads, sha512, fetch
 // → 同じ CFBundleIdentifier の saboro を隣に書き出して版と署名を確かめる → いまの saboro と入れ替える → .dmg を外す → 新しい saboro を開く。
 // どこかで失敗したら元の saboro のまま開き直す（元に戻せないときは何もしない）
 // 「ダウンロード」フォルダの .dmg はほかのアプリも書き換えられるので、確かめたあとに差し替えられないよう、写したものを確かめてそのまま使う
-// 署名：新しい版の署名が壊れていないこと（ad-hoc でも検査できる）。いまの saboro が証明書で署名されていれば、新しい版も同じ証明書（Authority）であること
+// 署名：新しいバージョンの署名が壊れていないこと（ad-hoc でも検査できる）。いまの saboro が証明書で署名されていれば、新しいバージョンも同じ証明書（Authority）であること
 // 開き直した saboro は update-expected.json で入れ替わったかを確かめ、入れ替わっていなければ手動の手順を案内する
 // コマンドは環境変数で差し替えられる（テスト用）
 export const appBundle = exe => {
@@ -69,11 +69,11 @@ export function canReplace(bundle, writable) {
     writable(bundle)
   );
 }
-// 引数：$1 終わるのを待つ saboro のプロセス番号、$2 .dmg、$3 入れ替える saboro.app、$4 新しい版、$5 更新の記録のファイル、$6 .dmg の sha512（base64）
+// 引数：$1 終わるのを待つ saboro のプロセス番号、$2 .dmg、$3 入れ替える saboro.app、$4 新しいバージョン、$5 更新の記録のファイル、$6 .dmg の sha512（base64）
 export const replaceScript = `pid=$1 dmg=$2 app=$3 want=$4 log=$5 sum=$6
 HDIUTIL=\${HDIUTIL:-/usr/bin/hdiutil} PLIST=\${PLIST:-/usr/libexec/PlistBuddy} DITTO=\${DITTO:-/usr/bin/ditto} OPEN=\${OPEN:-/usr/bin/open} XATTR=\${XATTR:-/usr/bin/xattr} CODESIGN=\${CODESIGN:-/usr/bin/codesign} OPENSSL=\${OPENSSL:-/usr/bin/openssl} WAIT=\${WAIT:-120}
 say(){ printf '%s\\t%s\\t%s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" >> "$log"; }
-n=0; while kill -0 "$pid" 2>/dev/null; do n=$((n+1)); if [ "$n" -gt "$WAIT" ]; then say ERROR "saboro が終了しないため、新しい版に入れ替えられません"; exit 1; fi; sleep 0.5; done
+n=0; while kill -0 "$pid" 2>/dev/null; do n=$((n+1)); if [ "$n" -gt "$WAIT" ]; then say ERROR "saboro が終了しないため、新しいバージョンに入れ替えられません"; exit 1; fi; sleep 0.5; done
 work=$(mktemp -d "\${TMPDIR:-/tmp}/saboro-update.XXXXXX") || { say ERROR "作業用のフォルダを作れません"; "$OPEN" "$app"; exit 1; }
 mnt=$work/mnt copy=$work/installer.dmg
 attached=
@@ -90,16 +90,16 @@ id=$("$PLIST" -c "Print :CFBundleIdentifier" "$app/Contents/Info.plist" 2>/dev/n
 src=; for a in "$mnt"/*.app; do if [ -d "$a" ] && [ "$("$PLIST" -c "Print :CFBundleIdentifier" "$a/Contents/Info.plist" 2>/dev/null)" = "$id" ]; then src=$a; break; fi; done
 [ -n "$src" ] || fail ".dmg の中に saboro（$id）が見つかりません"
 rm -rf "$app.new"
-"$DITTO" "$src" "$app.new" || fail "新しい版を書き出せません"
+"$DITTO" "$src" "$app.new" || fail "新しいバージョンを書き出せません"
 got=$("$PLIST" -c "Print :CFBundleShortVersionString" "$app.new/Contents/Info.plist" 2>/dev/null)
-[ "$got" = "$want" ] || fail "書き出した版が $want ではありません（$got）"
-"$CODESIGN" --verify --deep --strict "$app.new" >/dev/null 2>&1 || fail "新しい版の署名が壊れています"
+[ "$got" = "$want" ] || fail "書き出したバージョンが $want ではありません（$got）"
+"$CODESIGN" --verify --deep --strict "$app.new" >/dev/null 2>&1 || fail "新しいバージョンの署名が壊れています"
 have=$("$CODESIGN" -dvv "$app" 2>&1 | grep '^Authority=')
 new=$("$CODESIGN" -dvv "$app.new" 2>&1 | grep '^Authority=')
-if [ -n "$have" ] && [ "$have" != "$new" ]; then fail "新しい版の署名（証明書）がいまの saboro と違います"; fi
+if [ -n "$have" ] && [ "$have" != "$new" ]; then fail "新しいバージョンの署名（証明書）がいまの saboro と違います"; fi
 rm -rf "$app.old"
 mv "$app" "$app.old" || fail "いまの saboro を入れ替えられません"
-if ! mv "$app.new" "$app"; then mv "$app.old" "$app"; fail "新しい版に入れ替えられません"; fi
+if ! mv "$app.new" "$app"; then mv "$app.old" "$app"; fail "新しいバージョンに入れ替えられません"; fi
 rm -rf "$app.old"
 "$XATTR" -dr com.apple.quarantine "$app" 2>/dev/null
 "$HDIUTIL" detach "$mnt" -quiet; rm -rf "$work"
