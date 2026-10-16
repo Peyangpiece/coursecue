@@ -6,7 +6,7 @@ const shared = {
   // app.js が定義し timetable.js が使う
   academicCalendar: 'readonly',
   render: 'readonly',
-  key: 'readonly',
+  key: 'writable',
   courseIdOf: 'readonly',
   state: 'writable',
   courses: 'writable',

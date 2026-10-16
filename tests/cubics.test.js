@@ -4,7 +4,7 @@ import {chromium} from 'playwright';
 import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {parseGrid, mapEntries, matchCourse} from '../local/cubics.js';
+import {parseGrid, matchCourse} from '../local/cubics.js';
 import {Manabo} from '../local/manabo.js';
 // 画面写真（2026/11/02〜11/07 の週）と同じ並び：アイコン・教室・授業名、休講は右に「休」、補講は「補」
 const cellHTML = (room, name, mark = '') =>

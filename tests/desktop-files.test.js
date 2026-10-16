@@ -100,7 +100,7 @@ test('配布：SABORO_RELEASE_TOKEN は gh のステップだけに渡し、取�
   const jobEnv = build.slice(0, build.indexOf('    steps:')).replace(/^\s*#.*$/gm, '');
   assert.doesNotMatch(jobEnv, /SABORO_RELEASE_TOKEN|GH_TOKEN/, 'ジョブ全体の env に置かない');
   const steps = build
-    .split(/\n      - name: /)
+    .split(/\n {6}- name: /)
     .slice(1)
     .map(s => ({name: s.slice(0, s.indexOf('\n')), body: s}));
   for (const s of steps) {

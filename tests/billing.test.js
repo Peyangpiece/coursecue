@@ -158,7 +158,7 @@ test('支払いの再試行中（past_due）は使え、未払いが確定（unp
   );
 });
 test('管理者画面：必須の設定・解約ページ・月額を保存し、利用者ごとの契約の状態を出す', async () => {
-  const {store, id} = await setup();
+  const {store} = await setup();
   let r = await (await admin(store, '/overview')).json();
   assert.equal(r.settings.requirePayment, true);
   assert.equal(r.settings.portalLink, 'https://billing.stripe.com/p/login/test');

@@ -597,7 +597,7 @@ test('無料分を超えて請求できる人でも、請求しない処理は�
   assert.equal(store.aiUsage.at(-1).billable, 1);
 });
 test('毎日の請求：集計のあとに記録された分（集計の前に始まった生成など）は請求済みにせず、次の日に請求する', async t => {
-  const f = fake();
+  fake();
   setAiTestHooks({terms: {included: 0}});
   t.after(() => setAiTestHooks({terms: {included: 60}}));
   const {store, id} = await setup();
