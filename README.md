@@ -4,18 +4,18 @@
 
 未接続でも授業・課題・締切・下書き・提出済み記録を利用できる。データはブラウザ内に保存し、設定からJSONバックアップを出力・読込できる。ブラウザの保存データを削除すると消えるため、バックアップを利用する。
 
-manabo自動連携は、各自の Mac に入れたサービスと接続キーで動く。クラウド（Worker + D1）は利用者ごとに分かれていて、Mac のセットアップが作った接続キーと Mac の鍵（それぞれ 64 桁の乱数）の SHA-256 だけを `accounts` に登録し、状態（`account_state`）と処理の待ち行列（`account_jobs`）はその利用者だけが読み書きできる。最初の利用者は環境変数の旧トークンでそのまま使える（`legacy`）。
+manabo自動連携は、各自の Mac に入れたサービスと接続キーで動く。クラウド（Worker + D1）は利用者ごとに分かれていて、Mac のセットアップが作った接続キーと Mac の鍵（それぞれ 64 桁の乱数）の SHA-256 だけを `accounts` に登録し、状態（`account_state`）と処理の待ち行列（`account_jobs`）はその利用者だけが読み書きできる。最初の利用者は環境変数の旧トークンでそのまま使える（`legacy`）。登録（`/api/register`）は認証なしなので 1 時間に 20 件まで。
 
 ## 構成
-- 公開UI: Cloudflare Workers / Firebase Hosting
+- 公開UI: Cloudflare Workers（`dist/_headers` の CSP で、スクリプトは自分のものだけ・画像と接続は自分と PC 内のサービスだけ）。Firebase Hosting は旧 URL の転送だけ
 - 認証付き同期API・処理キュー: Cloudflare Worker + D1
 - Macエージェント: `local/bridge.js`（15秒ごとにキュー確認、毎日16:30に同期）
 - 学年暦: 管理者画面の「学年暦」で更新する。期間の終わりの 30 日前から「要更新」と運営通知が出るので、大学の新しい学年暦（PDF）の URL を入れて読み取り、中身を確かめて保存する（AI で読み取る。`server/calendar.js`）。保存したものを `/api/academic-calendar` で配り、PC は今の学年暦の期間が終わった後の同期で 1 日 1 回まで確かめて取り込む（配布し直さなくてよい）。保存したものがなければ同梱の `dist/academic-calendar.json`。シラバスは学期の最初の同期でだけ読み、同じ学期の間は保存したテキストを使う
 - manabo操作: Playwrightの専用ブラウザ。大学の正規のログインフォームを利用
 - 課題生成: 資料テキストを根拠に構造化出力で生成。本文（draft・記述式の回答）はそのまま提出できる文章だけにし、見出し記号・強調・箇条書き記号・引用符などの記号や Markdown、本人への指示・助言は入れない（生成後にも取り除く）。確認が必要な点・一般知識で推定した旨は notes に分け、課題詳細の「注意点」に表示する。Codex CLI → Claude Code（`claude -p`）→ SaBoRo の AI（こちらの API キーでクラウドが作る。`claude-sonnet-5-5`）の順に試し、未インストール・未ログイン・利用枠超過・形式不正などで失敗したら次へ進む。どの手段で作ったかは画面に出さない
-  - SaBoRo課題サポート：使えるのは定期支払いが有効な人と、管理画面で登録した利用者（停止中を除く）だけ（アカウントは誰でも作れるため）。月の課題生成 60 回までは月額に含み、それを超えた分は使用量（実費×1.5 倍）を月額と一緒に請求する。急がない回答は Batch（半額。通常 1 時間以内、最大 24 時間）で作り、出来上がったら自動で入力する（`server/ai.js`）
+  - SaBoRo課題サポート：使えるのは定期支払いが有効な人と、管理画面で登録した利用者（停止中を除く）だけ（アカウントは誰でも作れるため）。月の課題生成 60 回までは月額に含み、それを超えた分は使用量（実費×1.5 倍）を月額と一緒に請求する（毎日の集計で請求項目にし、請求済みにするのは集計した行だけ。集計のあとに記録された分は翌日に回す）。急がない回答は Batch（半額。通常 1 時間以内、最大 24 時間）で作り、出来上がったら自動で入力する（`server/ai.js`）
   - 出力が上限（32000 トークン）で途切れた課題は自動では作り直さず（同期のたびに費用がかかるため）本人の対応待ちにし、「高度な生成を使用しますか？（使用回数/3）」と出す。本人が選ぶと出力 64000 トークンで作り直す（月 3 回まで。サーバーで数える）
-  - 費用の上限：月額に含む分で使える実費は 1 人・月 15 ドルまで（管理画面で変更。授業情報の読み取りも数える）、1 回の依頼は資料込み 30 万文字・出力 32000 トークンまで、同時に作るのは 5 件まで・1 日 200 回まで（作る前に予約して数える）
+  - 費用の上限：月額に含む分で使える実費は 1 人・月 15 ドルまで（管理画面で変更。授業情報の読み取りも数える。無料分を超えて請求できる人でも、請求しない処理（質問の作成・文体の読み取り・会話の読み取り）はこの上限で止める）、1 回の依頼は資料込み 30 万文字・出力 32000 トークンまで、同時に作るのは 5 件まで・1 日 200 回まで、月の無料分の回数（請求できない人）と高度な生成の回数も、作る前の予約の 1 文で原子的に数える（`ai_inflight`）
   - 急ぐもの（本人が画面で頼んだ・提出の操作・締切まで 24 時間以内・初回の同期）はすぐ作る。同じ依頼の Batch があれば二重に作らず、出来上がっていればその結果を使い、まだなら Batch を取り消してからすぐ作る。授業情報の読み取り（教室・授業形式・欠席上限など）も同じで、初めて読む授業・初回の同期・次の授業が明日までの授業はすぐ、それ以外は Batch。一度読んだ資料は読み直さず、第1回までの資料・シラバス・お知らせが変わったときだけ全体を、第2回以降はまだ読んでいない資料の抜き出しだけを渡す（`local/timetable.js` の `courseInfoPlan`）
   - CLIの場所は自動で探す。見つからない場合は `COURSECUE_CODEX` / `COURSECUE_CLAUDE` で指定。モデルは `COURSECUE_CLAUDE_MODEL`（Claude Code）で変更可
 - 認証情報・接続キー: macOSキーチェーン。平文パスワードはクラウドへ送信しない。公開設定はRSA-OAEP + AES-GCMで暗号化し、登録Macだけが復号する。ただし画面は復号用の公開鍵を Worker から受け取るので、この保証は「Worker（クラウド）を運営者が正しく動かしている」ことが前提（Worker が差し替えられれば、送られる暗号文は読める。クラウドのログや保存先から平文が漏れないための仕組みであって、運営者を信頼しなくてよい仕組みではない）。manabo のページ本文・シラバス・お知らせ・課題の説明は、学籍番号などの ID（英字＋6 桁以上の数字）を除いてからクラウドへ送る（`local/core.js` の `scrubIds`）
@@ -27,7 +27,7 @@ GitHub の Release（https://github.com/Peyangpiece/SaBoRo/releases/latest ）�
 3. 「saboroを接続」でアプリ内の画面を saboro に接続する
 
 授業の一覧・授業日・課題・締切・資料は接続後の同期で manabo から自動で集める。資料は「書類（Documents）/saboro/<授業名>/」に保存する。アプリは Release の最新版を自動で確認して更新する（Mac は署名がないため自動更新が効かず、新しい版を入れ直す。新しい版を見つけたら案内の画面とメニューバーの「新しい版をダウンロード」で知らせ、押すとアプリが自分の CPU 用の .dmg を「ダウンロード」フォルダに落とし、終了してから小さなシェルスクリプトが「アプリケーション」の saboro を入れ替えて開き直す（`desktop/mac-update.js`。落とした .dmg は Release の版の情報（latest-mac.yml）の sha512 と照らし、合わないものは使わない（「ダウンロード」フォルダに同じ名前のものがあっても同じ）。入れ替えるスクリプトは .dmg を自分の作業用フォルダに写してから sha512 をもう一度確かめ、同じ CFBundleIdentifier の saboro だけを取り出し、版と署名（壊れていないこと。いまの saboro が証明書で署名されていれば同じ証明書であること）を確かめてから入れ替える。失敗したら元の saboro のまま開き直して手動の手順を案内。書き込めない場所で動いているときは .dmg を開いて案内。落とせなければダウンロードのページを案内）。Apple Developer の署名を CI の `CSC_LINK` に設定すれば自動更新が有効になる）。配布物は Apple の署名がない（Mac は、GitHub の Secrets に自分で作ったコード署名の証明書 `MAC_SIGN_P12`・`MAC_SIGN_PASSWORD` があればそれで、なければ ad-hoc で署名する（`desktop/after-pack.cjs`）。同じ証明書で署名し続けると、キーチェーンの「常に許可」が更新のあとも引き継がれる）ので、Mac では初回に開こうとして止められたあと「システム設定 → プライバシーとセキュリティ」の「このまま開く」、Windows では SmartScreen の「詳細情報 → 実行」が必要
-- アプリの作り：`desktop/main.js`（Electron）。OS 固有の処理（秘密の保存・ファイルを開く・ゴミ箱・フォルダ選択・再起動）は `local/platform.js` の組を `globalThis.saboroPlatform` で差し替える。アプリ本体は `local/bridge.js` をそのまま動かし、`COURSECUE_ROOT`（資料の場所）・`COURSECUE_WORK`（作業場所）・`PLAYWRIGHT_BROWSERS_PATH` を渡す。git による自動更新はアプリでは無効
+- アプリの作り：`desktop/main.js`（Electron）。画面は saboro 本体（クラウド）と PC 内のサービス以外へは移動せず、ほかのサイトへのリンク・転送は既定のブラウザで開く。OS 固有の処理（秘密の保存・ファイルを開く・ゴミ箱・フォルダ選択・再起動）は `local/platform.js` の組を `globalThis.saboroPlatform` で差し替える。アプリ本体は `local/bridge.js` をそのまま動かし、`COURSECUE_ROOT`（資料の場所）・`COURSECUE_WORK`（作業場所）・`PLAYWRIGHT_BROWSERS_PATH` を渡す。git による自動更新はアプリでは無効
 - 配布物の作成：`.github/workflows/desktop.yml`（タグ `desktop-v*` または手動）で macOS・Windows のインストーラーを作り Release に載せる（1 つのジョブで両方を作り、下書きの Release に載せてから gh で公開する。版は `package.json` の `version`。同じ版の作りかけが残っていれば消してから作る）。手元では `npm run desktop`（起動）／`npm run desktop:build`
 
 ### コマンドラインでの導入（Mac、開発者向け）
@@ -85,8 +85,9 @@ Codex生成は短い検証問題で実行確認済み。実際のmanaboのログ
 
 ## 運用
 
-- 料金の条件：月額に含む課題生成の回数（60 回）・超過分の倍率（1.5 倍）・請求の為替（1 ドル＝150 円）は、特定商取引法に基づく表記と同じ固定値（`server/ai.js` の `TERMS`）。変えるときは `site/public/tokushoho.html` と同時に変える（`tests/site.test.js` で照らす）。管理画面の為替は利益の計算だけに使う。回答を作成できなかった回（途切れた・拒否された）は回数に数えず請求もしない
+- 料金の条件：月額（2,500 円。`server/billing.js` の `MONTHLY_YEN`。管理画面で入れていなければこれを出す）・月額に含む課題生成の回数（60 回）・超過分の倍率（1.5 倍）・請求の為替（1 ドル＝150 円）は、特定商取引法に基づく表記と同じ固定値（`server/ai.js` の `TERMS`）。変えるときは `site/public/tokushoho.html` と同時に変える（`tests/site.test.js` で照らす）。管理画面の為替は利益の計算だけに使う。回答を作成できなかった回（途切れた・拒否された）は回数に数えず請求もしない
 - Stripe の Webhook で選ぶ通知：`invoice.paid`・`checkout.session.completed`・`checkout.session.async_payment_succeeded`・`charge.refunded`・`customer.subscription.created/updated/deleted`・`charge.dispute.created`・`charge.dispute.closed`（チャージバック。未割り当てに入るので管理画面で割り当てる）
+- Workers のログ（`wrangler.jsonc` の `observability`）を保存しており、API の失敗（`request_failed`）は経路と原因が残る（鍵・本文は出さない）
 - 障害の通知：毎日 9:05（日本時間）の定期実行で、直近 3 日に PC が接続した利用者のうち 24 時間以内に失敗した人・2 日以上同期していない人が多ければ（3 人以上かつ 3 割以上）、または定期処理で失敗があれば、GitHub の Secrets の `ALERT_WEBHOOK_URL`（Slack・Discord などの Webhook）に送る（`server/worker.js` の `alertOperator`）
 - D1 の変更：新しい表は `server/schema.sql`、既にある表の変更は `migrations/` の番号つきの SQL（`migrations/README.md`）。公開の前に D1 の時点（Time Travel の bookmark）をログに残す
 - Worker を前の版に戻す：`npx wrangler deployments list` で版を確かめ、`npx wrangler rollback <版の ID>`。D1 を戻すときは Actions のログの bookmark で `npx wrangler d1 time-travel restore coursecue-private --bookmark=<bookmark>`
