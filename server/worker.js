@@ -169,6 +169,18 @@ export function d1Store(db) {
     async listPushAccounts() {
       return (await db.prepare('SELECT DISTINCT account FROM push_subscriptions').all()).results.map(r => r.account);
     },
+    // 2 段階認証のコード：置く（上書き）・取り出す（消す）
+    async putMfaCode(c) {
+      await db
+        .prepare(
+          'INSERT INTO mfa_codes(account,code,created) VALUES(?,?,?) ON CONFLICT(account) DO UPDATE SET code=excluded.code,created=excluded.created'
+        )
+        .bind(c.account, c.code, c.created)
+        .run();
+    },
+    async takeMfaCode(account) {
+      return db.prepare('DELETE FROM mfa_codes WHERE account=? RETURNING code,created').bind(account).first();
+    },
     async findAccount(hash) {
       const row = await db
         .prepare('SELECT id,owner_hash,device_hash FROM accounts WHERE owner_hash=? OR device_hash=?')
@@ -585,7 +597,8 @@ export function memoryStore() {
     aiRequests = new Map(),
     aiInflight = new Map(),
     attendanceCodes = [],
-    pushSubs = new Map();
+    pushSubs = new Map(),
+    mfaCodes = new Map();
   let pushKeys = null;
   const upsert = p => {
     const i = payments.findIndex(x => x.id === p.id);
@@ -665,6 +678,14 @@ export function memoryStore() {
     },
     async listPushAccounts() {
       return [...new Set([...pushSubs.values()].map(s => s.account))];
+    },
+    async putMfaCode(c) {
+      mfaCodes.set(c.account, {code: c.code, created: c.created});
+    },
+    async takeMfaCode(account) {
+      const c = mfaCodes.get(account) || null;
+      mfaCodes.delete(account);
+      return c;
     },
     async findAccount(h) {
       const a = accounts.find(a => a.ownerHash === h || a.deviceHash === h);
@@ -1158,6 +1179,19 @@ export async function handle(req, env, store, ctx) {
       if (env.DEPLOYED_SIG) res.headers.set('X-Coursecue-Deployed-Sig', env.DEPLOYED_SIG);
       res.headers.set('X-Coursecue-Billing', billing.allowed ? 'ok' : 'required');
       return res;
+    }
+    // 2 段階認証：画面で入れた manabo の認証コードを PC に渡す（接続キーで置き、PC の鍵で 1 回だけ取り出す。15 分で無効）
+    if (u.pathname === '/api/mfa' && req.method === 'POST' && owner) {
+      const d = await req.json().catch(() => null),
+        code = String(d?.code || '').trim();
+      if (!/^[A-Za-z0-9-]{4,12}$/.test(code)) return json({error: 'invalid'}, 400, origin);
+      await store.putMfaCode({account, code, created: new Date().toISOString()});
+      return json({ok: true}, 200, origin);
+    }
+    if (u.pathname === '/api/agent/mfa' && req.method === 'POST' && agent) {
+      const c = await store.takeMfaCode(account);
+      const fresh = c && Date.now() - new Date(c.created).getTime() < 15 * 60e3;
+      return json({code: fresh ? c.code : null}, 200, origin);
     }
     if (u.pathname === '/api/agent/finish' && req.method === 'POST' && agent) {
       const d = await req.json();

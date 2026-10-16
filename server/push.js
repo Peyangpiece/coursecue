@@ -133,6 +133,15 @@ export function stateEvents(prev, next) {
         tag: 'prompt:' + name,
         urgency: 'high'
       });
+  // 2 段階認証：manabo のログインでメールの認証コードが必要になった（state.mfa に新しいもの）
+  if (next?.mfa?.at && prev?.mfa?.at !== next.mfa.at)
+    out.push({
+      title: 'manabo の 2 段階認証コードが必要です',
+      body: String(next.mfa.message || 'メールに届いた認証コードを SaBoRo の画面で入力してください').slice(0, 100),
+      url: '/#v=home',
+      tag: 'mfa',
+      urgency: 'high'
+    });
   const known = new Set((prev?.newNotices || []).map(n => n.key)),
     fresh = (next?.newNotices || []).filter(n => n && !known.has(n.key));
   if (fresh.length === 1)

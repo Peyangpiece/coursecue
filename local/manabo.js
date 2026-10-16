@@ -312,6 +312,65 @@ export const shortError = e => {
   if (/net::ERR_|ECONNRESET|ENOTFOUND|EAI_AGAIN/.test(m)) return 'manabo に接続できませんでした（ネットワーク）';
   return m.split('\n')[0].slice(0, 80);
 };
+// 2 段階認証：SaBoRo の画面からコードが届くのを待つ時間（メールのコードの有効期限に合わせて 10 分）
+const MFA_WAIT = 10 * 60 * 1000;
+// 認証コードの入力欄：名前・id・placeholder・ラベルに code／otp／認証／確認 などを含む見えている入力欄。なければ、本文に「認証コード」などがあり見えている文字の入力欄が 1 つだけのとき
+const MFA_FIELD = /code|otp|token|pin|passcode|認証|確認|ワンタイム/i,
+  MFA_TEXT = /認証コード|確認コード|ワンタイム|verification code|one-time|security code/i;
+async function mfaInput(p) {
+  const inputs = p
+    .locator(
+      'input:not([type=hidden]):not([type=password]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]):not([type=file])'
+    )
+    .filter({visible: true});
+  const n = await inputs.count().catch(() => 0);
+  if (!n) return null;
+  const marks = await inputs.evaluateAll(es =>
+    es.map(e =>
+      [e.name, e.id, e.placeholder, e.getAttribute('aria-label'), e.autocomplete, e.labels?.[0]?.textContent]
+        .filter(Boolean)
+        .join(' ')
+    )
+  );
+  const i = marks.findIndex(m => MFA_FIELD.test(m));
+  if (i >= 0) return inputs.nth(i);
+  if (
+    n === 1 &&
+    MFA_TEXT.test(
+      await p
+        .locator('body')
+        .innerText()
+        .catch(() => '')
+    )
+  )
+    return inputs.first();
+  return null;
+}
+// 「30 日間はこの確認を表示しない」「このブラウザを記憶する」などのチェックを入れる（次の月までコードを求められないように）
+async function trustDevice(p) {
+  const boxes = p.locator('input[type=checkbox]').filter({visible: true});
+  const labels = await boxes
+    .evaluateAll(es =>
+      es.map(e =>
+        [
+          e.labels?.[0]?.textContent,
+          e.getAttribute('aria-label'),
+          e.name,
+          e.id,
+          e.closest('label,div,li,p')?.textContent
+        ]
+          .filter(Boolean)
+          .join(' ')
+      )
+    )
+    .catch(() => []);
+  for (let i = 0; i < labels.length; i++)
+    if (/\d+\s*日|日間|記憶|信頼|次回|表示しない|省略|スキップ|remember|trust|skip|don't ask/i.test(labels[i]))
+      await boxes
+        .nth(i)
+        .check()
+        .catch(() => {});
+}
 // 自動操作のタブに出たダイアログ：お知らせ（alert）は OK、確認（confirm）はキャンセルで閉じる（開いたままだとページが固まり、次の page.goto が時間切れになる）
 // 入力（prompt：授業ページで出る出席コードの入力）は閉じずに本人に渡す。そのタブは自動操作に使わない（watchPrompt）。出席コードは入れない
 export const closeDialog = async d => {
@@ -379,9 +438,24 @@ export class Manabo {
     ask,
     trash = trashFile,
     quarantine = null,
-    notify = null
+    notify = null,
+    mfaCode = null,
+    mfaWait = MFA_WAIT
   }) {
-    Object.assign(this, {baseRoot: root, work, credentials, state, ai, extract, ask, trash, quarantine, notify});
+    Object.assign(this, {
+      baseRoot: root,
+      work,
+      credentials,
+      state,
+      ai,
+      extract,
+      ask,
+      trash,
+      quarantine,
+      notify,
+      mfaCode,
+      mfaWait
+    });
     this.spareIds = new Set();
     this.held = new Map();
     this.promptTabs = new Map();
@@ -457,18 +531,100 @@ export class Manabo {
       (await named.count()) === 1 ? named : p.locator('button[type=submit],input[type=submit]').filter({visible: true});
     if ((await button.count()) !== 1) throw Error('ログインボタンを確認してください。');
     await button.click();
+    // ログインのあとに出るもの：ログイン後の要素（done）、「二段階認証でログイン」のボタン、メールの認証コードの入力欄のどれか
     const second = p.getByRole('button', {name: '二段階認証でログイン', exact: true});
-    await done.or(second).first().waitFor({timeout: 15000});
-    if (await second.isVisible().catch(() => false)) {
+    const until = Date.now() + 15000;
+    let seen = '';
+    while (!seen && Date.now() < until) {
+      if (await done.isVisible().catch(() => false)) seen = 'done';
+      else if (await second.isVisible().catch(() => false)) seen = 'second';
+      else if (await mfaInput(p)) seen = 'mfa';
+      else await new Promise(r => setTimeout(r, 300));
+    }
+    if (!seen) throw Error('自動ログインに失敗。ID・パスワードまたは追加認証を確認してください。');
+    if (seen === 'second') {
       const nextPassword = p.locator('input[type=password]').filter({visible: true});
       if ((await nextPassword.count()) === 1) await nextPassword.fill(c.password);
       await second.click();
     }
-    try {
-      await done.waitFor({timeout: 15000});
-    } catch {
-      throw Error('自動ログインに失敗。ID・パスワードまたは追加認証を確認してください。');
+    await this.finishLogin(p, done);
+  }
+  // ログインのあと：ログイン後の要素（done）が出れば終わり。メールの認証コードを入れる画面（2 段階認証）が出たら、
+  // SaBoRo の画面に入力を出して（state.mfa）コードを待ち、「30 日間は表示しない」などのチェックを入れてから送る。コードが違えば入れ直せる（3 回まで）
+  async finishLogin(p, done) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const seen = await this.waitLoginOutcome(p, done);
+      if (seen === 'done') {
+        if (this.state?.mfa) {
+          delete this.state.mfa;
+          await this.save();
+        }
+        return;
+      }
+      if (seen !== 'mfa') break;
+      await this.enterMfa(p, attempt);
     }
+    if (this.state?.mfa) {
+      delete this.state.mfa;
+      await this.save();
+    }
+    throw Error('自動ログインに失敗。ID・パスワードまたは追加認証を確認してください。');
+  }
+  // done が見えれば 'done'、認証コードの入力欄が見えれば 'mfa'、15 秒待っても出なければ ''
+  async waitLoginOutcome(p, done) {
+    const until = Date.now() + 15000;
+    while (Date.now() < until) {
+      if (await done.isVisible().catch(() => false)) return 'done';
+      if (await mfaInput(p)) return 'mfa';
+      await new Promise(r => setTimeout(r, 500));
+    }
+    return '';
+  }
+  async enterMfa(p, attempt) {
+    const text = await p
+        .locator('body')
+        .innerText()
+        .catch(() => ''),
+      line = text
+        .split('\n')
+        .map(s => s.trim())
+        .find(s => /コード|code/i.test(s) && s.length <= 120);
+    const message =
+      attempt > 1
+        ? '認証コードが違うか期限切れのようです。メールに届いた新しいコードを入力してください'
+        : line || 'メールに届いた認証コードを入力してください';
+    this.state.mfa = {at: new Date().toISOString(), message, attempt};
+    await this.save();
+    Promise.resolve(
+      this.notify?.('saboro', 'manabo の 2 段階認証：メールに届いたコードを SaBoRo の画面で入力してください')
+    ).catch(() => {});
+    const code = await this.waitMfaCode();
+    delete this.state.mfa;
+    await this.save();
+    if (!code)
+      throw Error(
+        '2 段階認証のコードが入力されなかったため、manabo にログインできませんでした。SaBoRo の画面で入力してください'
+      );
+    const input = await mfaInput(p);
+    if (!input) return;
+    await trustDevice(p);
+    await input.fill(code);
+    const submit = p
+      .getByRole('button', {name: /認証|確認|送信|ログイン|次へ|verify|submit|continue|sign in/i})
+      .filter({visible: true});
+    if ((await submit.count()) >= 1) await submit.first().click();
+    else await input.press('Enter');
+  }
+  // SaBoRo の画面から送られたコードをクラウド経由で受け取る（mfaCode は 1 回ごとに問い合わせ、なければ null）。mfaWait まで待つ
+  async waitMfaCode() {
+    if (!this.mfaCode) return null;
+    const until = Date.now() + this.mfaWait;
+    while (Date.now() < until) {
+      const code = String((await this.mfaCode().catch(() => null)) || '').trim();
+      if (code) return code;
+      await new Promise(r => setTimeout(r, Math.min(3000, this.mfaWait)));
+    }
+    return null;
   }
   async settled(p) {
     await p.locator('#div-class-directories').waitFor({timeout: 20000});
