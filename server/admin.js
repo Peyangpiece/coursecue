@@ -1,12 +1,12 @@
 // 管理者画面（/admin.html）の API と集計。認証は Worker の秘密 ADMIN_TOKEN（32 文字以上）で、利用者の接続キー・Mac の鍵とは別
 // 利用者の状態からは、件数・最終接続・版・AI の使用量の集計だけを読む（授業名・課題・資料の中身は返さない）
 // 売上は入金の記録、費用は登録した費用、AI の費用は「saboro の API」プランの利用者の使用量から Claude Sonnet 5.5 の通常料金で出した目安
-import {billingOf} from './billing.js';import {currentCalendar,checkCalendar,normalizeCalendar,needsUpdate,calendarEnd} from './calendar.js';import {readCalendarPdf,TERMS} from './ai.js';
+import {billingOf,MONTHLY_YEN} from './billing.js';import {currentCalendar,checkCalendar,normalizeCalendar,needsUpdate,calendarEnd} from './calendar.js';import {readCalendarPdf,TERMS} from './ai.js';
 export const PLANS=['api','byo','free'],STATUSES=['active','trial','stopped'];
 // paymentLink：Stripe の支払いリンク（https://buy.stripe.com/…）。利用者ごとに client_reference_id を付けて画面に出す
 // requirePayment：支払いを必須にする（定期支払いが有効でない利用者は同期・回答の作成などを止める。プランが「無料」の人は対象外）。portalLink：Stripe の顧客ポータル（解約・カード変更）。monthlyPrice：支払い画面に出す月額
 // SaBoRo の AI の無料分の回数・超過分の倍率・請求の為替は、表記と同じ固定値（server/ai.js の TERMS）。usdJpy は利益の計算だけに使う。aiFreeCapUsd：無料分で使える実費の上限（ドル。0 なら上限なし）
-export const DEFAULT_SETTINGS={feeRate:0.036,taxable:false,usdJpy:150,paymentLink:'',requirePayment:false,portalLink:'',monthlyPrice:0,aiFreeCapUsd:15};
+export const DEFAULT_SETTINGS={feeRate:0.036,taxable:false,usdJpy:150,paymentLink:'',requirePayment:false,portalLink:'',monthlyPrice:MONTHLY_YEN,aiFreeCapUsd:15};
 const CUSTOMER=/^cus_[A-Za-z0-9]{1,100}$/;
 const MONTH=/^\d{4}-(0[1-9]|1[0-2])$/,DATE=/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 export const monthAdd=(m,n)=>{const [y,mo]=m.split('-').map(Number),d=new Date(Date.UTC(y,mo-1+n,1));return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}`};

@@ -2,6 +2,7 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http://127.0.0.1:8766 http://localhost:8766; connect-src 'self' http://127.0.0.1:8766 http://localhost:8766; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
 
 /install.sh
   Content-Type: text/x-shellscript; charset=utf-8

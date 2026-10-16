@@ -22,7 +22,10 @@ function page(html){return 'data:text/html;charset=utf-8,'+encodeURIComponent(`<
 function home(){return !ready?page(`<h1>saboro</h1><p>${status}</p>`):secrets.get('manabo')?'http://127.0.0.1:8766/pair':'http://127.0.0.1:8766/setup'}
 // 開いている画面は差し替えずに前に出す（起動時の activate で起動中の画面や設定の画面を上書きしない）
 function focusWindow(){if(!app.isReady())return;if(Date.now()-lastCheck>10*60*1000)checkUpdate();if(win&&!win.isDestroyed()){if(win.isMinimized())win.restore();win.show();win.focus()}else openWindow(home())}
-function openWindow(url){if(win&&!win.isDestroyed()){win.loadURL(url);win.show();win.focus();return}win=new BrowserWindow({width:1100,height:820,title:'saboro',autoHideMenuBar:true,webPreferences:{contextIsolation:true,sandbox:true}});if(process.platform!=='darwin')win.setMenuBarVisibility(false);win.webContents.setWindowOpenHandler(openLink);win.webContents.on('did-fail-load',loadFailed);win.loadURL(url);win.on('closed',()=>{win=null})}
+function openWindow(url){if(win&&!win.isDestroyed()){win.loadURL(url);win.show();win.focus();return}win=new BrowserWindow({width:1100,height:820,title:'saboro',autoHideMenuBar:true,webPreferences:{contextIsolation:true,sandbox:true}});if(process.platform!=='darwin')win.setMenuBarVisibility(false);win.webContents.setWindowOpenHandler(openLink);win.webContents.on('will-navigate',guardNavigation);win.webContents.on('will-redirect',guardNavigation);win.webContents.on('did-fail-load',loadFailed);win.loadURL(url);win.on('closed',()=>{win=null})}
+// この画面で開くのは saboro 本体（クラウド）と PC 内のサービスの画面だけ。ほかのサイトへの移動（リンク・転送）は止めて既定のブラウザで開く（画面の中に別のサイトを出さない）
+const ownPage=url=>url.startsWith(apiBase+'/')||url===apiBase||url.startsWith('http://127.0.0.1:8766/')||url.startsWith('data:');
+function guardNavigation(e,url){if(ownPage(url))return;e.preventDefault();if(/^https?:\/\//.test(url))shell.openExternal(url)}
 // saboro 本体（クラウド）や Mac/PC 内のサービスの画面を開けなかったとき：真っ白のままにせず理由を出し、15 秒ごとに開き直す
 // -3（ERR_ABORTED）は別の画面へ移っただけなので扱わない。インターネットにつながっていないと、接続後の saboro 本体が開けない
 let retryTimer=null;
