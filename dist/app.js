@@ -619,6 +619,91 @@ async function checkAttendance(i) {
     render();
   }
 }
+// この端末への通知（Web Push）：Service Worker（/sw.js）を登録し、クラウドの VAPID の公開鍵で購読して、購読をクラウドに登録する（/api/push/subscribe）。
+// 通知の中身（出席コードの入力・新しいお知らせ・締切）はクラウドが PC の状態から作って送る
+const pushSupported = () =>
+  typeof navigator !== 'undefined' &&
+  typeof window !== 'undefined' &&
+  'serviceWorker' in navigator &&
+  'PushManager' in window &&
+  'Notification' in window;
+const standalone = () =>
+  typeof window !== 'undefined' &&
+  (window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true);
+async function pushSubscription() {
+  if (!pushSupported()) return null;
+  const reg = await navigator.serviceWorker.getRegistration('/');
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+async function refreshPushState() {
+  const el = document.getElementById('pushstate'),
+    show = (id, on) => {
+      const b = document.getElementById(id);
+      if (b) b.hidden = !on;
+    };
+  if (!el) return;
+  if (!key) {
+    el.textContent = 'manabo と接続すると設定できます。';
+    show('pushon', false);
+    return;
+  }
+  if (!pushSupported()) {
+    el.textContent =
+      typeof navigator !== 'undefined' && /iPhone|iPad/.test(navigator.userAgent) && !standalone()
+        ? 'iPhone では、Safari の共有メニューから「ホーム画面に追加」した saboro を開くと設定できます。'
+        : 'このブラウザは通知に対応していません。';
+    show('pushon', false);
+    return;
+  }
+  const sub = await pushSubscription().catch(() => null);
+  el.textContent = sub
+    ? 'この端末で通知を受け取っています。'
+    : Notification.permission === 'denied'
+      ? '通知がブロックされています。ブラウザ（端末）の設定で saboro の通知を許可してください。'
+      : 'まだ設定していません。';
+  show('pushon', !sub && Notification.permission !== 'denied');
+  show('pushoff', !!sub);
+  show('pushtest', !!sub);
+}
+const b64uBytes = s => {
+  const t = s.replace(/-/g, '+').replace(/_/g, '/');
+  return Uint8Array.from(atob(t + '='.repeat((4 - (t.length % 4)) % 4)), c => c.charCodeAt(0));
+};
+async function enablePush() {
+  try {
+    if ((await Notification.requestPermission()) !== 'granted') {
+      toast('通知が許可されませんでした');
+      return;
+    }
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    const {publicKey} = await api('/api/push/key');
+    const sub = await reg.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: b64uBytes(publicKey)});
+    await api('/api/push/subscribe', 'POST', sub.toJSON());
+    toast('この端末で通知を受け取ります');
+  } catch (e) {
+    toast('通知を設定できませんでした：' + briefError(e.message));
+  }
+  refreshPushState();
+}
+async function disablePush() {
+  try {
+    const sub = await pushSubscription();
+    if (sub) {
+      if (key) await api('/api/push/unsubscribe', 'POST', {endpoint: sub.endpoint}).catch(() => {});
+      await sub.unsubscribe();
+    }
+  } catch {}
+  refreshPushState();
+}
+async function testPush() {
+  try {
+    const d = await api('/api/push/test', 'POST', {});
+    toast(d.sent ? 'テスト通知を送りました' : '送れませんでした。もう一度「この端末で通知を受け取る」を押してください');
+  } catch (e) {
+    toast(e.message);
+  }
+}
 // 入力待ちの出席コード（PC の状態 state.prompts）。一度出した入力は、同じものをもう一度自動では出さない（ホームの「入力する」で出せる）
 const promptShown = new Set();
 const pendingPrompts = () => Object.entries(state?.prompts || {}).map(([name, p]) => ({name, ...p}));
@@ -855,13 +940,17 @@ function settingsConnected() {
   // 自動処理は下の「設定を保存」でまとめて保存。ダウンロード先は選ぶとすぐ反映するので別の枠にする
   html += panel(
     '自動処理',
-    `<div class="field"><label for="time">実行時刻（日本時間）</label><input class="form-control" style="max-width:160px" type="time" id="time" value="${esc(state.settings?.time || '16:30')}"></div><label class="check"><input type="checkbox" id="autogen" ${state.settings?.autoGenerate !== false ? 'checked' : ''}> レポートなどの回答を自動で作る</label><label class="check"><input type="checkbox" id="classsync" ${state.settings?.classSync !== false ? 'checked' : ''}> 授業の開始時刻に、その授業を同期する（出席コードの入力が出たら、この画面にも出します）</label><div class="field"><label for="campus">キャンパス（授業の開始時刻）</label><select class="form-control" id="campus" style="max-width:200px">${['名古屋', '豊田'].map(c => `<option value="${c}"${(state.settings?.campus || '名古屋') === c ? ' selected' : ''}>${c}（1限 ${c === '豊田' ? '9:30' : '9:00'}〜）</option>`).join('')}</select></div><p class="muted">${state.aiMissing ? `この ${dev()} では SaBoRo課題サポートを使えないため、回答は作りません。` : 'クイズはこの設定にかかわらず常に自動で回答を入力します（提出は本人が manabo で）。'}</p><h3 class="sub">自分について（回答の作成に使います）</h3><p class="muted">当てはまるものを選んでください。</p><div id="pfwrap">${typeof ProfileForm === 'object' ? ProfileForm.profileFormHtml(state.settings?.profileForm) : ''}</div><div class="field"><label for="profile">そのほか自分について（自由記述・任意）</label><textarea class="form-control" id="profile" rows="5" maxlength="2000" placeholder="例：経営学部3年。飲食店のアルバイトを2年続けていて、新人の指導もしている。テニスサークルに所属。将来はマーケティングの仕事に就きたい。">${esc(state.settings?.profile || '')}</textarea><p class="muted">「あなたの考え」「自分の経験を踏まえて」など、自分について聞かれる設問の回答に使います。課題と一緒に、回答を作る AI へ送ります。経験・体験を問う課題では、ここに書いていないことを短い質問でたずねます。</p></div><div class="field"><label for="style">文体（回答をあなたの書き方に近づけます）</label><textarea class="form-control" id="style" rows="4" maxlength="1000" placeholder="過去のレポートから読み取ると入ります。自分で書いてもかまいません。">${esc(state.settings?.style || '')}</textarea><p class="muted">過去のレポートや ChatGPT・Claude の履歴から読み取るには、${dev()} の設定画面の「4. 過去のレポート」で選んでください。${setupLink}</p>${state.profileSuggestion?.text ? `<p class="attn">${esc(state.profileSuggestion.source)} の履歴から読み取った「自分について」の候補があります。${dev()} の設定画面で確かめて足してください。${setupLink}</p>` : state.chatImport ? `<p class="muted">${esc(state.chatImport.source)} の書き出しの zip を待っています（ダウンロードすると ${dev()} が自動で読み取ります）。</p>` : ''}</div><h3 class="sub">授業日（第1回の日付）</h3><p class="muted">曜日が分かる授業は学年暦から自動で設定します。${unset.length ? '曜日が分からない授業だけ入れてください。' : ''}</p>${unset.length ? unset.map(dateField).join('') : '<p class="muted">すべての授業の授業日が設定済みです。</p>'}${set.length ? `<details class="field" id="schedule-details"><summary>自動設定済みの授業（${set.length}件）の第1回を変える</summary><div style="margin-top:10px">${set.map(dateField).join('')}</div></details>` : ''}<div class="actions"><button class="btn btn-primary" id="savesettings">設定を保存</button><span class="muted save-scope">実行時刻・回答の自動作成・授業日を保存します</span></div>`
+    `<div class="field"><label for="time">実行時刻（日本時間）</label><input class="form-control" style="max-width:160px" type="time" id="time" value="${esc(state.settings?.time || '16:30')}"></div><label class="check"><input type="checkbox" id="autogen" ${state.settings?.autoGenerate !== false ? 'checked' : ''}> レポートなどの回答を自動で作る</label><label class="check"><input type="checkbox" id="classsync" ${state.settings?.classSync !== false ? 'checked' : ''}> 授業の開始時刻に、その授業を同期する（出席コードの入力が出たら、この画面にも出します）</label><div class="field"><label for="campus">キャンパス（授業の開始時刻）</label><select class="form-control" id="campus" style="max-width:200px">${['名古屋', '豊田'].map(c => `<option value="${c}"${(state.settings?.campus || '名古屋') === c ? ' selected' : ''}>${c}（1限 ${c === '豊田' ? '9:30' : '9:00'}〜）</option>`).join('')}</select></div><p class="muted">${state.aiMissing ? `この ${dev()} では SaBoRo課題サポートを使えないため、回答は作りません。` : 'クイズはこの設定にかかわらず常に自動で回答を入力します（提出は本人が manabo で）。'}</p><h3 class="sub">自分について（回答の作成に使います）</h3><p class="muted">当てはまるものを選んでください。</p><div id="pfwrap">${typeof ProfileForm === 'object' ? ProfileForm.profileFormHtml(state.settings?.profileForm) : ''}</div><div class="field"><label for="profile">そのほか自分について（自由記述・任意）</label><textarea class="form-control" id="profile" rows="5" maxlength="2000" placeholder="例：経営学部3年。飲食店のアルバイトを2年続けていて、新人の指導もしている。テニスサークルに所属。将来はマーケティングの仕事に就きたい。">${esc(state.settings?.profile || '')}</textarea><p class="muted">「あなたの考え」「自分の経験を踏まえて」など、自分について聞かれる設問の回答に使います。課題と一緒に、回答を作る AI へ送ります。経験・体験を問う課題では、ここに書いていないことを短い質問でたずねます。</p></div><div class="field"><label for="style">文体（回答をあなたの書き方に近づけます）</label><textarea class="form-control" id="style" rows="4" maxlength="1000" placeholder="過去のレポートから読み取ると入ります。自分で書いてもかまいません。">${esc(state.settings?.style || '')}</textarea><p class="muted">過去のレポートや ChatGPT・Claude の履歴から読み取るには、${dev()} の設定画面の「5. 過去のレポート」で選んでください。${setupLink}</p>${state.profileSuggestion?.text ? `<p class="attn">${esc(state.profileSuggestion.source)} の履歴から読み取った「自分について」の候補があります。${dev()} の設定画面で確かめて足してください。${setupLink}</p>` : state.chatImport ? `<p class="muted">${esc(state.chatImport.source)} の書き出しの zip を待っています（ダウンロードすると ${dev()} が自動で読み取ります）。</p>` : ''}</div><h3 class="sub">授業日（第1回の日付）</h3><p class="muted">曜日が分かる授業は学年暦から自動で設定します。${unset.length ? '曜日が分からない授業だけ入れてください。' : ''}</p>${unset.length ? unset.map(dateField).join('') : '<p class="muted">すべての授業の授業日が設定済みです。</p>'}${set.length ? `<details class="field" id="schedule-details"><summary>自動設定済みの授業（${set.length}件）の第1回を変える</summary><div style="margin-top:10px">${set.map(dateField).join('')}</div></details>` : ''}<div class="actions"><button class="btn btn-primary" id="savesettings">設定を保存</button><span class="muted save-scope">実行時刻・回答の自動作成・授業日を保存します</span></div>`
   );
   html += panel(
     `資料のダウンロード先（${dev()} のフォルダ）`,
     `<p style="margin:0 0 6px;word-break:break-all"><code>${esc(state.settings?.downloadDir || state.defaultDownloadDir || '既定のフォルダ')}</code>${state.settings?.downloadDir ? '' : ' <span class="muted">（既定）</span>'}</p><div class="actions" style="margin-top:0"><button class="btn" id="pickdir"${pick ? '' : ' disabled'}>フォルダを選択…</button>${state.settings?.downloadDir ? '<button class="btn" id="resetdir">既定に戻す</button>' : ''}</div>${pick ? '' : '<div class="alert alert-warning" style="margin-top:8px">' + dev() + ' のアプリを新しいバージョンにすると選べるようになります。</div>'}<small class="muted" style="display:block;margin-top:6px">選ぶとすぐ反映します。${state.os === 'win32' ? '' : '初回は「Finder を制御」の許可で「OK」を押してください。'}</small>`
   );
   if (state.features?.includes('removecourse')) html += panel('授業の整理', courseManager());
+  html += panel(
+    'この端末への通知',
+    `<p class="muted" style="margin:0 0 8px">新しいお知らせ・出席コードの入力・締切が近い課題（毎朝）を、この端末に通知します（Web Push。端末ごとに設定します）。iPhone は Safari の共有メニューから「ホーム画面に追加」した saboro で設定してください。</p><p id="pushstate" class="muted">確認中…</p><div class="actions" style="margin-top:0"><button class="btn btn-primary" id="pushon">この端末で通知を受け取る</button><button class="btn" id="pushoff" hidden>通知を止める</button><button class="btn" id="pushtest" hidden>テスト通知を送る</button></div>`
+  );
 
   return (
     html + (state.credentialsConfigured ? credPanel : `<button class="btn" id="logout">この端末の接続を解除</button>`)
@@ -1371,6 +1460,10 @@ function bindView() {
       toast('保存できませんでした');
     }
   });
+  bind('pushon', enablePush);
+  bind('pushoff', disablePush);
+  bind('pushtest', testPush);
+  refreshPushState();
   bind('logout', async () => {
     if (
       !(await ask(
@@ -1380,6 +1473,7 @@ function bindView() {
       ))
     )
       return;
+    await disablePush();
     key = '';
     localStorage.removeItem('coursecue-owner');
     courses = guestData?.courses || [];
