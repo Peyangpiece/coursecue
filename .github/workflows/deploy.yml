@@ -90,7 +90,14 @@ jobs:
         env:
           ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      - run: npx wrangler deploy --var DEPLOYED_SHA:${{ github.sha }}
+      # 公開版の署名：Mac サービスは、この署名が local/deploy-key.pub の公開鍵で確かめられるコミットにだけ自動更新する（local/auto-update.js）。
+      # 秘密鍵は GitHub の Secrets の DEPLOY_SIGNING_KEY（npm run deploy-key で作り、公開鍵は local/deploy-key.pub に入れてコミットする）。無ければ公開を止める
+      - name: Sign the deployed commit
+        id: sign
+        run: sig=$(node local/deploy-key.js sign "$GITHUB_SHA") && echo "sig=$sig" >> "$GITHUB_OUTPUT"
+        env:
+          DEPLOY_SIGNING_KEY: ${{ secrets.DEPLOY_SIGNING_KEY }}
+      - run: npx wrangler deploy --var DEPLOYED_SHA:${{ github.sha }} --var DEPLOYED_SIG:${{ steps.sign.outputs.sig }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - name: Record deployed commit

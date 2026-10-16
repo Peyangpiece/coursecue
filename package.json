@@ -11,6 +11,7 @@
     "test": "node --test tests/*.test.js",
     "install:agent": "node local/install-agent.js",
     "seed": "node local/seed.js",
+    "deploy-key": "node local/deploy-key.js new",
     "desktop": "electron .",
     "desktop:build": "electron-builder --publish never",
     "desktop:release": "electron-builder --publish always"
