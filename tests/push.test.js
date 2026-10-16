@@ -311,7 +311,7 @@ test('画面：設定の「この端末への通知」で Service Worker を登�
   assert.match(sw, rx("self.addEventListener('notificationclick',e=>{e.notification.close();"));
   assert.doesNotMatch(sw, /caches\.|fetch/, '画面の内容は保存しない');
   assert.match(src('dist/_headers'), /\/sw\.js\n {2}Cache-Control: no-cache/);
-  assert.match(src('dist/index.html'), /app\.js\?v=sp-25/);
+  assert.match(src('dist/index.html'), /app\.js\?v=sp-26/);
   const schema = src('server/schema.sql');
   assert.match(schema, /CREATE TABLE IF NOT EXISTS push_keys \(id TEXT PRIMARY KEY, value TEXT NOT NULL\)/);
   assert.match(
@@ -323,4 +323,49 @@ test('画面：設定の「この端末への通知」で Service Worker を登�
     rx('ctx.waitUntil(pushDeadlines(store,Date.now(),pushSubject(env)).catch('),
     '毎朝の定期処理で締切を送る'
   );
+});
+test('ホーム画面に追加：接続キーつきのマニフェスト（/api/manifest?connect=）は start_url に #connect= を入れて返し、画面は接続しているときだけそれに差し替える', async () => {
+  const {manifestFor} = await import('../server/worker.js');
+  const assets = {
+    ASSETS: {
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            name: 'saboro — 課題管理',
+            start_url: '/',
+            scope: '/',
+            display: 'standalone',
+            icons: [{src: '/x.png'}]
+          })
+        )
+    }
+  };
+  const r = await handle(new Request(base + '/api/manifest?connect=' + tok('a')), assets, memoryStore());
+  assert.equal(r.headers.get('Content-Type'), 'application/manifest+json');
+  assert.equal(r.headers.get('Cache-Control'), 'no-store');
+  const m = await r.json();
+  assert.equal(m.start_url, '/#connect=' + tok('a'));
+  assert.equal(m.display, 'standalone');
+  assert.equal(m.name, 'saboro — 課題管理', '同梱のマニフェストの中身を引き継ぐ');
+  assert.equal(
+    (await (await handle(new Request(base + '/api/manifest?connect=zzz'), assets, memoryStore())).json()).start_url,
+    '/',
+    '鍵の形でなければ入れない'
+  );
+  assert.equal((await manifestFor({}, base, '')).start_url, '/', '同梱のものを読めなくても返す');
+  const app = src('dist/app.js');
+  assert.match(
+    app,
+    rx(
+      "if(link?.setAttribute)link.setAttribute('href',key?'/api/manifest?connect='+encodeURIComponent(key):'/manifest.webmanifest');"
+    )
+  );
+  assert.match(
+    app,
+    rx("localStorage.setItem('coursecue-owner',key);applyManifest();render();"),
+    '接続したら差し替える'
+  );
+  assert.match(app, rx("localStorage.removeItem('coursecue-owner');applyManifest();"), '解除したら戻す');
+  assert.match(app, /ホーム画面に追加した saboro を初めて開いた場合だけ「接続する」を押してください/);
+  assert.match(src('wrangler.jsonc'), /"invocation_logs": false/, '接続キーつきの URL を要求の記録に残さない');
 });
