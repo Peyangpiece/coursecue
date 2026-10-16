@@ -1,3 +1,30 @@
-import {generateKeyPairSync,createPrivateKey,privateDecrypt,createDecipheriv,constants} from 'node:crypto';
-export function createCredentialKey(){const {privateKey,publicKey}=generateKeyPairSync('rsa',{modulusLength:3072});return {privateKey:privateKey.export({format:'jwk'}),publicKey:publicKey.export({format:'jwk'})}}
-export function decryptCredentials(privateJwk,envelope){if(envelope?.version!==1)throw Error('認証情報の形式が不正');const key=privateDecrypt({key:createPrivateKey({key:privateJwk,format:'jwk'}),padding:constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},Buffer.from(envelope.key,'base64'));const encrypted=Buffer.from(envelope.data,'base64');const decipher=createDecipheriv('aes-256-gcm',key,Buffer.from(envelope.iv,'base64'));decipher.setAuthTag(encrypted.subarray(-16));const plain=Buffer.concat([decipher.update(encrypted.subarray(0,-16)),decipher.final()]);const d=JSON.parse(plain.toString());if(typeof d.username!=='string'||typeof d.password!=='string'||!d.username.trim()||!d.password||plain.length>10000)throw Error('ID・パスワードを確認してください');return {username:d.username.trim(),password:d.password}}
+import {generateKeyPairSync, createPrivateKey, privateDecrypt, createDecipheriv, constants} from 'node:crypto';
+export function createCredentialKey() {
+  const {privateKey, publicKey} = generateKeyPairSync('rsa', {modulusLength: 3072});
+  return {privateKey: privateKey.export({format: 'jwk'}), publicKey: publicKey.export({format: 'jwk'})};
+}
+export function decryptCredentials(privateJwk, envelope) {
+  if (envelope?.version !== 1) throw Error('認証情報の形式が不正');
+  const key = privateDecrypt(
+    {
+      key: createPrivateKey({key: privateJwk, format: 'jwk'}),
+      padding: constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: 'sha256'
+    },
+    Buffer.from(envelope.key, 'base64')
+  );
+  const encrypted = Buffer.from(envelope.data, 'base64');
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(envelope.iv, 'base64'));
+  decipher.setAuthTag(encrypted.subarray(-16));
+  const plain = Buffer.concat([decipher.update(encrypted.subarray(0, -16)), decipher.final()]);
+  const d = JSON.parse(plain.toString());
+  if (
+    typeof d.username !== 'string' ||
+    typeof d.password !== 'string' ||
+    !d.username.trim() ||
+    !d.password ||
+    plain.length > 10000
+  )
+    throw Error('ID・パスワードを確認してください');
+  return {username: d.username.trim(), password: d.password};
+}

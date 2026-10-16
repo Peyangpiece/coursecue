@@ -1,39 +1,603 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {chromium} from 'playwright';import {Manabo} from '../local/manabo.js';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright';
+import {Manabo} from '../local/manabo.js';
 // 授業ページの模擬：第3回を開くと、予習動画（未完了）→ 提出済みのレポート の順に並ぶ
-const page=`<a id="button-logout">ログアウト</a><div id="div-class-directories"><table><tr><td><a class="a-open-contents" directory_id="d3" href="#">第３回 資本コスト</a></td></tr></table></div><div id="div-class-contents"></div><script>document.querySelector('[directory_id=d3]').onclick=e=>{e.preventDefault();document.getElementById('div-class-contents').innerHTML='<h3>第３回 資本コスト</h3><table><tr><td></td><td><a href="/content/900/movie/tok/">第3回 予習動画</a></td></tr><tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr></table>'}</script>`;
-async function setup(t,state,body=page){const browser=await chromium.launch({headless:true});t.after(()=>browser.close());const ctx=await browser.newContext();await ctx.route('**/*',r=>r.fulfill({contentType:'text/html; charset=utf-8',body}));const p=await ctx.newPage();const m=new Manabo({root:'/tmp',work:'/tmp',state,save:async()=>{},credentials:async()=>null,ai:async()=>{throw Error('生成しない')}});m.ctx=ctx;m.page=async()=>(m.p=p);m.download=async()=>{};m.cubics=async()=>{};return m}
-const imported=()=>({id:'local-cf3',key:'local-cf3',course:1,round:3,title:'第3回課題',url:'https://manabo.cnc.chukyo-u.ac.jp/class/103901/',type:'レポート',status:'wait',action:'manaboの最新状態を同期してください',imported:true});
-test('授業日が未設定・対象期間外の回でも、提出済みになった既知課題を反映する',async t=>{const task=imported();const state={tasks:[task],materials:[],settings:{autoGenerate:false}};const m=await setup(t,state);await m.refreshPending();assert.equal(task.status,'done');assert.equal(task.action,'');assert.equal(task.url,'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');assert.equal(task.imported,false)});
-test('取込み課題は同じ回の別教材（動画）ではなく該当課題と照合する',async t=>{const task=imported();const today=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});const state={tasks:[task],materials:[],schedules:{'103901':{'3':today}},settings:{autoGenerate:false}};const m=await setup(t,state);await m.sync();const cf=state.tasks.filter(x=>x.course===1&&x.url.includes('/content/901/'));assert.equal(cf.length,1);assert.equal(cf[0].status,'done');assert.equal(state.tasks.find(x=>x.id==='local-cf3').status,'done');assert(state.issues.includes('人材マネジメントⅡ：授業日未設定（第3回）'));assert(!state.issues.some(s=>s.startsWith('コーポレートファイナンスⅡ')))});
-test('同じ課題の重複（取込み分と同期分）は提出済みに統合する',async t=>{const done={id:'synced',key:'k',course:1,round:3,title:'第3回 課題',url:'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/',type:'レポート',status:'done',submittedAt:'2026-10-03T10:00:00.000Z'};const state={tasks:[imported(),done],materials:[],settings:{autoGenerate:false}};const m=await setup(t,state);await m.refreshPending();assert.equal(state.tasks.filter(x=>x.url.includes('/content/901/')).length,1);assert.equal(state.tasks[0].status,'done')});
-test('課題以外の教材（動画）の項目は別の課題へ付け替えない',async t=>{const movie={id:'mv',course:1,round:3,title:'第3回 予習動画',url:'https://manabo.cnc.chukyo-u.ac.jp/content/900/movie/tok/',type:'レポート',status:'ready'};const state={tasks:[movie],materials:[],settings:{autoGenerate:false}};const m=await setup(t,state);await m.refreshPending();assert.equal(movie.url,'https://manabo.cnc.chukyo-u.ac.jp/content/900/movie/tok/');assert.equal(movie.status,'ready')});
-test('授業ページの曜日から学年暦の授業日を設定し、設定済みの回は変えない',async t=>{const withWeekday=page.replace('<div id="div-class-directories">','<ol class="breadcrumb"><li>トップページ</li><li>コーポレートファイナンスⅡ（月曜／3限）</li></ol><div id="div-class-directories">');const state={tasks:[],materials:[],schedules:{'103901':{'1':'2026-09-21'}},settings:{autoGenerate:false}};const m=await setup(t,state,withWeekday);await m.sync();assert.equal(state.weekdays['103901'],'月');assert.equal(state.schedules['103901']['1'],'2026-09-21');assert.equal(state.schedules['103901']['3'],'2026-10-12');assert.equal(state.schedules['103901']['9'],'2026-11-30');assert(!state.issues.some(s=>s.startsWith('コーポレートファイナンスⅡ')))});
-test('回答の生成は全授業を回り終えて提出状況を保存した後に行う',async t=>{const today=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});const body=page.replace('<img class="img-checked">','').replace('10月3日 23:59','12月31日 23:59');const state={tasks:[],materials:[],schedules:{'103901':{'3':today}},settings:{autoGenerate:true}};const m=await setup(t,state,body);const order=[];let saves=0;m.save=async()=>{saves++};m.process=async x=>{order.push({lastSync:!!state.lastSync,saves});x.status='draft'};await m.sync();assert(order.length>=1);assert(order.every(o=>o.lastSync&&o.saves>=11),'生成より先に全授業の結果を保存する');assert.equal(state.syncTiming.generated,order.length);assert(state.syncTiming.total>=state.syncTiming.crawl)});
-test('CUBICS は 1 時間以内に読んでいれば省き、授業は並行して回る',async t=>{const state={tasks:[],materials:[],settings:{autoGenerate:false},cubics:{fetchedAt:new Date().toISOString(),courses:{},events:[],weeks:[]}};const m=await setup(t,state);let cubics=0;m.cubics=async()=>{cubics++};let most=0;const tick=setInterval(()=>{most=Math.max(most,m.ctx.pages().length)},5);t.after(()=>clearInterval(tick));await m.sync();assert.equal(cubics,0,'1 時間以内なら CUBICS を読まない');assert.equal(state.syncTiming.cubicsSkipped,true);assert(state.syncTiming.classes>=0);assert(most>=2,'授業ページを複数のタブで同時に開く');assert.equal(m.ctx.pages().length,1,'終わったら開いたタブを閉じる');state.cubics.fetchedAt=new Date(Date.now()-2*3600*1000).toISOString();await m.sync();assert.equal(cubics,1,'1 時間を過ぎたら読む')});
-test('取込み課題を特定できないときは候補を残し、特定できたら締切も入れる',async t=>{const two=page.replace('<a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59','<a href="/content/901/report/tok/">第3回 レポートA</a> 期間: 10月3日 23:59</td></tr><tr><td></td><td><a href="/content/902/report/tok/">第3回 レポートB</a> 期間: 10月5日 23:59');const task={...imported(),title:'東芝JSWへの本国支援'};const state={tasks:[task],materials:[],settings:{autoGenerate:false}};const m=await setup(t,state,two);await m.refreshPending();assert.equal(task.imported,true);assert.deepEqual(task.candidates.map(c=>c.title),['第3回 レポートA','第3回 レポートB']);assert.match(task.action,/候補（2件）/);
-// 本人が候補を選んだ後（link 相当）は、次の確認で締切が入る
-task.url='https://manabo.cnc.chukyo-u.ac.jp/content/902/report/tok/';task.imported=false;delete task.candidates;delete task.dueAt;await m.refreshPending();assert.equal(task.dueAt,'2026-10-05T14:59:00.000Z')});
-test('取込み課題の回のディレクトリや課題が manabo にないときは、その理由を要対応に残す',async t=>{const noDir={...imported(),id:'r5',key:'r5',round:5,title:'第5回課題'};const state={tasks:[noDir],materials:[],settings:{autoGenerate:false}};const m=await setup(t,state);await m.refreshPending();assert.match(noDir.action,/第5回のディレクトリが見つかりません/);assert.match(noDir.action,/第３回 資本コスト/);
-const onlyMovie=page.replace('<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>','');const task=imported();const s2={tasks:[task],materials:[],settings:{autoGenerate:false}};const m2=await setup(t,s2,onlyMovie);await m2.refreshPending();assert.match(task.action,/第3回に課題（レポート・クイズ・掲示板）がありません/);assert.match(task.action,/予習動画/)});
-test('漢数字の回（第二回）と受講期間の終わりを読み、期限後提出用の別枠は課題にしない',async t=>{const kanji=page.replace(/第３回 資本コスト/g,'第二回 戦略').replace('<h3>第３回 資本コスト</h3>','<h3>第二回 戦略</h3>').replace('<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>','<tr><td></td><td><a href="/content/901/report/tok/">第二回課題提出</a> 受講期間: ～ 10月13日(火) 00:00</td></tr><tr><td></td><td><a href="/content/902/report/tok/">第二回課題（期限後提出用、やむを得ない事情のみ）</a> 受講期間: 10月13日(火) 00:00 ～</td></tr>');const task={...imported(),round:2,title:'東芝JSWへの本国支援'};const today=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});const state={tasks:[task],materials:[],schedules:{'103901':{'2':today}},settings:{autoGenerate:false}};const m=await setup(t,state,kanji);await m.sync();assert.equal(task.imported,false);assert.equal(task.url,'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');assert.equal(task.dueAt,'2026-10-12T15:00:00.000Z','受講期間の終わりが締切');assert(!state.tasks.some(x=>x.url.includes('/content/902/')),'期限後提出用の別枠は課題にしない')});
-test('締切が読めない回では前の締切を残し、読んだ表示を記録する。クイズの回探しでも締切を入れる',async t=>{const noDate=page.replace(' 期間: 10月3日 23:59','').replace('<img class="img-checked">','');const task={...imported(),imported:false,url:'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/',status:'ready',dueAt:'2026-10-03T14:59:00.000Z'};const state={tasks:[task],materials:[],settings:{autoGenerate:false}};const m=await setup(t,state,noDate);await m.refreshPending();assert.equal(task.dueAt,'2026-10-03T14:59:00.000Z','読めなくても消さない');assert.equal(task.deadlineText,'（期間の表示なし）');
-const withRange=page.replace(' 期間: 10月3日 23:59',' 受講期間: ～ 10月20日(火) 00:00').replace('<img class="img-checked">','');const imp={...imported(),title:'東芝JSWへの本国支援'};const s2={tasks:[imp],materials:[],settings:{autoGenerate:false}};const m2=await setup(t,s2,withRange);await m2.resolveQuiz(imp);assert.equal(imp.url,'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');assert.equal(imp.dueAt,'2026-10-19T15:00:00.000Z','回探しで対応づけたときも受講期間の終わりを締切にする');assert.match(imp.deadlineText,/受講期間/)});
-test('受講期間がリンクの次の行にあっても締切に読む',async t=>{const sibling=page.replace('<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>','<tr><td></td><td><a href="/content/901/report/tok/">第三回課題提出</a></td></tr><tr><td></td><td class="period">受講期間: 〜 10月20日(火) 00:00</td></tr>');const task={...imported(),title:'東芝JSWへの本国支援'};const state={tasks:[task],materials:[],settings:{autoGenerate:false}};const m=await setup(t,state,sibling);await m.refreshPending();assert.equal(task.url,'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');assert.equal(task.dueAt,'2026-10-19T15:00:00.000Z');assert.match(task.deadlineText,/受講期間/)});
-test('一覧に期間がないときは課題ページの「期間」行から締切を読む',async t=>{const bare=page.replace('<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>','<tr><td></td><td><a href="/content/901/report/tok/">第三回課題提出</a></td></tr>');const task={...imported(),title:'東芝JSWへの本国支援'};const state={tasks:[task],materials:[],settings:{autoGenerate:false}};const m=await setup(t,state,bare);await m.ctx.route('**/content/901/**',r=>r.fulfill({contentType:'text/html; charset=utf-8',body:'<h2>第三回課題提出</h2><p>今日は 10月11日(日) 10:00</p><div>受講期間: 2026/10/06 00:00 ～ 2026/10/20 00:00</div><textarea></textarea>'}));await m.refreshPending();assert.equal(task.url,'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');assert.equal(task.dueAt,'2026-10-19T15:00:00.000Z','課題ページの受講期間の終わり');assert.match(task.deadlineText,/^課題ページ：受講期間/);assert.equal(m.ctx.pages().length,1,'開いたタブは閉じる')});
-test('期限後提出用の別枠に結びついていた課題は通常の提出先へ戻し、その締切を入れる',async t=>{const two=page.replace('<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>','<tr><td></td><td><a href="/content/901/report/tok/">第三回課題提出</a> 受講期間: ～ 10月20日(火) 00:00</td></tr><tr><td></td><td><a href="/content/902/report/tok/">第三回課題（期限後提出用、やむを得ない事情のみ）</a> 受講期間: 10月20日(火) 00:00 ～</td></tr>');const bound={...imported(),title:'東芝JSWへの本国支援',url:'https://manabo.cnc.chukyo-u.ac.jp/content/902/report/tok/',imported:false,status:'needs_user'};const state={tasks:[bound],materials:[],settings:{autoGenerate:false}};const m=await setup(t,state,two);await m.refreshPending();assert.equal(bound.url,'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/','別枠から通常の提出先へ');assert.equal(bound.dueAt,'2026-10-19T15:00:00.000Z');
-// 対象期間内の同期でも同じ（別枠は課題として作らない）
-const today=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});const again={...imported(),id:'b2',key:'b2',title:'東芝JSWへの本国支援',url:'https://manabo.cnc.chukyo-u.ac.jp/content/902/report/tok/',imported:false,status:'needs_user'};const s2={tasks:[again],materials:[],schedules:{'103901':{'3':today}},settings:{autoGenerate:false}};const m2=await setup(t,s2,two);await m2.sync();assert.equal(again.url,'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');assert.equal(again.dueAt,'2026-10-19T15:00:00.000Z');assert(!s2.tasks.some(x=>x.url.includes('/content/902/')),'別枠は課題にしない');assert.equal(s2.tasks.filter(x=>x.url.includes('/content/901/')).length,1)});
-test('manabo に期間がなければ資料の提出期限を締切にする',async t=>{const bare=page.replace('<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>','<tr><td></td><td><a href="/content/901/report/tok/">第三回課題提出</a></td></tr>');const task={...imported(),title:'東芝JSWへの本国支援'};const state={tasks:[task],materials:[],settings:{autoGenerate:false}};const m=await setup(t,state,bare);m.materials=async()=>[{file:'国際ビジネス戦略 第3回ケース 対面.pptx',text:'東芝JSW\n提出：10月19日（月）24時まで、100字前後'}];await m.refreshPending();assert.equal(task.url,'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');assert.equal(task.dueAt,'2026-10-19T15:00:00.000Z','24時は翌日 0 時');assert.match(task.deadlineText,/^資料（国際ビジネス戦略 第3回ケース 対面.pptx）：提出：10月19日/)});
-test('まだ開いていない期限後提出用の行（リンクなし）は、通常の提出先の表示に混ぜない',async t=>{const pageWithClosedLate=page.replace('<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>','<tr><td></td><td><a href="/content/901/report/tok/">第三回課題提出</a> 受講期間: 〜 10月20日(火) 00:00</td></tr><tr><td></td><td>第三回課題（期限後提出用、やむを得ない事情のみ） 受講期間: 10月20日(火) 00:00 〜</td></tr>');const task={...imported(),title:'東芝JSWへの本国支援'};const state={tasks:[task],materials:[],settings:{autoGenerate:false}};const m=await setup(t,state,pageWithClosedLate);await m.refreshPending();assert.equal(task.url,'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');assert.equal(task.dueAt,'2026-10-19T15:00:00.000Z');assert.doesNotMatch(task.deadlineText,/期限後/,'別枠の表示を混ぜない');assert.match(task.deadlineText,/受講期間: 〜 10月20日/)});
-test('同期のはじめに manabo の授業一覧を読み、ID のない授業に ID を入れ、新しい授業を末尾に足す。読めなければ ID のない授業は飛ばして理由を残す',async t=>{const top='<a id="button-logout">ログアウト</a><ul><li><a href="/class/105001/">ゼミナールⅣ（月曜／4限）</a></li><li><a href="/class/103578/">人材マネジメントⅡ</a></li><li><a href="/class/105002/">新しい授業</a></li></ul><div id="div-class-directories"></div>';const state={tasks:[],materials:[],settings:{autoGenerate:false},cubics:{fetchedAt:new Date().toISOString(),courses:{},events:[],weeks:[]}};const m=await setup(t,state);await m.ctx.route(/manabo\.cnc\.chukyo-u\.ac\.jp\/?$/,r=>r.fulfill({contentType:'text/html; charset=utf-8',body:top}));const visited=[];m.ctx.on('request',r=>visited.push(r.url()));await m.sync();assert.equal(state.courses.find(c=>c.name==='ゼミナールⅣ').id,'105001');assert.equal(state.courses.at(-1).name,'新しい授業');assert.equal(state.courses.length,13);assert(visited.some(u=>u.includes('/class/105001/')),'見つけた ID で授業ページを回る');assert(visited.some(u=>u.includes('/class/105002/')),'新しい授業も回る');
-const s2={tasks:[],materials:[],settings:{autoGenerate:false},cubics:{fetchedAt:new Date().toISOString(),courses:{},events:[],weeks:[]}};const m2=await setup(t,s2);await m2.sync();assert.equal(s2.courses,undefined,'一覧が読めなければ変えない');assert(s2.issues.some(x=>x.startsWith('ゼミナールⅣ：manabo の授業一覧に見つかりません')))});
+const page = `<a id="button-logout">ログアウト</a><div id="div-class-directories"><table><tr><td><a class="a-open-contents" directory_id="d3" href="#">第３回 資本コスト</a></td></tr></table></div><div id="div-class-contents"></div><script>document.querySelector('[directory_id=d3]').onclick=e=>{e.preventDefault();document.getElementById('div-class-contents').innerHTML='<h3>第３回 資本コスト</h3><table><tr><td></td><td><a href="/content/900/movie/tok/">第3回 予習動画</a></td></tr><tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr></table>'}</script>`;
+async function setup(t, state, body = page) {
+  const browser = await chromium.launch({headless: true});
+  t.after(() => browser.close());
+  const ctx = await browser.newContext();
+  await ctx.route('**/*', r => r.fulfill({contentType: 'text/html; charset=utf-8', body}));
+  const p = await ctx.newPage();
+  const m = new Manabo({
+    root: '/tmp',
+    work: '/tmp',
+    state,
+    save: async () => {},
+    credentials: async () => null,
+    ai: async () => {
+      throw Error('生成しない');
+    }
+  });
+  m.ctx = ctx;
+  m.page = async () => (m.p = p);
+  m.download = async () => {};
+  m.cubics = async () => {};
+  return m;
+}
+const imported = () => ({
+  id: 'local-cf3',
+  key: 'local-cf3',
+  course: 1,
+  round: 3,
+  title: '第3回課題',
+  url: 'https://manabo.cnc.chukyo-u.ac.jp/class/103901/',
+  type: 'レポート',
+  status: 'wait',
+  action: 'manaboの最新状態を同期してください',
+  imported: true
+});
+test('授業日が未設定・対象期間外の回でも、提出済みになった既知課題を反映する', async t => {
+  const task = imported();
+  const state = {tasks: [task], materials: [], settings: {autoGenerate: false}};
+  const m = await setup(t, state);
+  await m.refreshPending();
+  assert.equal(task.status, 'done');
+  assert.equal(task.action, '');
+  assert.equal(task.url, 'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');
+  assert.equal(task.imported, false);
+});
+test('取込み課題は同じ回の別教材（動画）ではなく該当課題と照合する', async t => {
+  const task = imported();
+  const today = new Date().toLocaleDateString('sv-SE', {timeZone: 'Asia/Tokyo'});
+  const state = {tasks: [task], materials: [], schedules: {103901: {3: today}}, settings: {autoGenerate: false}};
+  const m = await setup(t, state);
+  await m.sync();
+  const cf = state.tasks.filter(x => x.course === 1 && x.url.includes('/content/901/'));
+  assert.equal(cf.length, 1);
+  assert.equal(cf[0].status, 'done');
+  assert.equal(state.tasks.find(x => x.id === 'local-cf3').status, 'done');
+  assert(state.issues.includes('人材マネジメントⅡ：授業日未設定（第3回）'));
+  assert(!state.issues.some(s => s.startsWith('コーポレートファイナンスⅡ')));
+});
+test('同じ課題の重複（取込み分と同期分）は提出済みに統合する', async t => {
+  const done = {
+    id: 'synced',
+    key: 'k',
+    course: 1,
+    round: 3,
+    title: '第3回 課題',
+    url: 'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/',
+    type: 'レポート',
+    status: 'done',
+    submittedAt: '2026-10-03T10:00:00.000Z'
+  };
+  const state = {tasks: [imported(), done], materials: [], settings: {autoGenerate: false}};
+  const m = await setup(t, state);
+  await m.refreshPending();
+  assert.equal(state.tasks.filter(x => x.url.includes('/content/901/')).length, 1);
+  assert.equal(state.tasks[0].status, 'done');
+});
+test('課題以外の教材（動画）の項目は別の課題へ付け替えない', async t => {
+  const movie = {
+    id: 'mv',
+    course: 1,
+    round: 3,
+    title: '第3回 予習動画',
+    url: 'https://manabo.cnc.chukyo-u.ac.jp/content/900/movie/tok/',
+    type: 'レポート',
+    status: 'ready'
+  };
+  const state = {tasks: [movie], materials: [], settings: {autoGenerate: false}};
+  const m = await setup(t, state);
+  await m.refreshPending();
+  assert.equal(movie.url, 'https://manabo.cnc.chukyo-u.ac.jp/content/900/movie/tok/');
+  assert.equal(movie.status, 'ready');
+});
+test('授業ページの曜日から学年暦の授業日を設定し、設定済みの回は変えない', async t => {
+  const withWeekday = page.replace(
+    '<div id="div-class-directories">',
+    '<ol class="breadcrumb"><li>トップページ</li><li>コーポレートファイナンスⅡ（月曜／3限）</li></ol><div id="div-class-directories">'
+  );
+  const state = {tasks: [], materials: [], schedules: {103901: {1: '2026-09-21'}}, settings: {autoGenerate: false}};
+  const m = await setup(t, state, withWeekday);
+  await m.sync();
+  assert.equal(state.weekdays['103901'], '月');
+  assert.equal(state.schedules['103901']['1'], '2026-09-21');
+  assert.equal(state.schedules['103901']['3'], '2026-10-12');
+  assert.equal(state.schedules['103901']['9'], '2026-11-30');
+  assert(!state.issues.some(s => s.startsWith('コーポレートファイナンスⅡ')));
+});
+test('回答の生成は全授業を回り終えて提出状況を保存した後に行う', async t => {
+  const today = new Date().toLocaleDateString('sv-SE', {timeZone: 'Asia/Tokyo'});
+  const body = page.replace('<img class="img-checked">', '').replace('10月3日 23:59', '12月31日 23:59');
+  const state = {tasks: [], materials: [], schedules: {103901: {3: today}}, settings: {autoGenerate: true}};
+  const m = await setup(t, state, body);
+  const order = [];
+  let saves = 0;
+  m.save = async () => {
+    saves++;
+  };
+  m.process = async x => {
+    order.push({lastSync: !!state.lastSync, saves});
+    x.status = 'draft';
+  };
+  await m.sync();
+  assert(order.length >= 1);
+  assert(
+    order.every(o => o.lastSync && o.saves >= 11),
+    '生成より先に全授業の結果を保存する'
+  );
+  assert.equal(state.syncTiming.generated, order.length);
+  assert(state.syncTiming.total >= state.syncTiming.crawl);
+});
+test('CUBICS は 1 時間以内に読んでいれば省き、授業は並行して回る', async t => {
+  const state = {
+    tasks: [],
+    materials: [],
+    settings: {autoGenerate: false},
+    cubics: {fetchedAt: new Date().toISOString(), courses: {}, events: [], weeks: []}
+  };
+  const m = await setup(t, state);
+  let cubics = 0;
+  m.cubics = async () => {
+    cubics++;
+  };
+  let most = 0;
+  const tick = setInterval(() => {
+    most = Math.max(most, m.ctx.pages().length);
+  }, 5);
+  t.after(() => clearInterval(tick));
+  await m.sync();
+  assert.equal(cubics, 0, '1 時間以内なら CUBICS を読まない');
+  assert.equal(state.syncTiming.cubicsSkipped, true);
+  assert(state.syncTiming.classes >= 0);
+  assert(most >= 2, '授業ページを複数のタブで同時に開く');
+  assert.equal(m.ctx.pages().length, 1, '終わったら開いたタブを閉じる');
+  state.cubics.fetchedAt = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+  await m.sync();
+  assert.equal(cubics, 1, '1 時間を過ぎたら読む');
+});
+test('取込み課題を特定できないときは候補を残し、特定できたら締切も入れる', async t => {
+  const two = page.replace(
+    '<a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59',
+    '<a href="/content/901/report/tok/">第3回 レポートA</a> 期間: 10月3日 23:59</td></tr><tr><td></td><td><a href="/content/902/report/tok/">第3回 レポートB</a> 期間: 10月5日 23:59'
+  );
+  const task = {...imported(), title: '東芝JSWへの本国支援'};
+  const state = {tasks: [task], materials: [], settings: {autoGenerate: false}};
+  const m = await setup(t, state, two);
+  await m.refreshPending();
+  assert.equal(task.imported, true);
+  assert.deepEqual(
+    task.candidates.map(c => c.title),
+    ['第3回 レポートA', '第3回 レポートB']
+  );
+  assert.match(task.action, /候補（2件）/);
+  // 本人が候補を選んだ後（link 相当）は、次の確認で締切が入る
+  task.url = 'https://manabo.cnc.chukyo-u.ac.jp/content/902/report/tok/';
+  task.imported = false;
+  delete task.candidates;
+  delete task.dueAt;
+  await m.refreshPending();
+  assert.equal(task.dueAt, '2026-10-05T14:59:00.000Z');
+});
+test('取込み課題の回のディレクトリや課題が manabo にないときは、その理由を要対応に残す', async t => {
+  const noDir = {...imported(), id: 'r5', key: 'r5', round: 5, title: '第5回課題'};
+  const state = {tasks: [noDir], materials: [], settings: {autoGenerate: false}};
+  const m = await setup(t, state);
+  await m.refreshPending();
+  assert.match(noDir.action, /第5回のディレクトリが見つかりません/);
+  assert.match(noDir.action, /第３回 資本コスト/);
+  const onlyMovie = page.replace(
+    '<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>',
+    ''
+  );
+  const task = imported();
+  const s2 = {tasks: [task], materials: [], settings: {autoGenerate: false}};
+  const m2 = await setup(t, s2, onlyMovie);
+  await m2.refreshPending();
+  assert.match(task.action, /第3回に課題（レポート・クイズ・掲示板）がありません/);
+  assert.match(task.action, /予習動画/);
+});
+test('漢数字の回（第二回）と受講期間の終わりを読み、期限後提出用の別枠は課題にしない', async t => {
+  const kanji = page
+    .replace(/第３回 資本コスト/g, '第二回 戦略')
+    .replace('<h3>第３回 資本コスト</h3>', '<h3>第二回 戦略</h3>')
+    .replace(
+      '<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>',
+      '<tr><td></td><td><a href="/content/901/report/tok/">第二回課題提出</a> 受講期間: ～ 10月13日(火) 00:00</td></tr><tr><td></td><td><a href="/content/902/report/tok/">第二回課題（期限後提出用、やむを得ない事情のみ）</a> 受講期間: 10月13日(火) 00:00 ～</td></tr>'
+    );
+  const task = {...imported(), round: 2, title: '東芝JSWへの本国支援'};
+  const today = new Date().toLocaleDateString('sv-SE', {timeZone: 'Asia/Tokyo'});
+  const state = {tasks: [task], materials: [], schedules: {103901: {2: today}}, settings: {autoGenerate: false}};
+  const m = await setup(t, state, kanji);
+  await m.sync();
+  assert.equal(task.imported, false);
+  assert.equal(task.url, 'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');
+  assert.equal(task.dueAt, '2026-10-12T15:00:00.000Z', '受講期間の終わりが締切');
+  assert(!state.tasks.some(x => x.url.includes('/content/902/')), '期限後提出用の別枠は課題にしない');
+});
+test('締切が読めない回では前の締切を残し、読んだ表示を記録する。クイズの回探しでも締切を入れる', async t => {
+  const noDate = page.replace(' 期間: 10月3日 23:59', '').replace('<img class="img-checked">', '');
+  const task = {
+    ...imported(),
+    imported: false,
+    url: 'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/',
+    status: 'ready',
+    dueAt: '2026-10-03T14:59:00.000Z'
+  };
+  const state = {tasks: [task], materials: [], settings: {autoGenerate: false}};
+  const m = await setup(t, state, noDate);
+  await m.refreshPending();
+  assert.equal(task.dueAt, '2026-10-03T14:59:00.000Z', '読めなくても消さない');
+  assert.equal(task.deadlineText, '（期間の表示なし）');
+  const withRange = page
+    .replace(' 期間: 10月3日 23:59', ' 受講期間: ～ 10月20日(火) 00:00')
+    .replace('<img class="img-checked">', '');
+  const imp = {...imported(), title: '東芝JSWへの本国支援'};
+  const s2 = {tasks: [imp], materials: [], settings: {autoGenerate: false}};
+  const m2 = await setup(t, s2, withRange);
+  await m2.resolveQuiz(imp);
+  assert.equal(imp.url, 'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');
+  assert.equal(imp.dueAt, '2026-10-19T15:00:00.000Z', '回探しで対応づけたときも受講期間の終わりを締切にする');
+  assert.match(imp.deadlineText, /受講期間/);
+});
+test('受講期間がリンクの次の行にあっても締切に読む', async t => {
+  const sibling = page.replace(
+    '<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>',
+    '<tr><td></td><td><a href="/content/901/report/tok/">第三回課題提出</a></td></tr><tr><td></td><td class="period">受講期間: 〜 10月20日(火) 00:00</td></tr>'
+  );
+  const task = {...imported(), title: '東芝JSWへの本国支援'};
+  const state = {tasks: [task], materials: [], settings: {autoGenerate: false}};
+  const m = await setup(t, state, sibling);
+  await m.refreshPending();
+  assert.equal(task.url, 'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');
+  assert.equal(task.dueAt, '2026-10-19T15:00:00.000Z');
+  assert.match(task.deadlineText, /受講期間/);
+});
+test('一覧に期間がないときは課題ページの「期間」行から締切を読む', async t => {
+  const bare = page.replace(
+    '<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>',
+    '<tr><td></td><td><a href="/content/901/report/tok/">第三回課題提出</a></td></tr>'
+  );
+  const task = {...imported(), title: '東芝JSWへの本国支援'};
+  const state = {tasks: [task], materials: [], settings: {autoGenerate: false}};
+  const m = await setup(t, state, bare);
+  await m.ctx.route('**/content/901/**', r =>
+    r.fulfill({
+      contentType: 'text/html; charset=utf-8',
+      body: '<h2>第三回課題提出</h2><p>今日は 10月11日(日) 10:00</p><div>受講期間: 2026/10/06 00:00 ～ 2026/10/20 00:00</div><textarea></textarea>'
+    })
+  );
+  await m.refreshPending();
+  assert.equal(task.url, 'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');
+  assert.equal(task.dueAt, '2026-10-19T15:00:00.000Z', '課題ページの受講期間の終わり');
+  assert.match(task.deadlineText, /^課題ページ：受講期間/);
+  assert.equal(m.ctx.pages().length, 1, '開いたタブは閉じる');
+});
+test('期限後提出用の別枠に結びついていた課題は通常の提出先へ戻し、その締切を入れる', async t => {
+  const two = page.replace(
+    '<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>',
+    '<tr><td></td><td><a href="/content/901/report/tok/">第三回課題提出</a> 受講期間: ～ 10月20日(火) 00:00</td></tr><tr><td></td><td><a href="/content/902/report/tok/">第三回課題（期限後提出用、やむを得ない事情のみ）</a> 受講期間: 10月20日(火) 00:00 ～</td></tr>'
+  );
+  const bound = {
+    ...imported(),
+    title: '東芝JSWへの本国支援',
+    url: 'https://manabo.cnc.chukyo-u.ac.jp/content/902/report/tok/',
+    imported: false,
+    status: 'needs_user'
+  };
+  const state = {tasks: [bound], materials: [], settings: {autoGenerate: false}};
+  const m = await setup(t, state, two);
+  await m.refreshPending();
+  assert.equal(bound.url, 'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/', '別枠から通常の提出先へ');
+  assert.equal(bound.dueAt, '2026-10-19T15:00:00.000Z');
+  // 対象期間内の同期でも同じ（別枠は課題として作らない）
+  const today = new Date().toLocaleDateString('sv-SE', {timeZone: 'Asia/Tokyo'});
+  const again = {
+    ...imported(),
+    id: 'b2',
+    key: 'b2',
+    title: '東芝JSWへの本国支援',
+    url: 'https://manabo.cnc.chukyo-u.ac.jp/content/902/report/tok/',
+    imported: false,
+    status: 'needs_user'
+  };
+  const s2 = {tasks: [again], materials: [], schedules: {103901: {3: today}}, settings: {autoGenerate: false}};
+  const m2 = await setup(t, s2, two);
+  await m2.sync();
+  assert.equal(again.url, 'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');
+  assert.equal(again.dueAt, '2026-10-19T15:00:00.000Z');
+  assert(!s2.tasks.some(x => x.url.includes('/content/902/')), '別枠は課題にしない');
+  assert.equal(s2.tasks.filter(x => x.url.includes('/content/901/')).length, 1);
+});
+test('manabo に期間がなければ資料の提出期限を締切にする', async t => {
+  const bare = page.replace(
+    '<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>',
+    '<tr><td></td><td><a href="/content/901/report/tok/">第三回課題提出</a></td></tr>'
+  );
+  const task = {...imported(), title: '東芝JSWへの本国支援'};
+  const state = {tasks: [task], materials: [], settings: {autoGenerate: false}};
+  const m = await setup(t, state, bare);
+  m.materials = async () => [
+    {file: '国際ビジネス戦略 第3回ケース 対面.pptx', text: '東芝JSW\n提出：10月19日（月）24時まで、100字前後'}
+  ];
+  await m.refreshPending();
+  assert.equal(task.url, 'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');
+  assert.equal(task.dueAt, '2026-10-19T15:00:00.000Z', '24時は翌日 0 時');
+  assert.match(task.deadlineText, /^資料（国際ビジネス戦略 第3回ケース 対面.pptx）：提出：10月19日/);
+});
+test('まだ開いていない期限後提出用の行（リンクなし）は、通常の提出先の表示に混ぜない', async t => {
+  const pageWithClosedLate = page.replace(
+    '<tr><td><img class="img-checked"></td><td><a href="/content/901/report/tok/">第3回 課題</a> 期間: 10月3日 23:59</td></tr>',
+    '<tr><td></td><td><a href="/content/901/report/tok/">第三回課題提出</a> 受講期間: 〜 10月20日(火) 00:00</td></tr><tr><td></td><td>第三回課題（期限後提出用、やむを得ない事情のみ） 受講期間: 10月20日(火) 00:00 〜</td></tr>'
+  );
+  const task = {...imported(), title: '東芝JSWへの本国支援'};
+  const state = {tasks: [task], materials: [], settings: {autoGenerate: false}};
+  const m = await setup(t, state, pageWithClosedLate);
+  await m.refreshPending();
+  assert.equal(task.url, 'https://manabo.cnc.chukyo-u.ac.jp/content/901/report/tok/');
+  assert.equal(task.dueAt, '2026-10-19T15:00:00.000Z');
+  assert.doesNotMatch(task.deadlineText, /期限後/, '別枠の表示を混ぜない');
+  assert.match(task.deadlineText, /受講期間: 〜 10月20日/);
+});
+test('同期のはじめに manabo の授業一覧を読み、ID のない授業に ID を入れ、新しい授業を末尾に足す。読めなければ ID のない授業は飛ばして理由を残す', async t => {
+  const top =
+    '<a id="button-logout">ログアウト</a><ul><li><a href="/class/105001/">ゼミナールⅣ（月曜／4限）</a></li><li><a href="/class/103578/">人材マネジメントⅡ</a></li><li><a href="/class/105002/">新しい授業</a></li></ul><div id="div-class-directories"></div>';
+  const state = {
+    tasks: [],
+    materials: [],
+    settings: {autoGenerate: false},
+    cubics: {fetchedAt: new Date().toISOString(), courses: {}, events: [], weeks: []}
+  };
+  const m = await setup(t, state);
+  await m.ctx.route(/manabo\.cnc\.chukyo-u\.ac\.jp\/?$/, r =>
+    r.fulfill({contentType: 'text/html; charset=utf-8', body: top})
+  );
+  const visited = [];
+  m.ctx.on('request', r => visited.push(r.url()));
+  await m.sync();
+  assert.equal(state.courses.find(c => c.name === 'ゼミナールⅣ').id, '105001');
+  assert.equal(state.courses.at(-1).name, '新しい授業');
+  assert.equal(state.courses.length, 13);
+  assert(
+    visited.some(u => u.includes('/class/105001/')),
+    '見つけた ID で授業ページを回る'
+  );
+  assert(
+    visited.some(u => u.includes('/class/105002/')),
+    '新しい授業も回る'
+  );
+  const s2 = {
+    tasks: [],
+    materials: [],
+    settings: {autoGenerate: false},
+    cubics: {fetchedAt: new Date().toISOString(), courses: {}, events: [], weeks: []}
+  };
+  const m2 = await setup(t, s2);
+  await m2.sync();
+  assert.equal(s2.courses, undefined, '一覧が読めなければ変えない');
+  assert(s2.issues.some(x => x.startsWith('ゼミナールⅣ：manabo の授業一覧に見つかりません')));
+});
 // 一部の授業だけ manabo の応答が時間切れでも、同期全体は失敗にせず、その授業の問題として出す
-test('一部の授業のページが時間切れでも同期を続け、全部で失敗したときだけ同期の失敗にする',async t=>{const s={tasks:[],materials:[],settings:{autoGenerate:false},courses:[{name:'経営科学Ⅱ',id:'1'},{name:'管理会計Ⅱ',id:'2'}],cubics:{fetchedAt:new Date().toISOString(),courses:{},events:[],weeks:[]}};const m=await setup(t,s);m.discoverCourses=async()=>{};const timeout=Error('page.goto: Timeout 30000ms exceeded.\nCall log:\n  - navigating to "https://manabo.cnc.chukyo-u.ac.jp/class/2/"');m.crawlCourse=async i=>{if(i===1)throw timeout};await m.sync();assert(s.issues.includes('管理会計Ⅱ：同期できませんでした（manabo の応答がありませんでした（時間切れ））'),s.issues.join('\n'));assert(s.lastSync);m.crawlCourse=async()=>{throw timeout};await assert.rejects(m.sync(),/Timeout/)});
+test('一部の授業のページが時間切れでも同期を続け、全部で失敗したときだけ同期の失敗にする', async t => {
+  const s = {
+    tasks: [],
+    materials: [],
+    settings: {autoGenerate: false},
+    courses: [
+      {name: '経営科学Ⅱ', id: '1'},
+      {name: '管理会計Ⅱ', id: '2'}
+    ],
+    cubics: {fetchedAt: new Date().toISOString(), courses: {}, events: [], weeks: []}
+  };
+  const m = await setup(t, s);
+  m.discoverCourses = async () => {};
+  const timeout = Error(
+    'page.goto: Timeout 30000ms exceeded.\nCall log:\n  - navigating to "https://manabo.cnc.chukyo-u.ac.jp/class/2/"'
+  );
+  m.crawlCourse = async i => {
+    if (i === 1) throw timeout;
+  };
+  await m.sync();
+  assert(
+    s.issues.includes('管理会計Ⅱ：同期できませんでした（manabo の応答がありませんでした（時間切れ））'),
+    s.issues.join('\n')
+  );
+  assert(s.lastSync);
+  m.crawlCourse = async () => {
+    throw timeout;
+  };
+  await assert.rejects(m.sync(), /Timeout/);
+});
 // 授業ページで出るダイアログ：お知らせは閉じて読み続け、出席コードの入力は閉じずにそのタブを本人に渡し、同期は新しいタブで続ける
-test('お知らせのダイアログは閉じ、出席コードの入力は開いたまま本人に渡して、残りの授業の同期を続ける',async t=>{const s={tasks:[],materials:[],settings:{autoGenerate:false},courses:[{name:'経営科学Ⅱ',id:'1'},{name:'管理会計Ⅱ',id:'2'},{name:'意思決定論',id:'3'}],cubics:{fetchedAt:new Date().toISOString(),courses:{},events:[],weeks:[]}};const m=await setup(t,s);m.discoverCourses=async()=>{};const {closeDialog}=await import('../local/manabo.js');(await m.page()).on('dialog',closeDialog);await m.ctx.route(/\/class\/1\/$/,r=>r.fulfill({contentType:'text/html; charset=utf-8',body:'<script>alert("お知らせ")</script><div id="div-class-directories">授業の回</div>'}));await m.ctx.route(/\/class\/2\/$/,r=>r.fulfill({contentType:'text/html; charset=utf-8',body:'<script>document.title=String(prompt("出席コードを入力してください"))</script><div id="div-class-directories"></div>'}));const visited=[];m.ctx.on('request',r=>visited.push(r.url()));await m.sync();assert(s.issues.some(x=>x.startsWith('管理会計Ⅱ：出席コードの入力画面が出たため')),s.issues.join('\n'));assert(!s.issues.some(x=>x.startsWith('経営科学Ⅱ')),'お知らせは閉じて読み続ける：'+s.issues.join(' / '));assert(visited.some(u=>u.endsWith('/class/3/')),'残りの授業は新しいタブで読む');const tab=m.promptTabs.get('管理会計Ⅱ');assert(tab&&!tab.isClosed(),'出席コードの入力のタブは閉じない');visited.length=0;await m.sync();assert(s.issues.includes('管理会計Ⅱ：出席コードの入力画面が開いています（manabo ブラウザで入力してください）'));assert(!visited.some(u=>u.endsWith('/class/2/')),'入力待ちの授業は開き直さない')});
+test('お知らせのダイアログは閉じ、出席コードの入力は開いたまま本人に渡して、残りの授業の同期を続ける', async t => {
+  const s = {
+    tasks: [],
+    materials: [],
+    settings: {autoGenerate: false},
+    courses: [
+      {name: '経営科学Ⅱ', id: '1'},
+      {name: '管理会計Ⅱ', id: '2'},
+      {name: '意思決定論', id: '3'}
+    ],
+    cubics: {fetchedAt: new Date().toISOString(), courses: {}, events: [], weeks: []}
+  };
+  const m = await setup(t, s);
+  m.discoverCourses = async () => {};
+  const {closeDialog} = await import('../local/manabo.js');
+  (await m.page()).on('dialog', closeDialog);
+  await m.ctx.route(/\/class\/1\/$/, r =>
+    r.fulfill({
+      contentType: 'text/html; charset=utf-8',
+      body: '<script>alert("お知らせ")</script><div id="div-class-directories">授業の回</div>'
+    })
+  );
+  await m.ctx.route(/\/class\/2\/$/, r =>
+    r.fulfill({
+      contentType: 'text/html; charset=utf-8',
+      body: '<script>document.title=String(prompt("出席コードを入力してください"))</script><div id="div-class-directories"></div>'
+    })
+  );
+  const visited = [];
+  m.ctx.on('request', r => visited.push(r.url()));
+  await m.sync();
+  assert(
+    s.issues.some(x => x.startsWith('管理会計Ⅱ：出席コードの入力画面が出たため')),
+    s.issues.join('\n')
+  );
+  assert(!s.issues.some(x => x.startsWith('経営科学Ⅱ')), 'お知らせは閉じて読み続ける：' + s.issues.join(' / '));
+  assert(
+    visited.some(u => u.endsWith('/class/3/')),
+    '残りの授業は新しいタブで読む'
+  );
+  const tab = m.promptTabs.get('管理会計Ⅱ');
+  assert(tab && !tab.isClosed(), '出席コードの入力のタブは閉じない');
+  visited.length = 0;
+  await m.sync();
+  assert(s.issues.includes('管理会計Ⅱ：出席コードの入力画面が開いています（manabo ブラウザで入力してください）'));
+  assert(!visited.some(u => u.endsWith('/class/2/')), '入力待ちの授業は開き直さない');
+});
 // 同期の進み具合を「授業 n/N（授業名）」で出し、AI が使えない端末では回答を作らない
-test('同期中は読んでいる授業と件数を出し、AI が使えない端末では回答の作成を省く',async t=>{const s={tasks:[],materials:[],settings:{autoGenerate:true},courses:[{name:'経営科学Ⅱ',id:'1'},{name:'管理会計Ⅱ',id:'2'},{name:'資格センター募集講座紹介',id:'3',removed:true}],cubics:{fetchedAt:new Date().toISOString(),courses:{},events:[],weeks:[]}};const m=await setup(t,s);m.discoverCourses=async()=>{};const seen=[];let generated=0;m.processTask=async()=>{generated++};const task={id:'x',course:0,round:3,status:'ready',title:'第3回課題',url:'https://manabo.cnc.chukyo-u.ac.jp/content/9/report/tok/'};m.crawlCourse=async(i,p,ctx)=>{seen.push({...s.progress});if(i===0)ctx.queue.push(task)};m.aiAvailable=false;await m.sync();assert.deepEqual(seen.map(x=>[x.phase,x.total]),[['授業',2],['授業',2],['授業',2]].slice(0,seen.length));assert(seen.some(x=>/経営科学Ⅱ/.test(x.current)));assert.equal(generated,0,'AI がなければ作らない');m.aiAvailable=true;await m.sync();assert.equal(generated,1)});
-test('クイズは「回答を自動で作る」の設定にかかわらず自動で回答し、レポートは設定に従う',async t=>{const s={tasks:[],materials:[],settings:{autoGenerate:false},courses:[{name:'経営科学Ⅱ',id:'1'}],cubics:{fetchedAt:new Date().toISOString(),courses:{},events:[],weeks:[]}};const m=await setup(t,s);m.discoverCourses=async()=>{};const done=[];m.processTask=async x=>{done.push(x.type)};const quiz={id:'q',course:0,round:3,status:'ready',type:'クイズ',title:'小テスト',url:'https://manabo.cnc.chukyo-u.ac.jp/content/1/quiz/tok/'},report={id:'r',course:0,round:3,status:'ready',type:'レポート',title:'レポート',url:'https://manabo.cnc.chukyo-u.ac.jp/content/2/report/tok/'};m.crawlCourse=async(i,p,ctx)=>{ctx.queue.push(quiz,report)};await m.sync();assert.deepEqual(done,['クイズ']);s.settings.autoGenerate=true;done.length=0;await m.sync();assert.deepEqual(done,['クイズ','レポート'])});
-test('授業ごとの同期は、その授業だけを読み、ほかの授業の問題の表示と前回の同期の記録は残す',async t=>{const before='2026-10-15T05:08:00.000Z',timing={total:50000,at:before,courses:{}};const state={tasks:[],materials:[],settings:{autoGenerate:false},lastSync:before,syncTiming:timing,cubics:{fetchedAt:new Date(0).toISOString(),courses:{},events:[],weeks:[]},issues:['経営科学Ⅱ：授業日未設定（第1回）','管理会計Ⅱ：同期できませんでした（時間切れ）','管理会計Ⅱ 第4回：授業日未設定（第4回）','CUBICS：時間割を読み取れません（x）']};const m=await setup(t,state);const names=m.courses().map(c=>c.name),i=names.indexOf('管理会計Ⅱ');assert(i>=0);let cubics=0,discover=0;const read=[];m.cubics=async()=>{cubics++};m.discoverCourses=async()=>{discover++};m.crawlCourse=async(k,p,ctx)=>{read.push(k);ctx.infoIssues.push(`${names[k]}：授業情報を読み取れません（x）`)};
-await m.sync({course:i});assert.deepEqual(read,[i],'その授業だけ読む');assert.equal(cubics,0,'CUBICS は読まない');assert.equal(discover,0,'授業の一覧は読まない');assert.equal(state.lastSync,before,'前回の同期の記録は変えない');assert.equal(state.syncTiming,timing,'かかった時間も変えない');assert.deepEqual(state.issues,['経営科学Ⅱ：授業日未設定（第1回）','CUBICS：時間割を読み取れません（x）','管理会計Ⅱ：授業情報を読み取れません（x）'],'その授業の問題だけ入れ替える');assert(state.courseSynced['管理会計Ⅱ']>before);
-await assert.rejects(m.sync({course:999}),/その授業は見つかりません/)});
+test('同期中は読んでいる授業と件数を出し、AI が使えない端末では回答の作成を省く', async t => {
+  const s = {
+    tasks: [],
+    materials: [],
+    settings: {autoGenerate: true},
+    courses: [
+      {name: '経営科学Ⅱ', id: '1'},
+      {name: '管理会計Ⅱ', id: '2'},
+      {name: '資格センター募集講座紹介', id: '3', removed: true}
+    ],
+    cubics: {fetchedAt: new Date().toISOString(), courses: {}, events: [], weeks: []}
+  };
+  const m = await setup(t, s);
+  m.discoverCourses = async () => {};
+  const seen = [];
+  let generated = 0;
+  m.processTask = async () => {
+    generated++;
+  };
+  const task = {
+    id: 'x',
+    course: 0,
+    round: 3,
+    status: 'ready',
+    title: '第3回課題',
+    url: 'https://manabo.cnc.chukyo-u.ac.jp/content/9/report/tok/'
+  };
+  m.crawlCourse = async (i, p, ctx) => {
+    seen.push({...s.progress});
+    if (i === 0) ctx.queue.push(task);
+  };
+  m.aiAvailable = false;
+  await m.sync();
+  assert.deepEqual(
+    seen.map(x => [x.phase, x.total]),
+    [
+      ['授業', 2],
+      ['授業', 2],
+      ['授業', 2]
+    ].slice(0, seen.length)
+  );
+  assert(seen.some(x => /経営科学Ⅱ/.test(x.current)));
+  assert.equal(generated, 0, 'AI がなければ作らない');
+  m.aiAvailable = true;
+  await m.sync();
+  assert.equal(generated, 1);
+});
+test('クイズは「回答を自動で作る」の設定にかかわらず自動で回答し、レポートは設定に従う', async t => {
+  const s = {
+    tasks: [],
+    materials: [],
+    settings: {autoGenerate: false},
+    courses: [{name: '経営科学Ⅱ', id: '1'}],
+    cubics: {fetchedAt: new Date().toISOString(), courses: {}, events: [], weeks: []}
+  };
+  const m = await setup(t, s);
+  m.discoverCourses = async () => {};
+  const done = [];
+  m.processTask = async x => {
+    done.push(x.type);
+  };
+  const quiz = {
+      id: 'q',
+      course: 0,
+      round: 3,
+      status: 'ready',
+      type: 'クイズ',
+      title: '小テスト',
+      url: 'https://manabo.cnc.chukyo-u.ac.jp/content/1/quiz/tok/'
+    },
+    report = {
+      id: 'r',
+      course: 0,
+      round: 3,
+      status: 'ready',
+      type: 'レポート',
+      title: 'レポート',
+      url: 'https://manabo.cnc.chukyo-u.ac.jp/content/2/report/tok/'
+    };
+  m.crawlCourse = async (i, p, ctx) => {
+    ctx.queue.push(quiz, report);
+  };
+  await m.sync();
+  assert.deepEqual(done, ['クイズ']);
+  s.settings.autoGenerate = true;
+  done.length = 0;
+  await m.sync();
+  assert.deepEqual(done, ['クイズ', 'レポート']);
+});
+test('授業ごとの同期は、その授業だけを読み、ほかの授業の問題の表示と前回の同期の記録は残す', async t => {
+  const before = '2026-10-15T05:08:00.000Z',
+    timing = {total: 50000, at: before, courses: {}};
+  const state = {
+    tasks: [],
+    materials: [],
+    settings: {autoGenerate: false},
+    lastSync: before,
+    syncTiming: timing,
+    cubics: {fetchedAt: new Date(0).toISOString(), courses: {}, events: [], weeks: []},
+    issues: [
+      '経営科学Ⅱ：授業日未設定（第1回）',
+      '管理会計Ⅱ：同期できませんでした（時間切れ）',
+      '管理会計Ⅱ 第4回：授業日未設定（第4回）',
+      'CUBICS：時間割を読み取れません（x）'
+    ]
+  };
+  const m = await setup(t, state);
+  const names = m.courses().map(c => c.name),
+    i = names.indexOf('管理会計Ⅱ');
+  assert(i >= 0);
+  let cubics = 0,
+    discover = 0;
+  const read = [];
+  m.cubics = async () => {
+    cubics++;
+  };
+  m.discoverCourses = async () => {
+    discover++;
+  };
+  m.crawlCourse = async (k, p, ctx) => {
+    read.push(k);
+    ctx.infoIssues.push(`${names[k]}：授業情報を読み取れません（x）`);
+  };
+  await m.sync({course: i});
+  assert.deepEqual(read, [i], 'その授業だけ読む');
+  assert.equal(cubics, 0, 'CUBICS は読まない');
+  assert.equal(discover, 0, '授業の一覧は読まない');
+  assert.equal(state.lastSync, before, '前回の同期の記録は変えない');
+  assert.equal(state.syncTiming, timing, 'かかった時間も変えない');
+  assert.deepEqual(
+    state.issues,
+    [
+      '経営科学Ⅱ：授業日未設定（第1回）',
+      'CUBICS：時間割を読み取れません（x）',
+      '管理会計Ⅱ：授業情報を読み取れません（x）'
+    ],
+    'その授業の問題だけ入れ替える'
+  );
+  assert(state.courseSynced['管理会計Ⅱ'] > before);
+  await assert.rejects(m.sync({course: 999}), /その授業は見つかりません/);
+});

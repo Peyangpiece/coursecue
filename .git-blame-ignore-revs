@@ -1,0 +1,2 @@
+# git blame でこの整形だけのコミットを飛ばす：git config blame.ignoreRevsFile .git-blame-ignore-revs
+90508d4d3bb7f66cb80b56b7ddfd410c0125a7e9

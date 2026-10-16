@@ -1,17 +1,99 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {usedInstaller,mountedImages,cleanupInstallers} from '../desktop/installer-cleanup.js';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {usedInstaller, mountedImages, cleanupInstallers} from '../desktop/installer-cleanup.js';
+import {rx} from './source.js';
 // Mac：入れ終わった saboro の .dmg（いまの版以下）だけを取り出してゴミ箱に入れる。新しい版・ほかのファイル・いま動いているイメージには触れない
-const info=['framework       : 671.100.2','================================================','image-path      : /Users/me/Downloads/saboro-1.0.22-mac-arm64.dmg','image-type      : read-only disk image','process ID      : 1234','/dev/disk4\tGUID_partition_scheme\t','/dev/disk4s1\tApple_HFS\t/Volumes/saboro 1.0.22','================================================','image-path      : /Users/me/Downloads/other.dmg','/dev/disk5\tGUID_partition_scheme\t','/dev/disk5s1\tApple_HFS\t/Volumes/other',''].join('\n');
-test('いまの版以下の saboro の .dmg だけを使い終わったものとみなす',()=>{
- assert.equal(usedInstaller('saboro-1.0.22-mac-arm64.dmg','1.0.23'),true);assert.equal(usedInstaller('saboro-1.0.23-mac-x64.dmg','1.0.23'),true);assert.equal(usedInstaller('saboro-1.0.9-mac-x64 (1).dmg','1.0.23'),true);
- assert.equal(usedInstaller('saboro-1.0.24-mac-arm64.dmg','1.0.23'),false);assert.equal(usedInstaller('saboro-1.0.22-win-x64.exe','1.0.23'),false);assert.equal(usedInstaller('saboro-1.0.22-mac-arm64.dmg.download','1.0.23'),false);assert.equal(usedInstaller('my-saboro-1.0.22-mac-arm64.dmg','1.0.23'),false)});
-test('hdiutil info からマウント中のイメージ・ディスク・マウント先を読む',()=>{assert.deepEqual(mountedImages(info),[{image:'/Users/me/Downloads/saboro-1.0.22-mac-arm64.dmg',disk:'/dev/disk4',mounts:['/Volumes/saboro 1.0.22']},{image:'/Users/me/Downloads/other.dmg',disk:'/dev/disk5',mounts:['/Volumes/other']}])});
-function fake({appPath='/Applications/saboro.app/Contents/Resources/app.asar',detachFails=false}={}){const calls=[];return {calls,opts:{current:'1.0.23',downloads:'/Users/me/Downloads',appPath,
- run:async(cmd,args)=>{calls.push([cmd,...args].join(' '));if(args[0]==='info')return info;if(detachFails)throw Error('resource busy');return ''},
- list:async()=>['saboro-1.0.22-mac-arm64.dmg','saboro-1.0.21-mac-x64.dmg','saboro-1.0.24-mac-arm64.dmg','other.dmg','report.pdf'],
- trash:async f=>{calls.push('trash '+f)}}}}
-test('使い終わったイメージを取り出し、ダウンロードの古い .dmg をゴミ箱に入れる（新しい版とほかのファイルは残す）',async()=>{const {calls,opts}=fake();await cleanupInstallers(opts);assert.deepEqual(calls,['/usr/bin/hdiutil info','/usr/bin/hdiutil detach /dev/disk4 -quiet','trash /Users/me/Downloads/saboro-1.0.22-mac-arm64.dmg','trash /Users/me/Downloads/saboro-1.0.21-mac-x64.dmg'])});
-test('.dmg から直接開いているときや取り出せないときは、そのイメージに触れない',async()=>{
- for(const o of [{appPath:'/Volumes/saboro 1.0.22/saboro.app/Contents/Resources/app.asar'},{detachFails:true}]){const {calls,opts}=fake(o);await cleanupInstallers(opts);assert.ok(!calls.includes('trash /Users/me/Downloads/saboro-1.0.22-mac-arm64.dmg'));assert.ok(calls.includes('trash /Users/me/Downloads/saboro-1.0.21-mac-x64.dmg'))}
- const {calls,opts}=fake({appPath:'/Volumes/saboro 1.0.22/saboro.app/Contents/Resources/app.asar'});await cleanupInstallers(opts);assert.ok(!calls.some(c=>c.includes('detach')))});
-test('ダウンロードのフォルダを読めない（許可されていない）ときは何もしない',async()=>{const {calls,opts}=fake();opts.list=async()=>{throw Object.assign(Error('not permitted'),{code:'EPERM'})};await cleanupInstallers(opts);assert.ok(!calls.some(c=>c.startsWith('trash')))});
-test('Mac の起動時に片付けを呼び、Windows では呼ばない。配布物に入っている',()=>{const src=readFileSync('desktop/main.js','utf8');assert.match(src,/if\(process\.platform==='darwin'\)setTimeout\(cleanupMacInstallers,5000\)/);assert.match(src,/trash:f=>shell\.trashItem\(f\)/);const pkg=JSON.parse(readFileSync('package.json','utf8'));assert.ok(pkg.build.files.includes('desktop/**'));assert.ok(pkg.build.mac.extendInfo.NSDownloadsFolderUsageDescription)});
+const info = [
+  'framework       : 671.100.2',
+  '================================================',
+  'image-path      : /Users/me/Downloads/saboro-1.0.22-mac-arm64.dmg',
+  'image-type      : read-only disk image',
+  'process ID      : 1234',
+  '/dev/disk4\tGUID_partition_scheme\t',
+  '/dev/disk4s1\tApple_HFS\t/Volumes/saboro 1.0.22',
+  '================================================',
+  'image-path      : /Users/me/Downloads/other.dmg',
+  '/dev/disk5\tGUID_partition_scheme\t',
+  '/dev/disk5s1\tApple_HFS\t/Volumes/other',
+  ''
+].join('\n');
+test('いまの版以下の saboro の .dmg だけを使い終わったものとみなす', () => {
+  assert.equal(usedInstaller('saboro-1.0.22-mac-arm64.dmg', '1.0.23'), true);
+  assert.equal(usedInstaller('saboro-1.0.23-mac-x64.dmg', '1.0.23'), true);
+  assert.equal(usedInstaller('saboro-1.0.9-mac-x64 (1).dmg', '1.0.23'), true);
+  assert.equal(usedInstaller('saboro-1.0.24-mac-arm64.dmg', '1.0.23'), false);
+  assert.equal(usedInstaller('saboro-1.0.22-win-x64.exe', '1.0.23'), false);
+  assert.equal(usedInstaller('saboro-1.0.22-mac-arm64.dmg.download', '1.0.23'), false);
+  assert.equal(usedInstaller('my-saboro-1.0.22-mac-arm64.dmg', '1.0.23'), false);
+});
+test('hdiutil info からマウント中のイメージ・ディスク・マウント先を読む', () => {
+  assert.deepEqual(mountedImages(info), [
+    {image: '/Users/me/Downloads/saboro-1.0.22-mac-arm64.dmg', disk: '/dev/disk4', mounts: ['/Volumes/saboro 1.0.22']},
+    {image: '/Users/me/Downloads/other.dmg', disk: '/dev/disk5', mounts: ['/Volumes/other']}
+  ]);
+});
+function fake({appPath = '/Applications/saboro.app/Contents/Resources/app.asar', detachFails = false} = {}) {
+  const calls = [];
+  return {
+    calls,
+    opts: {
+      current: '1.0.23',
+      downloads: '/Users/me/Downloads',
+      appPath,
+      run: async (cmd, args) => {
+        calls.push([cmd, ...args].join(' '));
+        if (args[0] === 'info') return info;
+        if (detachFails) throw Error('resource busy');
+        return '';
+      },
+      list: async () => [
+        'saboro-1.0.22-mac-arm64.dmg',
+        'saboro-1.0.21-mac-x64.dmg',
+        'saboro-1.0.24-mac-arm64.dmg',
+        'other.dmg',
+        'report.pdf'
+      ],
+      trash: async f => {
+        calls.push('trash ' + f);
+      }
+    }
+  };
+}
+test('使い終わったイメージを取り出し、ダウンロードの古い .dmg をゴミ箱に入れる（新しい版とほかのファイルは残す）', async () => {
+  const {calls, opts} = fake();
+  await cleanupInstallers(opts);
+  assert.deepEqual(calls, [
+    '/usr/bin/hdiutil info',
+    '/usr/bin/hdiutil detach /dev/disk4 -quiet',
+    'trash /Users/me/Downloads/saboro-1.0.22-mac-arm64.dmg',
+    'trash /Users/me/Downloads/saboro-1.0.21-mac-x64.dmg'
+  ]);
+});
+test('.dmg から直接開いているときや取り出せないときは、そのイメージに触れない', async () => {
+  for (const o of [{appPath: '/Volumes/saboro 1.0.22/saboro.app/Contents/Resources/app.asar'}, {detachFails: true}]) {
+    const {calls, opts} = fake(o);
+    await cleanupInstallers(opts);
+    assert.ok(!calls.includes('trash /Users/me/Downloads/saboro-1.0.22-mac-arm64.dmg'));
+    assert.ok(calls.includes('trash /Users/me/Downloads/saboro-1.0.21-mac-x64.dmg'));
+  }
+  const {calls, opts} = fake({appPath: '/Volumes/saboro 1.0.22/saboro.app/Contents/Resources/app.asar'});
+  await cleanupInstallers(opts);
+  assert.ok(!calls.some(c => c.includes('detach')));
+});
+test('ダウンロードのフォルダを読めない（許可されていない）ときは何もしない', async () => {
+  const {calls, opts} = fake();
+  opts.list = async () => {
+    throw Object.assign(Error('not permitted'), {code: 'EPERM'});
+  };
+  await cleanupInstallers(opts);
+  assert.ok(!calls.some(c => c.startsWith('trash')));
+});
+test('Mac の起動時に片付けを呼び、Windows では呼ばない。配布物に入っている', () => {
+  const src = readFileSync('desktop/main.js', 'utf8');
+  assert.match(src, rx("if(process.platform==='darwin')setTimeout(cleanupMacInstallers,5000)"));
+  assert.match(src, rx('trash:f=>shell.trashItem(f)'));
+  const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+  assert.ok(pkg.build.files.includes('desktop/**'));
+  assert.ok(pkg.build.mac.extendInfo.NSDownloadsFolderUsageDescription);
+});

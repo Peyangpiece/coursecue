@@ -1,19 +1,151 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {submissionGate,lectureDate,inWindow,validLms,deadline} from '../local/core.js';import worker from '../server/worker.js';
-const answer={grounded:true,needsUser:[],answers:[{name:'q1',value:'b',values:[],evidence:'資料に根拠'}]};const q=[{name:'q1',type:'radio',text:'設問',options:[{value:'a'},{value:'b'}]}];
-test('出席コードがあれば提出を止める',()=>assert.equal(submissionGate({},answer,[...q,{name:'attendance',text:'出席コードを選択',type:'select'}]),'attendance'));
-test('重複提出と結果不明の再送を止める',()=>{assert.equal(submissionGate({status:'done'},answer,q),'already_submitted');assert.equal(submissionGate({submissionIntent:{}},answer,q),'result_unknown')});
-test('根拠・本人情報・選択肢の不足を止める',()=>{assert.equal(submissionGate({}, {...answer,grounded:false},q),'needs_user');assert.equal(submissionGate({}, {...answer,needsUser:['経験']},q),'needs_user');assert.equal(submissionGate({}, {...answer,answers:[]},q),'missing_answer');assert.equal(submissionGate({}, {...answer,answers:[{...answer.answers[0],value:'z'}]},q),'invalid_answer')});
-test('根拠があり全問回答済みの場合のみ提出可',()=>assert.equal(submissionGate({},answer,q),'ok'));
-test('日程不明は推測せず期間外を除外',()=>{assert.equal(lectureDate('第3回',{},3),null);assert.equal(lectureDate('第3回 10/13',{},3),'2026-10-13');assert(inWindow('2026-10-13',new Date('2026-10-10')));assert(!inWindow('2026-10-27',new Date('2026-10-10')))});
-test('正規のmanabo以外のURLは禁止',()=>assert.throws(()=>validLms('https://example.com/login')));
-test('24時の締切を翌日に変換',()=>assert.equal(deadline('10月12日（月）24:00'),'2026-10-12T15:00:00.000Z'));
-test('未認証ユーザーは実データへアクセス不可',async()=>{const r=await worker.fetch(new Request('https://coursecue.hrk-6888.workers.dev/api/state'),{OWNER_TOKEN:'owner',DEVICE_TOKEN:'device'});assert.equal(r.status,401)});
-test('他サイトからの要求を拒否',async()=>{const r=await worker.fetch(new Request('https://coursecue.hrk-6888.workers.dev/api/state',{headers:{Origin:'https://evil.example',Authorization:'Bearer owner'}}),{OWNER_TOKEN:'owner',DEVICE_TOKEN:'device'});assert.equal(r.status,403)});
-test('漢数字・全角の回番号を読み、受講期間の終わりを締切にする',async()=>{const {roundOf,roundPattern,normalizeRounds}=await import('../local/core.js');assert.equal(roundOf('第二回教材'),2);assert.equal(roundOf('第十二回'),12);assert.equal(roundOf('第３回'),3);assert.equal(roundOf('二回目'),2);assert.equal(normalizeRounds('第二回課題提出'),'第2回課題提出');assert(new RegExp(roundPattern(2)).test('第二回課題提出'));assert(new RegExp(roundPattern(2)).test('第２回'));assert(!new RegExp(roundPattern(2)).test('第3回'));
-assert.equal(deadline('第二回課題提出\n受講期間: ～ 10月13日(火) 00:00'),'2026-10-12T15:00:00.000Z','範囲の終わり');assert.equal(deadline('第二回課題（期限後提出用）\n受講期間: 10月13日(火) 00:00 ～'),null,'開始だけなら締切にしない');assert.equal(deadline('受講期間: 10月1日(水) 00:00 ～ 10月13日(火) 00:00'),'2026-10-12T15:00:00.000Z');assert.equal(deadline('期間: 10月3日 23:59'),'2026-10-03T14:59:00.000Z','範囲でなければ従来どおり')});
-test('資料・注意点の「提出期限」「まで」の行から締切を読み、24時は翌日 0 時にする',async()=>{const {deadline,deadlineFromText,deadlineFromMaterials}=await import('../local/core.js');assert.equal(deadline('提出期限は10月19日24時である'),'2026-10-19T15:00:00.000Z');assert.equal(deadline('10月19日（月）24時まで'),'2026-10-19T15:00:00.000Z');assert.equal(deadline('10/19 23時59分まで'),'2026-10-19T14:59:00.000Z');assert.equal(deadline('10月6日の授業 第2時限'),null,'時限は時刻ではない');assert.deepEqual(deadlineFromText('第3回ケース\n2026年10月6日 13:00 開始\n提出：10月19日（月）24時まで、100字前後'),{dueAt:'2026-10-19T15:00:00.000Z',line:'提出：10月19日（月）24時まで、100字前後'});assert.equal(deadlineFromText('第3回ケース\n2026年10月6日 13:00 開始'),null,'期限の行がなければ読まない');assert.deepEqual(deadlineFromMaterials([{file:'a.pptx',text:'なし'},{file:'b.pptx',text:'提出期限は10月19日24時'}]),{dueAt:'2026-10-19T15:00:00.000Z',line:'提出期限は10月19日24時',file:'b.pptx'})});
-test('授業 ID が未設定の授業は manabo の授業一覧のリンクから名前で探す',async()=>{const {courseIdOf,findClassLinks,courseList}=await import('../local/core.js');const base={courses:[{name:'人材マネジメントⅡ',id:'103578'},{name:'ゼミナールⅣ',id:''}]},i=1;assert.deepEqual(courseList({courses:[]}),[],'新しい利用者は空から始まる（固定の一覧は courses のない古い状態だけ）');assert.equal(courseIdOf(i,base),'');assert.equal(courseIdOf(i,{...base,courseIds:{'ゼミナールⅣ':'105001'}}),'105001');assert.equal(courseIdOf(0,{...base,courseIds:{'人材マネジメントⅡ':'x'}}),'103578','設定済みの ID を優先');const links=[{href:'https://manabo.cnc.chukyo-u.ac.jp/class/105001/',text:' ゼミナール IV（月曜／4限） '},{href:'https://manabo.cnc.chukyo-u.ac.jp/class/105002/',text:'ゼミナールⅢ'},{href:'https://manabo.cnc.chukyo-u.ac.jp/class/103578/',text:'人材マネジメントⅡ'}];assert.deepEqual(findClassLinks(links,['ゼミナールⅣ','ない授業']),{'ゼミナールⅣ':'105001'});assert.deepEqual(findClassLinks([...links,{href:'https://manabo.cnc.chukyo-u.ac.jp/class/105009/',text:'ゼミナールⅣ（別）'}],['ゼミナールⅣ']),{},'候補が複数なら決めない')});
-test('manabo の授業一覧から授業を更新する：ID が同じものは既存、名前が同じで ID のないものには ID を入れ、新しい授業は末尾に足す',async()=>{const {mergeCourses,courseNameOf,courseList,courseNames,courseIdOf}=await import('../local/core.js');assert.equal(courseNameOf(' ゼミナールⅣ（月曜／4限） '),'ゼミナールⅣ');assert.equal(courseNameOf('経済原論Ⅱ'),'経済原論Ⅱ');const base=[{name:'人材マネジメントⅡ',id:'103578'},{name:'ゼミナールⅣ',id:''}];const links=[{href:'https://manabo.cnc.chukyo-u.ac.jp/class/103578/',text:'人材マネジメントⅡ（月曜／3限）'},{href:'https://manabo.cnc.chukyo-u.ac.jp/class/105001/',text:'ゼミナール IV（月曜／4限）'},{href:'https://manabo.cnc.chukyo-u.ac.jp/class/105002/',text:'新しい授業'},{href:'https://manabo.cnc.chukyo-u.ac.jp/class/105002/',text:'新しい授業'},{href:'https://manabo.cnc.chukyo-u.ac.jp/notice/1/',text:'お知らせ'}];assert.deepEqual(mergeCourses(base,links),[{name:'人材マネジメントⅡ',id:'103578'},{name:'ゼミナールⅣ',id:'105001'},{name:'新しい授業',id:'105002'}]);assert.deepEqual(mergeCourses([{name:'A',id:'1'}],[]),[{name:'A',id:'1'}],'一覧が空なら消さない');assert.equal(courseList({}).length,12,'courses のない古い状態だけ最初の利用者の一覧');assert.deepEqual(courseNames({courses:[{name:'X',id:'9'}]}),['X']);assert.equal(courseIdOf(0,{courses:[{name:'X',id:'9'}]}),'9');assert.deepEqual(courseList({courses:[]}),[],'新しい利用者は空から始まる')});
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {submissionGate, lectureDate, inWindow, validLms, deadline} from '../local/core.js';
+import worker from '../server/worker.js';
+const answer = {grounded: true, needsUser: [], answers: [{name: 'q1', value: 'b', values: [], evidence: '資料に根拠'}]};
+const q = [{name: 'q1', type: 'radio', text: '設問', options: [{value: 'a'}, {value: 'b'}]}];
+test('出席コードがあれば提出を止める', () =>
+  assert.equal(
+    submissionGate({}, answer, [...q, {name: 'attendance', text: '出席コードを選択', type: 'select'}]),
+    'attendance'
+  ));
+test('重複提出と結果不明の再送を止める', () => {
+  assert.equal(submissionGate({status: 'done'}, answer, q), 'already_submitted');
+  assert.equal(submissionGate({submissionIntent: {}}, answer, q), 'result_unknown');
+});
+test('根拠・本人情報・選択肢の不足を止める', () => {
+  assert.equal(submissionGate({}, {...answer, grounded: false}, q), 'needs_user');
+  assert.equal(submissionGate({}, {...answer, needsUser: ['経験']}, q), 'needs_user');
+  assert.equal(submissionGate({}, {...answer, answers: []}, q), 'missing_answer');
+  assert.equal(submissionGate({}, {...answer, answers: [{...answer.answers[0], value: 'z'}]}, q), 'invalid_answer');
+});
+test('根拠があり全問回答済みの場合のみ提出可', () => assert.equal(submissionGate({}, answer, q), 'ok'));
+test('日程不明は推測せず期間外を除外', () => {
+  assert.equal(lectureDate('第3回', {}, 3), null);
+  assert.equal(lectureDate('第3回 10/13', {}, 3), '2026-10-13');
+  assert(inWindow('2026-10-13', new Date('2026-10-10')));
+  assert(!inWindow('2026-10-27', new Date('2026-10-10')));
+});
+test('正規のmanabo以外のURLは禁止', () => assert.throws(() => validLms('https://example.com/login')));
+test('24時の締切を翌日に変換', () => assert.equal(deadline('10月12日（月）24:00'), '2026-10-12T15:00:00.000Z'));
+test('未認証ユーザーは実データへアクセス不可', async () => {
+  const r = await worker.fetch(new Request('https://coursecue.hrk-6888.workers.dev/api/state'), {
+    OWNER_TOKEN: 'owner',
+    DEVICE_TOKEN: 'device'
+  });
+  assert.equal(r.status, 401);
+});
+test('他サイトからの要求を拒否', async () => {
+  const r = await worker.fetch(
+    new Request('https://coursecue.hrk-6888.workers.dev/api/state', {
+      headers: {Origin: 'https://evil.example', Authorization: 'Bearer owner'}
+    }),
+    {OWNER_TOKEN: 'owner', DEVICE_TOKEN: 'device'}
+  );
+  assert.equal(r.status, 403);
+});
+test('漢数字・全角の回番号を読み、受講期間の終わりを締切にする', async () => {
+  const {roundOf, roundPattern, normalizeRounds} = await import('../local/core.js');
+  assert.equal(roundOf('第二回教材'), 2);
+  assert.equal(roundOf('第十二回'), 12);
+  assert.equal(roundOf('第３回'), 3);
+  assert.equal(roundOf('二回目'), 2);
+  assert.equal(normalizeRounds('第二回課題提出'), '第2回課題提出');
+  assert(new RegExp(roundPattern(2)).test('第二回課題提出'));
+  assert(new RegExp(roundPattern(2)).test('第２回'));
+  assert(!new RegExp(roundPattern(2)).test('第3回'));
+  assert.equal(deadline('第二回課題提出\n受講期間: ～ 10月13日(火) 00:00'), '2026-10-12T15:00:00.000Z', '範囲の終わり');
+  assert.equal(
+    deadline('第二回課題（期限後提出用）\n受講期間: 10月13日(火) 00:00 ～'),
+    null,
+    '開始だけなら締切にしない'
+  );
+  assert.equal(deadline('受講期間: 10月1日(水) 00:00 ～ 10月13日(火) 00:00'), '2026-10-12T15:00:00.000Z');
+  assert.equal(deadline('期間: 10月3日 23:59'), '2026-10-03T14:59:00.000Z', '範囲でなければ従来どおり');
+});
+test('資料・注意点の「提出期限」「まで」の行から締切を読み、24時は翌日 0 時にする', async () => {
+  const {deadline, deadlineFromText, deadlineFromMaterials} = await import('../local/core.js');
+  assert.equal(deadline('提出期限は10月19日24時である'), '2026-10-19T15:00:00.000Z');
+  assert.equal(deadline('10月19日（月）24時まで'), '2026-10-19T15:00:00.000Z');
+  assert.equal(deadline('10/19 23時59分まで'), '2026-10-19T14:59:00.000Z');
+  assert.equal(deadline('10月6日の授業 第2時限'), null, '時限は時刻ではない');
+  assert.deepEqual(deadlineFromText('第3回ケース\n2026年10月6日 13:00 開始\n提出：10月19日（月）24時まで、100字前後'), {
+    dueAt: '2026-10-19T15:00:00.000Z',
+    line: '提出：10月19日（月）24時まで、100字前後'
+  });
+  assert.equal(deadlineFromText('第3回ケース\n2026年10月6日 13:00 開始'), null, '期限の行がなければ読まない');
+  assert.deepEqual(
+    deadlineFromMaterials([
+      {file: 'a.pptx', text: 'なし'},
+      {file: 'b.pptx', text: '提出期限は10月19日24時'}
+    ]),
+    {dueAt: '2026-10-19T15:00:00.000Z', line: '提出期限は10月19日24時', file: 'b.pptx'}
+  );
+});
+test('授業 ID が未設定の授業は manabo の授業一覧のリンクから名前で探す', async () => {
+  const {courseIdOf, findClassLinks, courseList} = await import('../local/core.js');
+  const base = {
+      courses: [
+        {name: '人材マネジメントⅡ', id: '103578'},
+        {name: 'ゼミナールⅣ', id: ''}
+      ]
+    },
+    i = 1;
+  assert.deepEqual(
+    courseList({courses: []}),
+    [],
+    '新しい利用者は空から始まる（固定の一覧は courses のない古い状態だけ）'
+  );
+  assert.equal(courseIdOf(i, base), '');
+  assert.equal(courseIdOf(i, {...base, courseIds: {ゼミナールⅣ: '105001'}}), '105001');
+  assert.equal(courseIdOf(0, {...base, courseIds: {人材マネジメントⅡ: 'x'}}), '103578', '設定済みの ID を優先');
+  const links = [
+    {href: 'https://manabo.cnc.chukyo-u.ac.jp/class/105001/', text: ' ゼミナール IV（月曜／4限） '},
+    {href: 'https://manabo.cnc.chukyo-u.ac.jp/class/105002/', text: 'ゼミナールⅢ'},
+    {href: 'https://manabo.cnc.chukyo-u.ac.jp/class/103578/', text: '人材マネジメントⅡ'}
+  ];
+  assert.deepEqual(findClassLinks(links, ['ゼミナールⅣ', 'ない授業']), {ゼミナールⅣ: '105001'});
+  assert.deepEqual(
+    findClassLinks(
+      [...links, {href: 'https://manabo.cnc.chukyo-u.ac.jp/class/105009/', text: 'ゼミナールⅣ（別）'}],
+      ['ゼミナールⅣ']
+    ),
+    {},
+    '候補が複数なら決めない'
+  );
+});
+test('manabo の授業一覧から授業を更新する：ID が同じものは既存、名前が同じで ID のないものには ID を入れ、新しい授業は末尾に足す', async () => {
+  const {mergeCourses, courseNameOf, courseList, courseNames, courseIdOf} = await import('../local/core.js');
+  assert.equal(courseNameOf(' ゼミナールⅣ（月曜／4限） '), 'ゼミナールⅣ');
+  assert.equal(courseNameOf('経済原論Ⅱ'), '経済原論Ⅱ');
+  const base = [
+    {name: '人材マネジメントⅡ', id: '103578'},
+    {name: 'ゼミナールⅣ', id: ''}
+  ];
+  const links = [
+    {href: 'https://manabo.cnc.chukyo-u.ac.jp/class/103578/', text: '人材マネジメントⅡ（月曜／3限）'},
+    {href: 'https://manabo.cnc.chukyo-u.ac.jp/class/105001/', text: 'ゼミナール IV（月曜／4限）'},
+    {href: 'https://manabo.cnc.chukyo-u.ac.jp/class/105002/', text: '新しい授業'},
+    {href: 'https://manabo.cnc.chukyo-u.ac.jp/class/105002/', text: '新しい授業'},
+    {href: 'https://manabo.cnc.chukyo-u.ac.jp/notice/1/', text: 'お知らせ'}
+  ];
+  assert.deepEqual(mergeCourses(base, links), [
+    {name: '人材マネジメントⅡ', id: '103578'},
+    {name: 'ゼミナールⅣ', id: '105001'},
+    {name: '新しい授業', id: '105002'}
+  ]);
+  assert.deepEqual(mergeCourses([{name: 'A', id: '1'}], []), [{name: 'A', id: '1'}], '一覧が空なら消さない');
+  assert.equal(courseList({}).length, 12, 'courses のない古い状態だけ最初の利用者の一覧');
+  assert.deepEqual(courseNames({courses: [{name: 'X', id: '9'}]}), ['X']);
+  assert.equal(courseIdOf(0, {courses: [{name: 'X', id: '9'}]}), '9');
+  assert.deepEqual(courseList({courses: []}), [], '新しい利用者は空から始まる');
+});
 
 // 出席コードの入力欄の判定：「出席確認」だけの設問（感想を書くなど）は対象にしない
-test('出席コードの欄：「出席コード」「出席番号」「attendance code」は対象、「出席確認を兼ねて感想を」は通常の設問',async()=>{const {attendance}=await import('../local/core.js');for(const t of ['出席コードを選択','本日の出席コード','出席番号を入力','Enter the attendance code'])assert.equal(attendance(t),true,t);for(const t of ['本日の出席確認を兼ねて、講義の感想を書いてください','出席確認','欠席の理由'])assert.equal(attendance(t),false,t)});
+test('出席コードの欄：「出席コード」「出席番号」「attendance code」は対象、「出席確認を兼ねて感想を」は通常の設問', async () => {
+  const {attendance} = await import('../local/core.js');
+  for (const t of ['出席コードを選択', '本日の出席コード', '出席番号を入力', 'Enter the attendance code'])
+    assert.equal(attendance(t), true, t);
+  for (const t of ['本日の出席確認を兼ねて、講義の感想を書いてください', '出席確認', '欠席の理由'])
+    assert.equal(attendance(t), false, t);
+});

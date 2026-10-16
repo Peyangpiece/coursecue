@@ -1,0 +1,15 @@
+node_modules/
+package-lock.json
+release/
+dist/academic-calendar.json
+site/public/
+*.html
+*.css
+*.md
+*.yml
+*.jsonc
+*.svg
+*.sql
+*.swift
+*.sh
+*.webmanifest

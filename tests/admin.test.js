@@ -1,58 +1,429 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {handle,memoryStore} from '../server/worker.js';import {summarize,monthAdd,currentMonth,costApplies,validUser,validPayment} from '../server/admin.js';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {handle, memoryStore} from '../server/worker.js';
+import {summarize, monthAdd, currentMonth, costApplies, validUser, validPayment} from '../server/admin.js';
 // 管理者画面の API：ADMIN_TOKEN（32 文字以上）でだけ使え、利用者の一覧・入金・費用・設定を扱い、売上・費用・利益と使用量を集計する
-const base='https://coursecue.hrk-6888.workers.dev',ADMIN='a'.repeat(40),env={OWNER_TOKEN:'owner-legacy',DEVICE_TOKEN:'device-legacy',ADMIN_TOKEN:ADMIN};
-const call=(store,path,{method='GET',token,body,e=env}={})=>handle(new Request(base+path,{method,headers:{...(token?{Authorization:'Bearer '+token}:{}),'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)}),e,store);
-const tok=c=>c.repeat(64),usage=(month,o)=>({months:{[month]:{calls:10,failed:1,tokens:{calls:8,input:80000,output:32000,cacheRead:0,cacheWrite:0},estimateUsd:0.48,byProvider:{'Claude Code':{calls:8,failed:1},Codex:{calls:2,failed:0}},byLabel:{},...o}}});
-async function setup(){const store=memoryStore();const ids=[];for(const [o,d] of [['a','b'],['c','d']]){const r=await call(store,'/api/register',{method:'POST',body:{owner:tok(o),device:tok(d)}});ids.push((await r.json()).id)}return {store,ids}}
-test('ADMIN_TOKEN がない・短いときは使えず、利用者の鍵では入れない',async()=>{const {store}=await setup();assert.equal((await call(store,'/api/admin/overview',{token:ADMIN,e:{...env,ADMIN_TOKEN:undefined}})).status,503);assert.equal((await call(store,'/api/admin/overview',{token:'short',e:{...env,ADMIN_TOKEN:'short'}})).status,503,'短い秘密は設定していないものとして扱う');
- assert.equal((await call(store,'/api/admin/overview')).status,401);assert.equal((await call(store,'/api/admin/overview',{token:tok('a')})).status,401,'利用者の接続キーでは入れない');assert.equal((await call(store,'/api/admin/overview',{token:'owner-legacy'})).status,401);assert.equal((await call(store,'/api/admin/overview',{token:ADMIN})).status,200)});
-test('利用者の一覧は件数・最終接続・版・使用量だけを返し、授業名や課題の中身は返さない',async()=>{const {store,ids}=await setup();const month=currentMonth();
- await call(store,'/api/state',{method:'POST',token:tok('b'),body:{deviceSeen:new Date().toISOString(),os:'darwin',version:'1.0.26',runtime:'desktop',lastSync:'2026-10-14T00:00:00Z',credentialsConfigured:true,tasks:[{id:1,title:'秘密のレポート'}],courses:[{name:'管理会計Ⅱ'},{name:'経営科学'}],usage:usage(month)}});
- const r=await (await call(store,'/api/admin/overview',{token:ADMIN})).json();assert.equal(r.month,month);assert.equal(r.users.length,2);const a=r.users.find(u=>u.account===ids[0]);
- assert.deepEqual({os:a.os,version:a.version,tasks:a.tasks,courses:a.courses,creds:a.creds,plan:a.plan,status:a.status,price:a.price},{os:'darwin',version:'1.0.26',tasks:1,courses:2,creds:true,plan:'byo',status:'trial',price:0});assert.equal(a.usageMonth.calls,10);
- const text=JSON.stringify(r);assert.doesNotMatch(text,/秘密のレポート|管理会計/,'中身は返さない');assert.equal(r.summary.users.seen24h,1);assert.equal(r.summary.usage.calls,10);assert.equal(r.summary.usage.byProvider.Codex.calls,2)});
-test('利用者の情報・入金・費用・設定を登録し、売上・手数料・消費税・AI の費用・固定費・利益を集計する',async()=>{const {store,ids}=await setup();const month='2026-10';
- await call(store,'/api/state',{method:'POST',token:tok('b'),body:{usage:usage(month)}});await call(store,'/api/state',{method:'POST',token:tok('d'),body:{usage:usage(month)}});
- assert.equal((await call(store,'/api/admin/user',{method:'POST',token:ADMIN,body:{account:ids[0],label:'Aさん',plan:'api',price:2500,status:'active',started:'2026-10-01',note:''}})).status,200);
- assert.equal((await call(store,'/api/admin/user',{method:'POST',token:ADMIN,body:{account:ids[1],label:'Bさん',plan:'byo',price:2500,status:'active',started:'',note:'CLI 持ち込み'}})).status,200);
- assert.equal((await call(store,'/api/admin/user',{method:'POST',token:ADMIN,body:{account:'nope',label:'x',plan:'api',price:0,status:'active'}})).status,400,'存在しない利用者は拒む');
- assert.equal((await call(store,'/api/admin/payment',{method:'POST',token:ADMIN,body:{account:ids[0],month,amount:2500,method:'振込',paid_on:'2026-10-05',note:''}})).status,200);
- assert.equal((await call(store,'/api/admin/payment',{method:'POST',token:ADMIN,body:{account:ids[0],month:'2026-13',amount:2500}})).status,400);
- await call(store,'/api/admin/cost',{method:'POST',token:ADMIN,body:{item:'Cloudflare',amount:750,month:'2026-09',recurring:true,note:''}});await call(store,'/api/admin/cost',{method:'POST',token:ADMIN,body:{item:'Apple',amount:15000,month:'2026-11',recurring:false,note:''}});
- await call(store,'/api/admin/settings',{method:'POST',token:ADMIN,body:{feeRate:0.036,taxable:true,usdJpy:150}});
- // AI の費用は SaBoRo の AI（こちらの API キー）で実際に使った分（本人の Codex・Claude Code の使用量の目安は含めない）
- await store.addAiUsage({id:'u1',account:ids[0],month,label:'課題生成',mode:'now',model:'claude-sonnet-5-5',input:0,output:0,cache_read:0,cache_write:0,cost_usd:0.48,billable:0,charge_micro:0,created:'2026-10-05T00:00:00Z'});
- let r=await (await call(store,`/api/admin/overview?month=${month}`,{token:ADMIN})).json();const s=r.summary;
- assert.deepEqual({revenue:s.revenue,expected:s.expected,fees:s.fees,tax:s.tax,apiCost:s.apiCost,fixed:s.fixed,profit:s.profit,paying:s.paying,perPaying:s.perPaying},{revenue:2500,expected:5000,fees:90,tax:227,apiCost:72,fixed:750,profit:1361,paying:1,perPaying:1361},'AI の費用は SaBoRo の AI の実費（$0.48×150 円）。旧：saboro の API プランの人の分だけ（$0.48×150 円）');
- assert.deepEqual(s.unpaid,[ids[1]],'未入金の利用中の人');assert.equal(r.costs.find(c=>c.item==='Apple').applies,false);assert.equal(r.trend.length,6);assert.equal(r.trend.at(-1).profit,1361);assert.equal(r.trend.at(-2).fixed,750,'毎月の費用は登録した月から');assert.equal(r.trend.at(-3).fixed,0);
- const cf=r.costs.find(c=>c.item==='Cloudflare');await call(store,'/api/admin/cost/end',{method:'POST',token:ADMIN,body:{id:cf.id,month:'2026-10'}});r=await (await call(store,'/api/admin/overview?month=2026-11',{token:ADMIN})).json();assert.equal(r.summary.fixed,15000,'終了した毎月の費用は翌月から入らない');
- const pay=(await (await call(store,`/api/admin/overview?month=${month}`,{token:ADMIN})).json()).payments[0];await call(store,'/api/admin/payment/delete',{method:'POST',token:ADMIN,body:{id:pay.id}});r=await (await call(store,`/api/admin/overview?month=${month}`,{token:ADMIN})).json();assert.equal(r.summary.revenue,0);assert.equal(r.summary.perPaying,null);
- assert.equal((await call(store,'/api/admin/settings',{method:'POST',token:ADMIN,body:{feeRate:0.5,taxable:true,usdJpy:150}})).status,400)});
-test('集計と入力の確認（月の計算・毎月の費用・不正な値）',()=>{assert.equal(monthAdd('2026-01',-1),'2025-12');assert.equal(monthAdd('2026-12',1),'2027-01');assert.equal(currentMonth(new Date('2026-10-31T16:00:00Z')),'2026-11','日本時間で月を切り替える');
- assert.equal(costApplies({recurring:1,month:'2026-09',end_month:'2026-10'},'2026-11'),false);assert.equal(costApplies({recurring:0,month:'2026-09'},'2026-09'),true);
- assert.equal(validUser({label:'x'.repeat(41),plan:'api',price:0,status:'active'}),null);assert.equal(validUser({label:'x',plan:'gold',price:0,status:'active'}),null);assert.equal(validUser({label:'x',plan:'api',price:-1,status:'active'}),null);assert.equal(validPayment({month:'2026-10',amount:0}),null,'0 円の入金は記録しない');assert.ok(validPayment({month:'2026-10',amount:-2500}),'返金はマイナスで記録できる');
- const s=summarize({month:'2026-10',users:[],payments:[],costs:[]});assert.equal(s.tax,0,'既定は消費税を引かない（免税事業者）');assert.equal(s.profit,0)});
-test('管理者画面は検索に出さず、秘密は保存しない（タブを閉じると消える sessionStorage）',()=>{const html=readFileSync('dist/admin.html','utf8'),js=readFileSync('dist/admin.js','utf8');assert.match(html,/<meta name="robots" content="noindex/);assert.match(js,/sessionStorage/);assert.doesNotMatch(js,/localStorage/)});
-test('運営者への通知：多くの利用者で同期が失敗・停止していれば理由つきで Webhook に送り、少なければ送らない。定期処理の失敗も送る',async()=>{const {health}=await import('../server/admin.js');const {alertOperator,memoryStore}=await import('../server/worker.js');const now=new Date('2026-10-15T00:00:00Z'),h=n=>new Date(now-n*3600e3).toISOString();
- const ok={seen:h(1),lastSync:h(2)},bad={seen:h(1),lastSync:h(30),lastErrorAt:h(3),lastError:'課題の一覧を読み取れません'};
- assert.equal(health([ok,ok,ok,ok,bad],now).alert,false,'1 人だけなら知らせない');const r=health([ok,ok,bad,bad,bad,{seen:h(200),lastErrorAt:h(1)}],now);assert.deepEqual([r.active,r.failing,r.alert],[5,3,true],'3 日以上接続のない人は数えない');assert.match(r.message,/主な理由：課題の一覧を読み取れません/);
- assert.equal(health([ok,ok,{seen:h(1),lastSync:h(60)},{seen:h(1),lastSync:h(60)},{seen:h(1)}],now).alert,true,'2 日以上同期していない人が多くても知らせる');
- const sent=[],orig=globalThis.fetch;globalThis.fetch=async(url,o)=>{sent.push([url,JSON.parse(o.body)]);return {ok:true}};const errors=console.error;console.error=()=>{};try{const store=memoryStore();assert.equal(await alertOperator({ALERT_WEBHOOK_URL:'https://hooks.example/x'},store,[]),null,'何もなければ送らない');assert.equal(sent.length,0);
-  await alertOperator({ALERT_WEBHOOK_URL:'https://hooks.example/x'},store,['charge a: 顧客なし'],now);assert.equal(sent[0][0],'https://hooks.example/x');assert.match(sent[0][1].text,/定期処理：charge a: 顧客なし/);assert.equal(sent[0][1].content,undefined,'Slack などは text');await alertOperator({ALERT_WEBHOOK_URL:'https://discord.com/api/webhooks/1/abc'},store,['y'],now);assert.match(sent.at(-1)[1].content,/定期処理：y/);assert.equal(sent.at(-1)[1].text,undefined,'Discord は content');
-  await alertOperator({},store,['x'],now);assert.equal(sent.length,2,'Webhook が未設定なら送らない')}finally{globalThis.fetch=orig;console.error=errors}});
-test('学年暦：同梱のものを配り、期間の終わりが 30 日以内なら更新を頼む。PDF を読み取って見せ、確かめてから保存すると /api/academic-calendar で配る',async()=>{const {setAiTestHooks}=await import('../server/ai.js');const {checkCalendar,needsUpdate}=await import('../server/calendar.js');const bundled=JSON.parse(readFileSync('dist/academic-calendar.json','utf8'));
- assert.deepEqual(checkCalendar(bundled).errors,[],'同梱の学年暦は正しい形');assert.equal(needsUpdate(bundled,new Date('2026-10-15T00:00:00Z')),false);assert.equal(needsUpdate(bundled,new Date('2026-12-27T00:00:00Z')),true,'終わりの 30 日前から');
- const e={...env,SABORO_ANTHROPIC_API_KEY:'sk-ant-test',ASSETS:{fetch:async r=>new URL(r.url).pathname==='/academic-calendar.json'?new Response(JSON.stringify(bundled)):new Response('',{status:404})}},store=memoryStore(),adm=(path,body)=>call(store,'/api/admin'+path,{method:body?'POST':'GET',token:ADMIN,body,e});
- assert.equal((await (await call(store,'/api/academic-calendar',{e})).json()).term,bundled.term,'保存したものがなければ同梱のもの');let st=await (await adm('/calendar')).json();assert.deepEqual([st.saved,st.calendar.term],[false,bundled.term]);
- // PDF の読み取り：PDF を取り、AI に渡し、確かめた結果を返す（保存はしない）
- const mondays=Array.from({length:15},(_,i)=>new Date(Date.UTC(2027,3,12+7*i)).toISOString().slice(0,10)),day=k=>mondays.map(d=>new Date(new Date(d).getTime()+k*864e5).toISOString().slice(0,10)),rounds={'月':mondays,'火':day(1),'水':day(2),'木':day(3),'金':day(4),'土':[]};let sent;
- setAiTestHooks({client:()=>({messages:{create:async p=>{sent=p;return {model:'claude-sonnet-5-5',stop_reason:'end_turn',content:[{type:'text',text:JSON.stringify({term:'2027 春学期',rounds})}],usage:{input_tokens:3000,output_tokens:800}}}}})});
- const orig=globalThis.fetch;globalThis.fetch=async url=>url==='https://u.example/cal.pdf'?new Response(new TextEncoder().encode('%PDF-1.7 test')):new Response('<html>',{status:200});
- try{const r=await (await adm('/calendar/read',{url:'https://u.example/cal.pdf',term:'2027 春学期'})).json();assert.deepEqual(r.errors,[]);assert.equal(r.calendar.term,'2027 春学期');assert.equal(r.calendar.source,'https://u.example/cal.pdf');assert.equal(r.calendar.rounds['土'],undefined,'空の曜日は除く');
-  assert.equal(sent.messages[0].content[0].type,'document');assert.equal(sent.messages[0].content[0].source.media_type,'application/pdf');assert.match(sent.messages[0].content[1].text,/「2027 春学期」/);
-  assert.equal((await adm('/calendar/read',{url:'https://u.example/page.html'})).status,422,'PDF でなければ断る');assert.equal((await (await adm('/calendar')).json()).saved,false,'読み取っただけでは保存しない');
-  const broken=await adm('/calendar',{calendar:{...r.calendar,rounds:{...r.calendar.rounds,'月':[...mondays].reverse()}}});assert.equal(broken.status,400);assert.match((await broken.json()).errors.join(),/前の回より前/);
-  assert.equal((await (await adm('/calendar',{calendar:r.calendar})).json()).ok,true);st=await (await adm('/calendar')).json();assert.deepEqual([st.saved,st.calendar.term,st.end],[true,'2027 春学期',day(4)[14]]);
-  assert.equal((await (await call(store,'/api/academic-calendar',{e})).json()).term,'2027 春学期','保存したものを配る');assert.equal((await (await adm('/overview')).json()).calendar.term,'2027 春学期')}finally{globalThis.fetch=orig}});
-test('利用者の一覧：管理画面で一度も保存していない利用者は未登録（registered:false）として出し、保存すると登録になる',async()=>{const store=memoryStore();const r=await call(store,'/api/register',{method:'POST',body:{owner:tok('e'),device:tok('f')}});const {id}=await r.json();const list=async()=>(await (await call(store,'/api/admin/overview',{token:ADMIN})).json()).users.find(u=>u.account===id);
- assert.equal((await list()).registered,false);await call(store,'/api/admin/user',{method:'POST',token:ADMIN,body:{account:id,label:'E',plan:'byo',price:0,status:'trial',started:'',note:''}});const u=await list();assert.deepEqual([u.registered,u.status],[true,'trial'])});
+const base = 'https://coursecue.hrk-6888.workers.dev',
+  ADMIN = 'a'.repeat(40),
+  env = {OWNER_TOKEN: 'owner-legacy', DEVICE_TOKEN: 'device-legacy', ADMIN_TOKEN: ADMIN};
+const call = (store, path, {method = 'GET', token, body, e = env} = {}) =>
+  handle(
+    new Request(base + path, {
+      method,
+      headers: {...(token ? {Authorization: 'Bearer ' + token} : {}), 'Content-Type': 'application/json'},
+      body: body === undefined ? undefined : JSON.stringify(body)
+    }),
+    e,
+    store
+  );
+const tok = c => c.repeat(64),
+  usage = (month, o) => ({
+    months: {
+      [month]: {
+        calls: 10,
+        failed: 1,
+        tokens: {calls: 8, input: 80000, output: 32000, cacheRead: 0, cacheWrite: 0},
+        estimateUsd: 0.48,
+        byProvider: {'Claude Code': {calls: 8, failed: 1}, Codex: {calls: 2, failed: 0}},
+        byLabel: {},
+        ...o
+      }
+    }
+  });
+async function setup() {
+  const store = memoryStore();
+  const ids = [];
+  for (const [o, d] of [
+    ['a', 'b'],
+    ['c', 'd']
+  ]) {
+    const r = await call(store, '/api/register', {method: 'POST', body: {owner: tok(o), device: tok(d)}});
+    ids.push((await r.json()).id);
+  }
+  return {store, ids};
+}
+test('ADMIN_TOKEN がない・短いときは使えず、利用者の鍵では入れない', async () => {
+  const {store} = await setup();
+  assert.equal(
+    (await call(store, '/api/admin/overview', {token: ADMIN, e: {...env, ADMIN_TOKEN: undefined}})).status,
+    503
+  );
+  assert.equal(
+    (await call(store, '/api/admin/overview', {token: 'short', e: {...env, ADMIN_TOKEN: 'short'}})).status,
+    503,
+    '短い秘密は設定していないものとして扱う'
+  );
+  assert.equal((await call(store, '/api/admin/overview')).status, 401);
+  assert.equal(
+    (await call(store, '/api/admin/overview', {token: tok('a')})).status,
+    401,
+    '利用者の接続キーでは入れない'
+  );
+  assert.equal((await call(store, '/api/admin/overview', {token: 'owner-legacy'})).status, 401);
+  assert.equal((await call(store, '/api/admin/overview', {token: ADMIN})).status, 200);
+});
+test('利用者の一覧は件数・最終接続・版・使用量だけを返し、授業名や課題の中身は返さない', async () => {
+  const {store, ids} = await setup();
+  const month = currentMonth();
+  await call(store, '/api/state', {
+    method: 'POST',
+    token: tok('b'),
+    body: {
+      deviceSeen: new Date().toISOString(),
+      os: 'darwin',
+      version: '1.0.26',
+      runtime: 'desktop',
+      lastSync: '2026-10-14T00:00:00Z',
+      credentialsConfigured: true,
+      tasks: [{id: 1, title: '秘密のレポート'}],
+      courses: [{name: '管理会計Ⅱ'}, {name: '経営科学'}],
+      usage: usage(month)
+    }
+  });
+  const r = await (await call(store, '/api/admin/overview', {token: ADMIN})).json();
+  assert.equal(r.month, month);
+  assert.equal(r.users.length, 2);
+  const a = r.users.find(u => u.account === ids[0]);
+  assert.deepEqual(
+    {
+      os: a.os,
+      version: a.version,
+      tasks: a.tasks,
+      courses: a.courses,
+      creds: a.creds,
+      plan: a.plan,
+      status: a.status,
+      price: a.price
+    },
+    {os: 'darwin', version: '1.0.26', tasks: 1, courses: 2, creds: true, plan: 'byo', status: 'trial', price: 0}
+  );
+  assert.equal(a.usageMonth.calls, 10);
+  const text = JSON.stringify(r);
+  assert.doesNotMatch(text, /秘密のレポート|管理会計/, '中身は返さない');
+  assert.equal(r.summary.users.seen24h, 1);
+  assert.equal(r.summary.usage.calls, 10);
+  assert.equal(r.summary.usage.byProvider.Codex.calls, 2);
+});
+test('利用者の情報・入金・費用・設定を登録し、売上・手数料・消費税・AI の費用・固定費・利益を集計する', async () => {
+  const {store, ids} = await setup();
+  const month = '2026-10';
+  await call(store, '/api/state', {method: 'POST', token: tok('b'), body: {usage: usage(month)}});
+  await call(store, '/api/state', {method: 'POST', token: tok('d'), body: {usage: usage(month)}});
+  assert.equal(
+    (
+      await call(store, '/api/admin/user', {
+        method: 'POST',
+        token: ADMIN,
+        body: {
+          account: ids[0],
+          label: 'Aさん',
+          plan: 'api',
+          price: 2500,
+          status: 'active',
+          started: '2026-10-01',
+          note: ''
+        }
+      })
+    ).status,
+    200
+  );
+  assert.equal(
+    (
+      await call(store, '/api/admin/user', {
+        method: 'POST',
+        token: ADMIN,
+        body: {
+          account: ids[1],
+          label: 'Bさん',
+          plan: 'byo',
+          price: 2500,
+          status: 'active',
+          started: '',
+          note: 'CLI 持ち込み'
+        }
+      })
+    ).status,
+    200
+  );
+  assert.equal(
+    (
+      await call(store, '/api/admin/user', {
+        method: 'POST',
+        token: ADMIN,
+        body: {account: 'nope', label: 'x', plan: 'api', price: 0, status: 'active'}
+      })
+    ).status,
+    400,
+    '存在しない利用者は拒む'
+  );
+  assert.equal(
+    (
+      await call(store, '/api/admin/payment', {
+        method: 'POST',
+        token: ADMIN,
+        body: {account: ids[0], month, amount: 2500, method: '振込', paid_on: '2026-10-05', note: ''}
+      })
+    ).status,
+    200
+  );
+  assert.equal(
+    (
+      await call(store, '/api/admin/payment', {
+        method: 'POST',
+        token: ADMIN,
+        body: {account: ids[0], month: '2026-13', amount: 2500}
+      })
+    ).status,
+    400
+  );
+  await call(store, '/api/admin/cost', {
+    method: 'POST',
+    token: ADMIN,
+    body: {item: 'Cloudflare', amount: 750, month: '2026-09', recurring: true, note: ''}
+  });
+  await call(store, '/api/admin/cost', {
+    method: 'POST',
+    token: ADMIN,
+    body: {item: 'Apple', amount: 15000, month: '2026-11', recurring: false, note: ''}
+  });
+  await call(store, '/api/admin/settings', {
+    method: 'POST',
+    token: ADMIN,
+    body: {feeRate: 0.036, taxable: true, usdJpy: 150}
+  });
+  // AI の費用は SaBoRo の AI（こちらの API キー）で実際に使った分（本人の Codex・Claude Code の使用量の目安は含めない）
+  await store.addAiUsage({
+    id: 'u1',
+    account: ids[0],
+    month,
+    label: '課題生成',
+    mode: 'now',
+    model: 'claude-sonnet-5-5',
+    input: 0,
+    output: 0,
+    cache_read: 0,
+    cache_write: 0,
+    cost_usd: 0.48,
+    billable: 0,
+    charge_micro: 0,
+    created: '2026-10-05T00:00:00Z'
+  });
+  let r = await (await call(store, `/api/admin/overview?month=${month}`, {token: ADMIN})).json();
+  const s = r.summary;
+  assert.deepEqual(
+    {
+      revenue: s.revenue,
+      expected: s.expected,
+      fees: s.fees,
+      tax: s.tax,
+      apiCost: s.apiCost,
+      fixed: s.fixed,
+      profit: s.profit,
+      paying: s.paying,
+      perPaying: s.perPaying
+    },
+    {
+      revenue: 2500,
+      expected: 5000,
+      fees: 90,
+      tax: 227,
+      apiCost: 72,
+      fixed: 750,
+      profit: 1361,
+      paying: 1,
+      perPaying: 1361
+    },
+    'AI の費用は SaBoRo の AI の実費（$0.48×150 円）。旧：saboro の API プランの人の分だけ（$0.48×150 円）'
+  );
+  assert.deepEqual(s.unpaid, [ids[1]], '未入金の利用中の人');
+  assert.equal(r.costs.find(c => c.item === 'Apple').applies, false);
+  assert.equal(r.trend.length, 6);
+  assert.equal(r.trend.at(-1).profit, 1361);
+  assert.equal(r.trend.at(-2).fixed, 750, '毎月の費用は登録した月から');
+  assert.equal(r.trend.at(-3).fixed, 0);
+  const cf = r.costs.find(c => c.item === 'Cloudflare');
+  await call(store, '/api/admin/cost/end', {method: 'POST', token: ADMIN, body: {id: cf.id, month: '2026-10'}});
+  r = await (await call(store, '/api/admin/overview?month=2026-11', {token: ADMIN})).json();
+  assert.equal(r.summary.fixed, 15000, '終了した毎月の費用は翌月から入らない');
+  const pay = (await (await call(store, `/api/admin/overview?month=${month}`, {token: ADMIN})).json()).payments[0];
+  await call(store, '/api/admin/payment/delete', {method: 'POST', token: ADMIN, body: {id: pay.id}});
+  r = await (await call(store, `/api/admin/overview?month=${month}`, {token: ADMIN})).json();
+  assert.equal(r.summary.revenue, 0);
+  assert.equal(r.summary.perPaying, null);
+  assert.equal(
+    (
+      await call(store, '/api/admin/settings', {
+        method: 'POST',
+        token: ADMIN,
+        body: {feeRate: 0.5, taxable: true, usdJpy: 150}
+      })
+    ).status,
+    400
+  );
+});
+test('集計と入力の確認（月の計算・毎月の費用・不正な値）', () => {
+  assert.equal(monthAdd('2026-01', -1), '2025-12');
+  assert.equal(monthAdd('2026-12', 1), '2027-01');
+  assert.equal(currentMonth(new Date('2026-10-31T16:00:00Z')), '2026-11', '日本時間で月を切り替える');
+  assert.equal(costApplies({recurring: 1, month: '2026-09', end_month: '2026-10'}, '2026-11'), false);
+  assert.equal(costApplies({recurring: 0, month: '2026-09'}, '2026-09'), true);
+  assert.equal(validUser({label: 'x'.repeat(41), plan: 'api', price: 0, status: 'active'}), null);
+  assert.equal(validUser({label: 'x', plan: 'gold', price: 0, status: 'active'}), null);
+  assert.equal(validUser({label: 'x', plan: 'api', price: -1, status: 'active'}), null);
+  assert.equal(validPayment({month: '2026-10', amount: 0}), null, '0 円の入金は記録しない');
+  assert.ok(validPayment({month: '2026-10', amount: -2500}), '返金はマイナスで記録できる');
+  const s = summarize({month: '2026-10', users: [], payments: [], costs: []});
+  assert.equal(s.tax, 0, '既定は消費税を引かない（免税事業者）');
+  assert.equal(s.profit, 0);
+});
+test('管理者画面は検索に出さず、秘密は保存しない（タブを閉じると消える sessionStorage）', () => {
+  const html = readFileSync('dist/admin.html', 'utf8'),
+    js = readFileSync('dist/admin.js', 'utf8');
+  assert.match(html, /<meta name="robots" content="noindex/);
+  assert.match(js, /sessionStorage/);
+  assert.doesNotMatch(js, /localStorage/);
+});
+test('運営者への通知：多くの利用者で同期が失敗・停止していれば理由つきで Webhook に送り、少なければ送らない。定期処理の失敗も送る', async () => {
+  const {health} = await import('../server/admin.js');
+  const {alertOperator, memoryStore} = await import('../server/worker.js');
+  const now = new Date('2026-10-15T00:00:00Z'),
+    h = n => new Date(now - n * 3600e3).toISOString();
+  const ok = {seen: h(1), lastSync: h(2)},
+    bad = {seen: h(1), lastSync: h(30), lastErrorAt: h(3), lastError: '課題の一覧を読み取れません'};
+  assert.equal(health([ok, ok, ok, ok, bad], now).alert, false, '1 人だけなら知らせない');
+  const r = health([ok, ok, bad, bad, bad, {seen: h(200), lastErrorAt: h(1)}], now);
+  assert.deepEqual([r.active, r.failing, r.alert], [5, 3, true], '3 日以上接続のない人は数えない');
+  assert.match(r.message, /主な理由：課題の一覧を読み取れません/);
+  assert.equal(
+    health([ok, ok, {seen: h(1), lastSync: h(60)}, {seen: h(1), lastSync: h(60)}, {seen: h(1)}], now).alert,
+    true,
+    '2 日以上同期していない人が多くても知らせる'
+  );
+  const sent = [],
+    orig = globalThis.fetch;
+  globalThis.fetch = async (url, o) => {
+    sent.push([url, JSON.parse(o.body)]);
+    return {ok: true};
+  };
+  const errors = console.error;
+  console.error = () => {};
+  try {
+    const store = memoryStore();
+    assert.equal(
+      await alertOperator({ALERT_WEBHOOK_URL: 'https://hooks.example/x'}, store, []),
+      null,
+      '何もなければ送らない'
+    );
+    assert.equal(sent.length, 0);
+    await alertOperator({ALERT_WEBHOOK_URL: 'https://hooks.example/x'}, store, ['charge a: 顧客なし'], now);
+    assert.equal(sent[0][0], 'https://hooks.example/x');
+    assert.match(sent[0][1].text, /定期処理：charge a: 顧客なし/);
+    assert.equal(sent[0][1].content, undefined, 'Slack などは text');
+    await alertOperator({ALERT_WEBHOOK_URL: 'https://discord.com/api/webhooks/1/abc'}, store, ['y'], now);
+    assert.match(sent.at(-1)[1].content, /定期処理：y/);
+    assert.equal(sent.at(-1)[1].text, undefined, 'Discord は content');
+    await alertOperator({}, store, ['x'], now);
+    assert.equal(sent.length, 2, 'Webhook が未設定なら送らない');
+  } finally {
+    globalThis.fetch = orig;
+    console.error = errors;
+  }
+});
+test('学年暦：同梱のものを配り、期間の終わりが 30 日以内なら更新を頼む。PDF を読み取って見せ、確かめてから保存すると /api/academic-calendar で配る', async () => {
+  const {setAiTestHooks} = await import('../server/ai.js');
+  const {checkCalendar, needsUpdate} = await import('../server/calendar.js');
+  const bundled = JSON.parse(readFileSync('dist/academic-calendar.json', 'utf8'));
+  assert.deepEqual(checkCalendar(bundled).errors, [], '同梱の学年暦は正しい形');
+  assert.equal(needsUpdate(bundled, new Date('2026-10-15T00:00:00Z')), false);
+  assert.equal(needsUpdate(bundled, new Date('2026-12-27T00:00:00Z')), true, '終わりの 30 日前から');
+  const e = {
+      ...env,
+      SABORO_ANTHROPIC_API_KEY: 'sk-ant-test',
+      ASSETS: {
+        fetch: async r =>
+          new URL(r.url).pathname === '/academic-calendar.json'
+            ? new Response(JSON.stringify(bundled))
+            : new Response('', {status: 404})
+      }
+    },
+    store = memoryStore(),
+    adm = (path, body) => call(store, '/api/admin' + path, {method: body ? 'POST' : 'GET', token: ADMIN, body, e});
+  assert.equal(
+    (await (await call(store, '/api/academic-calendar', {e})).json()).term,
+    bundled.term,
+    '保存したものがなければ同梱のもの'
+  );
+  let st = await (await adm('/calendar')).json();
+  assert.deepEqual([st.saved, st.calendar.term], [false, bundled.term]);
+  // PDF の読み取り：PDF を取り、AI に渡し、確かめた結果を返す（保存はしない）
+  const mondays = Array.from({length: 15}, (_, i) =>
+      new Date(Date.UTC(2027, 3, 12 + 7 * i)).toISOString().slice(0, 10)
+    ),
+    day = k => mondays.map(d => new Date(new Date(d).getTime() + k * 864e5).toISOString().slice(0, 10)),
+    rounds = {月: mondays, 火: day(1), 水: day(2), 木: day(3), 金: day(4), 土: []};
+  let sent;
+  setAiTestHooks({
+    client: () => ({
+      messages: {
+        create: async p => {
+          sent = p;
+          return {
+            model: 'claude-sonnet-5-5',
+            stop_reason: 'end_turn',
+            content: [{type: 'text', text: JSON.stringify({term: '2027 春学期', rounds})}],
+            usage: {input_tokens: 3000, output_tokens: 800}
+          };
+        }
+      }
+    })
+  });
+  const orig = globalThis.fetch;
+  globalThis.fetch = async url =>
+    url === 'https://u.example/cal.pdf'
+      ? new Response(new TextEncoder().encode('%PDF-1.7 test'))
+      : new Response('<html>', {status: 200});
+  try {
+    const r = await (await adm('/calendar/read', {url: 'https://u.example/cal.pdf', term: '2027 春学期'})).json();
+    assert.deepEqual(r.errors, []);
+    assert.equal(r.calendar.term, '2027 春学期');
+    assert.equal(r.calendar.source, 'https://u.example/cal.pdf');
+    assert.equal(r.calendar.rounds['土'], undefined, '空の曜日は除く');
+    assert.equal(sent.messages[0].content[0].type, 'document');
+    assert.equal(sent.messages[0].content[0].source.media_type, 'application/pdf');
+    assert.match(sent.messages[0].content[1].text, /「2027 春学期」/);
+    assert.equal((await adm('/calendar/read', {url: 'https://u.example/page.html'})).status, 422, 'PDF でなければ断る');
+    assert.equal((await (await adm('/calendar')).json()).saved, false, '読み取っただけでは保存しない');
+    const broken = await adm('/calendar', {
+      calendar: {...r.calendar, rounds: {...r.calendar.rounds, 月: [...mondays].reverse()}}
+    });
+    assert.equal(broken.status, 400);
+    assert.match((await broken.json()).errors.join(), /前の回より前/);
+    assert.equal((await (await adm('/calendar', {calendar: r.calendar})).json()).ok, true);
+    st = await (await adm('/calendar')).json();
+    assert.deepEqual([st.saved, st.calendar.term, st.end], [true, '2027 春学期', day(4)[14]]);
+    assert.equal(
+      (await (await call(store, '/api/academic-calendar', {e})).json()).term,
+      '2027 春学期',
+      '保存したものを配る'
+    );
+    assert.equal((await (await adm('/overview')).json()).calendar.term, '2027 春学期');
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+test('利用者の一覧：管理画面で一度も保存していない利用者は未登録（registered:false）として出し、保存すると登録になる', async () => {
+  const store = memoryStore();
+  const r = await call(store, '/api/register', {method: 'POST', body: {owner: tok('e'), device: tok('f')}});
+  const {id} = await r.json();
+  const list = async () =>
+    (await (await call(store, '/api/admin/overview', {token: ADMIN})).json()).users.find(u => u.account === id);
+  assert.equal((await list()).registered, false);
+  await call(store, '/api/admin/user', {
+    method: 'POST',
+    token: ADMIN,
+    body: {account: id, label: 'E', plan: 'byo', price: 0, status: 'trial', started: '', note: ''}
+  });
+  const u = await list();
+  assert.deepEqual([u.registered, u.status], [true, 'trial']);
+});
