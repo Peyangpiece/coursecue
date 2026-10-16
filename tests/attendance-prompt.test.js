@@ -26,7 +26,7 @@ test('PC：prompt の仕事で開いたままの入力画面にコードを渡�
 });
 test('画面：入力待ちがあれば manabo と同じ入力画面（文言そのまま・入力欄・OK）を出し、入れたら prompt の仕事を送る。ホームにも「入力する」を出す', () => {
   const app = src('dist/app.js');
-  assert.match(app, rx('function promptCode(name,message){'));
+  assert.match(app, rx("function promptCode(name,message,{others=true,cancel='あとで'}={}){"));
   assert.match(app, /id="dialog-input" inputmode="numeric"/);
   assert.match(app, rx("esc(message||'出席コードを入力してください')"));
   assert.match(

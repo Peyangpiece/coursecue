@@ -119,7 +119,7 @@ test('授業ページ・状態の欄・出席コードの案内と入力の画�
   assert.match(
     app,
     rx(
-      '<div class="modal-footer">${courses.indexOf(name)>=0?manaboLink(courses.indexOf(name),\'manabo で自分で入れる\',\'btn\'):\'\'}<button class="btn" id="dialog-cancel">あとで</button>'
+      '<div class="modal-footer">${courses.indexOf(name)>=0?manaboLink(courses.indexOf(name),\'manabo で自分で入れる\',\'btn\'):\'\'}<button class="btn" id="dialog-cancel">${esc(cancel)}</button>'
     )
   );
   assert.match(src('dist/saboro.css'), /\.nav2 a\{color:#fff;text-decoration:underline\}/);

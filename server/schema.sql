@@ -41,3 +41,5 @@ CREATE TABLE IF NOT EXISTS attendance_codes (course TEXT NOT NULL, day TEXT NOT 
 CREATE TABLE IF NOT EXISTS push_keys (id TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint TEXT PRIMARY KEY, account TEXT NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, created TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS push_subscriptions_account ON push_subscriptions(account);
+-- 2 段階認証：SaBoRo の画面で入れた manabo の認証コードを PC が受け取るまで置く（利用者ごとに 1 件。受け取ると消す。15 分で無効）
+CREATE TABLE IF NOT EXISTS mfa_codes (account TEXT PRIMARY KEY, code TEXT NOT NULL, created TEXT NOT NULL);
