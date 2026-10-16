@@ -38,7 +38,8 @@ export async function manifestFor(env, origin, connect) {
     theme_color: '#005bac',
     icons: [{src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any'}]
   };
-  return {...base, start_url: connect ? '/#connect=' + connect : '/'};
+  // start_url は ?connect=（# ではなく ? にする：ホーム画面に追加したアプリの起動 URL で # が落ちる環境があるため。画面はどちらも読む）
+  return {...base, start_url: connect ? '/?connect=' + connect : '/'};
 }
 // VAPID の sub（プッシュサービスへの連絡先。URL でよい）
 const pushSubject = env => env.VAPID_SUBJECT || DEFAULT_SUBJECT;
