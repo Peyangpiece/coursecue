@@ -1,0 +1,2 @@
+# 公開版の署名を確かめる公開鍵（Ed25519、SPKI DER の base64。1 行に 1 つ）。npm run deploy-key で作る。
+# ここに鍵がない間、Mac サービスは公開版に自動更新しない（local/auto-update.js）

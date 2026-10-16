@@ -39,8 +39,9 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: write
+    # 配布用リポジトリに書き込める個人アクセストークン（SABORO_RELEASE_TOKEN）は、gh を使う 2 つのステップだけに渡す
+    # （ジョブ全体の env に置くと npm ci の依存パッケージのスクリプトや electron-builder からも読めてしまう。流出すると偽の版を配れる）
     env:
-      GH_TOKEN: ${{ secrets.SABORO_RELEASE_TOKEN }}
       DIST_REPO: Peyangpiece/SaBoRo
     steps:
       - uses: actions/checkout@v4
@@ -58,6 +59,8 @@ jobs:
           if [ "${GITHUB_REF_NAME}" != "desktop-${{ steps.version.outputs.tag }}" ]; then echo "タグ ${GITHUB_REF_NAME} と package.json の版 ${{ steps.version.outputs.tag }} が違います。package.json の版を上げてからタグを付けてください"; exit 1; fi
       # 同じ版の作りかけ（下書き・配布物のない Release）が残っていれば消してから作る。配布物のある公開済みの Release があれば、消さずに止める
       - name: Remove stale release for this version
+        env:
+          GH_TOKEN: ${{ secrets.SABORO_RELEASE_TOKEN }}
         run: |
           published=$(gh api repos/$DIST_REPO/releases --paginate --jq '.[] | select(.tag_name=="${{ steps.version.outputs.tag }}" and (.draft|not) and (.assets|length)>0) | .id')
           if [ -n "$published" ]; then echo "版 ${{ steps.version.outputs.tag }} は公開済みです。package.json の版を上げてください"; exit 1; fi
@@ -65,14 +68,21 @@ jobs:
           gh api -X DELETE "repos/$DIST_REPO/git/refs/tags/${{ steps.version.outputs.tag }}" 2>/dev/null || true
       # PDF の読み取り（pdf-parse）が使う @napi-rs/canvas は OS・CPU ごとに別のパッケージで、npm ci はこの Mac（Apple シリコン）用しか入れない。
       # 入っていないと Windows と Intel Mac で起動時に「DOMMatrix is not defined」になるため、配る分をすべて取り込む（版は package-lock.json に合わせる）
+      # 取り込むものは package-lock.json の integrity（sha512）と照らし、違えば止める（npm ci と同じ確かめ方）
       - name: Add native canvas binaries for every target
         run: |
           for pkg in canvas-win32-x64-msvc canvas-darwin-x64 canvas-darwin-arm64; do
             dir="node_modules/@napi-rs/$pkg"
             [ -d "$dir" ] && continue
             ver=$(node -p "require('./package-lock.json').packages['node_modules/@napi-rs/$pkg'].version")
+            want=$(node -p "require('./package-lock.json').packages['node_modules/@napi-rs/$pkg'].integrity")
+            tgz="$RUNNER_TEMP/$pkg.tgz"
+            curl -fsSL -o "$tgz" "https://registry.npmjs.org/@napi-rs/$pkg/-/$pkg-$ver.tgz"
+            got="sha512-$(openssl dgst -sha512 -binary "$tgz" | openssl base64 -A)"
+            if [ "$got" != "$want" ]; then echo "::error::@napi-rs/$pkg $ver の integrity が package-lock.json と違います（$got）"; exit 1; fi
             mkdir -p "$dir"
-            curl -fsSL "https://registry.npmjs.org/@napi-rs/$pkg/-/$pkg-$ver.tgz" | tar -xz -C "$dir" --strip-components=1
+            tar -xzf "$tgz" -C "$dir" --strip-components=1
+            rm -f "$tgz"
           done
           ls node_modules/@napi-rs/
       # Mac の署名：GitHub の Secrets に自分で作ったコード署名の証明書（MAC_SIGN_P12：.p12 を base64 にしたもの、MAC_SIGN_PASSWORD：その書き出しのパスワード）があれば、
@@ -109,6 +119,8 @@ jobs:
       # ホームページのダウンロードボタンは版の番号を知らないので、版の番号のない名前の複製も載せる
       # （https://github.com/Peyangpiece/SaBoRo/releases/latest/download/saboro-mac-arm64.dmg などで常に最新版を指せる）
       - name: Create the release with every installer
+        env:
+          GH_TOKEN: ${{ secrets.SABORO_RELEASE_TOKEN }}
         run: |
           v="${{ steps.version.outputs.tag }}"; v="${v#v}"
           cp "release/saboro-$v-mac-arm64.dmg" release/saboro-mac-arm64.dmg

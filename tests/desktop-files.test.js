@@ -16,3 +16,11 @@ test('Mac の署名：electron-builder の署名は止め、afterPack で自分�
  for(const k of ['secrets.MAC_SIGN_P12','secrets.MAC_SIGN_PASSWORD','if [ -z "$MAC_SIGN_P12" ]; then','security create-keychain','security import','rm -f "$RUNNER_TEMP/sign.p12"','MAC_SIGN_IDENTITY=','MAC_SIGN_KEYCHAIN='])assert.ok(step.includes(k),k);
  assert.doesNotMatch(step,/echo "\$MAC_SIGN_(P12|PASSWORD)"/,'秘密をログに出さない')});
 test('manabo 用のブラウザの準備済みの印には Playwright の版を書き、版が変われば取り込み直す（アプリの更新後に同期が止まらないように）',()=>{const src=readFileSync('desktop/main.js','utf8');assert.match(src,/node_modules\/playwright-core\/package\.json/);assert.match(src,/readFileSync\(marker,'utf8'\)\.trim\(\)===version/);assert.match(src,/writeFileSync\(marker,version\|\|/)});
+// 配布用リポジトリに書き込めるトークンは gh を使うステップだけに渡す（ジョブ全体の env にあると、npm ci の依存パッケージのスクリプトや electron-builder からも読める。流出すると偽の版を配れる）
+// 取り込む @napi-rs のパッケージは package-lock.json の integrity と照らす（curl | tar でそのまま展開しない）
+test('配布：SABORO_RELEASE_TOKEN は gh のステップだけに渡し、取り込むパッケージは integrity で確かめる',()=>{const wf=readFileSync('.github/workflows/desktop.yml','utf8'),build=wf.slice(wf.indexOf('\n  build:'));
+ const jobEnv=build.slice(0,build.indexOf('    steps:')).replace(/^\s*#.*$/gm,'');assert.doesNotMatch(jobEnv,/SABORO_RELEASE_TOKEN|GH_TOKEN/,'ジョブ全体の env に置かない');
+ const steps=build.split(/\n      - name: /).slice(1).map(s=>({name:s.slice(0,s.indexOf('\n')),body:s}));
+ for(const s of steps){const uses=/\bgh (api|release)\b/.test(s.body),has=/GH_TOKEN: \$\{\{ secrets\.SABORO_RELEASE_TOKEN \}\}/.test(s.body);assert.equal(has,uses,`${s.name}：gh を使うステップだけにトークンを渡す`)}
+ const napi=steps.find(s=>s.name.startsWith('Add native canvas binaries'));assert.ok(napi);assert.doesNotMatch(napi.body,/curl[^\n]*\|\s*tar/,'落としたものをそのまま展開しない');
+ for(const k of ["].integrity\")","openssl dgst -sha512 -binary",'if [ "$got" != "$want" ]','exit 1'])assert.ok(napi.body.includes(k),k)});
