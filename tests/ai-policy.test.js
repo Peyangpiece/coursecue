@@ -1,13 +1,190 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {aiPolicyFrom,aiForbidden,AI_FORBIDDEN_ACTION} from '../local/core.js';import {Manabo} from '../local/manabo.js';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {aiPolicyFrom, aiForbidden, AI_FORBIDDEN_ACTION} from '../local/core.js';
+import {Manabo} from '../local/manabo.js';
 // その回の授業資料に AI の利用禁止の記載がある課題：回答は参考として作るが、saboro から提出しない（レポートは入力もしない、クイズは入力まで）。記載のない回はこれまでどおり
-test('資料の記載から AI の利用禁止を見つける（禁止しない・使ってよい・英単語の AI は対象外）',()=>{const f=text=>aiPolicyFrom([{file:'第1回.pdf',text}]);assert.deepEqual(f('ガイダンス\nレポートの作成に生成AIを使用することは禁止します。\n以上'),{forbidden:true,evidence:'レポートの作成に生成AIを使用することは禁止します',file:'第1回.pdf'});for(const t of ['課題にはAIを使わないこと','ChatGPT等の利用は認めません','禁止事項：生成AIによる作成','AIの使用は不可とする'])assert(f(t)?.forbidden,t);for(const t of ['生成AIの使用は禁止しません。','AIツールを使ってもよいが出典を明記すること','AIを活用したマーケティング戦略','EMAILでの提出は不可','今後の社会では生成AIの活用が不可欠である。','生成AIなしでは不可能な分析','AIによる不可逆な変化'])assert.equal(f(t),null,t)});
-test('自分の設定（全回）がその回の資料の判断より優先する',()=>{const t={aiPolicy:{forbidden:true}},s={timetable:{}};assert.equal(aiForbidden(s,t,'経営科学Ⅱ'),true);s.timetable['経営科学Ⅱ']={ai:'許可'};assert.equal(aiForbidden(s,t,'経営科学Ⅱ'),false);s.timetable['管理会計Ⅱ']={ai:'禁止'};assert.equal(aiForbidden(s,{},'管理会計Ⅱ'),true);assert.equal(aiForbidden(s,{},'意思決定論'),false)});
-function setup(state,files){const m=new Manabo({root:'/nonexistent',work:'/nonexistent',state,save:async()=>{},credentials:async()=>null,ai:async()=>({grounded:true,draft:'参考の回答',answers:[{name:'q1',value:'参考の回答',evidence:'一般知識'}],needsUser:[],notes:[]})});const filled=[];const page={locator:sel=>{filled.push(sel);return {fill:async()=>{},count:async()=>1,filter:()=>page.locator(sel),all:async()=>[]}}};Object.assign(m,{resolveQuiz:async()=>{},form:async()=>({p:page,questions:[{name:'q1',type:'textarea',text:'考えを述べよ',options:[]}],text:'課題の説明'}),materials:async(name,round)=>files.filter(f=>Number(f.file.match(/第(\d+)回/)?.[1]||0)<=round),saveDraft:async()=>{},submitForm:async()=>{throw Error('提出してしまった')}});return {m,filled}}
-const banFiles=[{file:'第3回_資料.pdf',text:'本日の課題\nレポートに生成AIを使用することは禁止します。'},{file:'第2回_資料.pdf',text:'前回の復習'}];
-const task=(o)=>({id:'a',course:0,round:3,title:'第3回レポート',type:'レポート',status:'ready',url:'https://manabo.cnc.chukyo-u.ac.jp/content/1/report/tok/',answer:'',...o});
-test('その回の資料で禁止されたレポート：回答は参考として作り、manabo には入力・提出しない。提出の指示は断る',async()=>{const state={tasks:[],materials:[],settings:{},courses:[{name:'経営科学Ⅱ',id:'1'}]};const {m,filled}=setup(state,banFiles);const t=task();state.tasks.push(t);await m.processTask(t,false);assert.equal(t.aiPolicy.forbidden,true);assert.equal(t.aiPolicy.file,'第3回_資料.pdf');assert.equal(t.answer,'参考の回答');assert.equal(t.status,'draft');assert.equal(t.action,AI_FORBIDDEN_ACTION);assert.deepEqual(filled,[],'入力欄には書かない');await assert.rejects(m.processTask(t,true),/AI の利用が禁止/);await assert.rejects(m.enterAttendance(t,'1234'),/AI の利用が禁止/)});
-test('ほかの回の資料の禁止は関係しない（第4回の課題は第3回の禁止の影響を受けない）',async()=>{const state={tasks:[],materials:[],settings:{},courses:[{name:'経営科学Ⅱ',id:'1'}]};const {m,filled}=setup(state,banFiles);const t=task({id:'b',round:4,title:'第4回レポート'});state.tasks.push(t);await m.processTask(t,false).catch(()=>{});assert.equal(t.aiPolicy.forbidden,false);assert(filled.length>0,'これまでどおり入力する');assert.notEqual(t.action,AI_FORBIDDEN_ACTION)});
-test('その回で禁止されたクイズも回答は入力する（提出は本人）',async()=>{const state={tasks:[],materials:[],settings:{},courses:[{name:'経営科学Ⅱ',id:'1'}]};const {m,filled}=setup(state,banFiles);const t=task({id:'c',title:'第3回小テスト',type:'クイズ',url:'https://manabo.cnc.chukyo-u.ac.jp/content/1/quiz/tok/'});state.tasks.push(t);await m.processTask(t,false);assert(filled.length>0,'クイズは入力する');assert.equal(t.status,'answered');assert.match(t.action,/AI の利用が禁止/)});
-test('同期では課題ごとに、その回の資料と課題の説明から方針を記録する',async()=>{const state={tasks:[{id:'a',course:0,round:3,status:'ready',description:''},{id:'b',course:0,round:2,status:'ready',description:'この課題では ChatGPT等の利用は認めません'},{id:'c',course:0,round:4,status:'ready',description:''}],materials:[],settings:{},courses:[{name:'経営科学Ⅱ',id:'1'}]};const m=new Manabo({root:'/nonexistent',work:'/nonexistent',state,save:async()=>{},credentials:async()=>null,ai:async()=>{}});m.materials=async()=>banFiles;await m.updateAiPolicy(0);assert.deepEqual(state.tasks.map(t=>t.aiPolicy.forbidden),[true,true,false]);assert.equal(state.tasks[1].aiPolicy.file,'課題の説明')});
-test('資料で禁止の回は、参考例として作るよう AI に伝える（提出しないのはこれまでどおり）。禁止でない回は伝えない',async()=>{const state={tasks:[],materials:[],settings:{},courses:[{name:'経営科学Ⅱ',id:'1'}]};const calls=[];const {m,filled}=setup(state,banFiles);const ai=m.ai;m.ai=async(...a)=>{calls.push(a[3]);return ai(...a)};const t=task();state.tasks.push(t);await m.processTask(t,false);assert.deepEqual(calls.map(({reference})=>({reference})),[{reference:true}]);assert.equal(calls[0].urgent,false,'同期の中の生成は急ぎではない（SaBoRo の AI なら Batch）');assert.match(calls[0].key,/^[0-9a-f]{64}$/,'同じ依頼の目印');assert.equal(t.status,'draft');assert.deepEqual(filled,[],'入力しない');const t4=task({id:'d',round:4,title:'第4回レポート'});state.tasks.push(t4);await m.processTask(t4,false).catch(()=>{});assert.equal(calls.length,2);assert.equal(calls[1].reference,undefined,'禁止でない回は参考例の指示を付けない')});
-test('参考例の指示は reference のときだけ付く',async()=>{const {prompt}=await import('../local/generate.js');assert.match(prompt({},[],'',{reference:true}),/参考例です。そのまま提出せず/);assert.doesNotMatch(prompt({},[],''),/参考例です/)});
+test('資料の記載から AI の利用禁止を見つける（禁止しない・使ってよい・英単語の AI は対象外）', () => {
+  const f = text => aiPolicyFrom([{file: '第1回.pdf', text}]);
+  assert.deepEqual(f('ガイダンス\nレポートの作成に生成AIを使用することは禁止します。\n以上'), {
+    forbidden: true,
+    evidence: 'レポートの作成に生成AIを使用することは禁止します',
+    file: '第1回.pdf'
+  });
+  for (const t of [
+    '課題にはAIを使わないこと',
+    'ChatGPT等の利用は認めません',
+    '禁止事項：生成AIによる作成',
+    'AIの使用は不可とする'
+  ])
+    assert(f(t)?.forbidden, t);
+  for (const t of [
+    '生成AIの使用は禁止しません。',
+    'AIツールを使ってもよいが出典を明記すること',
+    'AIを活用したマーケティング戦略',
+    'EMAILでの提出は不可',
+    '今後の社会では生成AIの活用が不可欠である。',
+    '生成AIなしでは不可能な分析',
+    'AIによる不可逆な変化'
+  ])
+    assert.equal(f(t), null, t);
+});
+test('自分の設定（全回）がその回の資料の判断より優先する', () => {
+  const t = {aiPolicy: {forbidden: true}},
+    s = {timetable: {}};
+  assert.equal(aiForbidden(s, t, '経営科学Ⅱ'), true);
+  s.timetable['経営科学Ⅱ'] = {ai: '許可'};
+  assert.equal(aiForbidden(s, t, '経営科学Ⅱ'), false);
+  s.timetable['管理会計Ⅱ'] = {ai: '禁止'};
+  assert.equal(aiForbidden(s, {}, '管理会計Ⅱ'), true);
+  assert.equal(aiForbidden(s, {}, '意思決定論'), false);
+});
+function setup(state, files) {
+  const m = new Manabo({
+    root: '/nonexistent',
+    work: '/nonexistent',
+    state,
+    save: async () => {},
+    credentials: async () => null,
+    ai: async () => ({
+      grounded: true,
+      draft: '参考の回答',
+      answers: [{name: 'q1', value: '参考の回答', evidence: '一般知識'}],
+      needsUser: [],
+      notes: []
+    })
+  });
+  const filled = [];
+  const page = {
+    locator: sel => {
+      filled.push(sel);
+      return {fill: async () => {}, count: async () => 1, filter: () => page.locator(sel), all: async () => []};
+    }
+  };
+  Object.assign(m, {
+    resolveQuiz: async () => {},
+    form: async () => ({
+      p: page,
+      questions: [{name: 'q1', type: 'textarea', text: '考えを述べよ', options: []}],
+      text: '課題の説明'
+    }),
+    materials: async (name, round) => files.filter(f => Number(f.file.match(/第(\d+)回/)?.[1] || 0) <= round),
+    saveDraft: async () => {},
+    submitForm: async () => {
+      throw Error('提出してしまった');
+    }
+  });
+  return {m, filled};
+}
+const banFiles = [
+  {file: '第3回_資料.pdf', text: '本日の課題\nレポートに生成AIを使用することは禁止します。'},
+  {file: '第2回_資料.pdf', text: '前回の復習'}
+];
+const task = o => ({
+  id: 'a',
+  course: 0,
+  round: 3,
+  title: '第3回レポート',
+  type: 'レポート',
+  status: 'ready',
+  url: 'https://manabo.cnc.chukyo-u.ac.jp/content/1/report/tok/',
+  answer: '',
+  ...o
+});
+test('その回の資料で禁止されたレポート：回答は参考として作り、manabo には入力・提出しない。提出の指示は断る', async () => {
+  const state = {tasks: [], materials: [], settings: {}, courses: [{name: '経営科学Ⅱ', id: '1'}]};
+  const {m, filled} = setup(state, banFiles);
+  const t = task();
+  state.tasks.push(t);
+  await m.processTask(t, false);
+  assert.equal(t.aiPolicy.forbidden, true);
+  assert.equal(t.aiPolicy.file, '第3回_資料.pdf');
+  assert.equal(t.answer, '参考の回答');
+  assert.equal(t.status, 'draft');
+  assert.equal(t.action, AI_FORBIDDEN_ACTION);
+  assert.deepEqual(filled, [], '入力欄には書かない');
+  await assert.rejects(m.processTask(t, true), /AI の利用が禁止/);
+  await assert.rejects(m.enterAttendance(t, '1234'), /AI の利用が禁止/);
+});
+test('ほかの回の資料の禁止は関係しない（第4回の課題は第3回の禁止の影響を受けない）', async () => {
+  const state = {tasks: [], materials: [], settings: {}, courses: [{name: '経営科学Ⅱ', id: '1'}]};
+  const {m, filled} = setup(state, banFiles);
+  const t = task({id: 'b', round: 4, title: '第4回レポート'});
+  state.tasks.push(t);
+  await m.processTask(t, false).catch(() => {});
+  assert.equal(t.aiPolicy.forbidden, false);
+  assert(filled.length > 0, 'これまでどおり入力する');
+  assert.notEqual(t.action, AI_FORBIDDEN_ACTION);
+});
+test('その回で禁止されたクイズも回答は入力する（提出は本人）', async () => {
+  const state = {tasks: [], materials: [], settings: {}, courses: [{name: '経営科学Ⅱ', id: '1'}]};
+  const {m, filled} = setup(state, banFiles);
+  const t = task({
+    id: 'c',
+    title: '第3回小テスト',
+    type: 'クイズ',
+    url: 'https://manabo.cnc.chukyo-u.ac.jp/content/1/quiz/tok/'
+  });
+  state.tasks.push(t);
+  await m.processTask(t, false);
+  assert(filled.length > 0, 'クイズは入力する');
+  assert.equal(t.status, 'answered');
+  assert.match(t.action, /AI の利用が禁止/);
+});
+test('同期では課題ごとに、その回の資料と課題の説明から方針を記録する', async () => {
+  const state = {
+    tasks: [
+      {id: 'a', course: 0, round: 3, status: 'ready', description: ''},
+      {id: 'b', course: 0, round: 2, status: 'ready', description: 'この課題では ChatGPT等の利用は認めません'},
+      {id: 'c', course: 0, round: 4, status: 'ready', description: ''}
+    ],
+    materials: [],
+    settings: {},
+    courses: [{name: '経営科学Ⅱ', id: '1'}]
+  };
+  const m = new Manabo({
+    root: '/nonexistent',
+    work: '/nonexistent',
+    state,
+    save: async () => {},
+    credentials: async () => null,
+    ai: async () => {}
+  });
+  m.materials = async () => banFiles;
+  await m.updateAiPolicy(0);
+  assert.deepEqual(
+    state.tasks.map(t => t.aiPolicy.forbidden),
+    [true, true, false]
+  );
+  assert.equal(state.tasks[1].aiPolicy.file, '課題の説明');
+});
+test('資料で禁止の回は、参考例として作るよう AI に伝える（提出しないのはこれまでどおり）。禁止でない回は伝えない', async () => {
+  const state = {tasks: [], materials: [], settings: {}, courses: [{name: '経営科学Ⅱ', id: '1'}]};
+  const calls = [];
+  const {m, filled} = setup(state, banFiles);
+  const ai = m.ai;
+  m.ai = async (...a) => {
+    calls.push(a[3]);
+    return ai(...a);
+  };
+  const t = task();
+  state.tasks.push(t);
+  await m.processTask(t, false);
+  assert.deepEqual(
+    calls.map(({reference}) => ({reference})),
+    [{reference: true}]
+  );
+  assert.equal(calls[0].urgent, false, '同期の中の生成は急ぎではない（SaBoRo の AI なら Batch）');
+  assert.match(calls[0].key, /^[0-9a-f]{64}$/, '同じ依頼の目印');
+  assert.equal(t.status, 'draft');
+  assert.deepEqual(filled, [], '入力しない');
+  const t4 = task({id: 'd', round: 4, title: '第4回レポート'});
+  state.tasks.push(t4);
+  await m.processTask(t4, false).catch(() => {});
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].reference, undefined, '禁止でない回は参考例の指示を付けない');
+});
+test('参考例の指示は reference のときだけ付く', async () => {
+  const {prompt} = await import('../local/generate.js');
+  assert.match(prompt({}, [], '', {reference: true}), /参考例です。そのまま提出せず/);
+  assert.doesNotMatch(prompt({}, [], ''), /参考例です/);
+});

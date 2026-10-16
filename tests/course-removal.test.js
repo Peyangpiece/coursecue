@@ -1,6 +1,139 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import vm from 'node:vm';import {webcrypto} from 'node:crypto';import {removeCourse,restoreCourse,mergeCourses} from '../local/core.js';import {Manabo} from '../local/manabo.js';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+import {webcrypto} from 'node:crypto';
+import {removeCourse, restoreCourse, mergeCourses} from '../local/core.js';
+import {Manabo} from '../local/manabo.js';
 // 授業の削除：並び（t.course の番号）は変えず、課題・資料の記録を外して保管し、元に戻すと戻る
-test('授業を削除すると課題・資料を外して保管し、元に戻すと戻る。並びと他の授業の課題は変わらない',()=>{const state={courses:[{name:'経営科学Ⅱ',id:'1'},{name:'資格センター募集講座紹介',id:'2'},{name:'管理会計Ⅱ',id:'3'}],tasks:[{id:'a',course:0},{id:'b',course:1},{id:'c',course:2}],materials:[{id:'m1',course:'資格センター募集講座紹介'},{id:'m2',course:'管理会計Ⅱ'}]};assert.deepEqual(removeCourse(state,'資格センター募集講座紹介'),{tasks:1});assert.deepEqual(state.courses.map(c=>[c.name,!!c.removed]),[['経営科学Ⅱ',false],['資格センター募集講座紹介',true],['管理会計Ⅱ',false]]);assert.deepEqual(state.tasks.map(t=>[t.id,t.course]),[['a',0],['c',2]]);assert.deepEqual(state.materials.map(m=>m.id),['m2']);assert.deepEqual(mergeCourses(state.courses,[{href:'/class/2/',text:'資格センター募集講座紹介'}])[1].removed,true,'manabo の授業一覧を読み直しても削除のまま');restoreCourse(state,'資格センター募集講座紹介');assert.equal(state.courses[1].removed,undefined);assert.deepEqual(state.tasks.map(t=>t.id).sort(),['a','b','c']);assert.deepEqual(state.materials.map(m=>m.id).sort(),['m1','m2']);assert.deepEqual(state.removedCourseData,{});assert.throws(()=>removeCourse(state,'存在しない授業'))});
-test('削除した授業は同期で読まない',async()=>{const state={tasks:[],materials:[],settings:{},courses:[{name:'資格センター募集講座紹介',id:'2',removed:true}]};const m=new Manabo({root:'/nonexistent',work:'/nonexistent',state,save:async()=>{},credentials:async()=>null,ai:async()=>{}});let opened=false;await m.crawlCourse(0,{goto:async()=>{opened=true}},{missing:new Map(),infoIssues:[],queue:[],timing:{courses:{}}});assert.equal(opened,false)});
-function boot(){const nodes=new Map();const el=id=>{if(!nodes.has(id))nodes.set(id,{innerHTML:'',textContent:'',value:'',style:{},classList:{add(){},remove(){},contains(){return false}},focus(){}});return nodes.get(id)};const context={location:{hostname:'example.com',port:'',hash:''},localStorage:{getItem:()=>null,setItem(){},removeItem(){}},document:{getElementById:el,querySelector:el,querySelectorAll:()=>[],addEventListener(){},body:{style:{}},activeElement:null},crypto:webcrypto,setInterval(){},setTimeout(){},clearTimeout(){},window:{},URLSearchParams,console};vm.createContext(context);for(const f of ['dist/app.js','dist/timetable.js'])vm.runInContext(readFileSync(f,'utf8'),context);return src=>vm.runInContext(src,context)}
-test('画面：削除した授業は授業一覧・時間割に出さず、「削除した授業」から元に戻せる',()=>{const run=boot();const out=run(`key='k';state.courses=[{name:'経営科学Ⅱ',id:'1'},{name:'資格センター募集講座紹介',id:'2',removed:true}];state.features=['removecourse'];adoptCourses();JSON.stringify({table:courseTable(),removed:removedCourses(),header:courseHeader(0),sessions:sessionsOn('2026-10-13').map(s=>s.i)})`);const r=JSON.parse(out);assert.match(r.table,/経営科学Ⅱ/);assert.doesNotMatch(r.table,/資格センター/);assert.match(r.removed,/資格センター募集講座紹介[\s\S]*data-restorecourse="1"/);assert.match(r.header,/data-removecourse="0"/);assert(!r.sessions.includes(1))});
+test('授業を削除すると課題・資料を外して保管し、元に戻すと戻る。並びと他の授業の課題は変わらない', () => {
+  const state = {
+    courses: [
+      {name: '経営科学Ⅱ', id: '1'},
+      {name: '資格センター募集講座紹介', id: '2'},
+      {name: '管理会計Ⅱ', id: '3'}
+    ],
+    tasks: [
+      {id: 'a', course: 0},
+      {id: 'b', course: 1},
+      {id: 'c', course: 2}
+    ],
+    materials: [
+      {id: 'm1', course: '資格センター募集講座紹介'},
+      {id: 'm2', course: '管理会計Ⅱ'}
+    ]
+  };
+  assert.deepEqual(removeCourse(state, '資格センター募集講座紹介'), {tasks: 1});
+  assert.deepEqual(
+    state.courses.map(c => [c.name, !!c.removed]),
+    [
+      ['経営科学Ⅱ', false],
+      ['資格センター募集講座紹介', true],
+      ['管理会計Ⅱ', false]
+    ]
+  );
+  assert.deepEqual(
+    state.tasks.map(t => [t.id, t.course]),
+    [
+      ['a', 0],
+      ['c', 2]
+    ]
+  );
+  assert.deepEqual(
+    state.materials.map(m => m.id),
+    ['m2']
+  );
+  assert.deepEqual(
+    mergeCourses(state.courses, [{href: '/class/2/', text: '資格センター募集講座紹介'}])[1].removed,
+    true,
+    'manabo の授業一覧を読み直しても削除のまま'
+  );
+  restoreCourse(state, '資格センター募集講座紹介');
+  assert.equal(state.courses[1].removed, undefined);
+  assert.deepEqual(state.tasks.map(t => t.id).sort(), ['a', 'b', 'c']);
+  assert.deepEqual(state.materials.map(m => m.id).sort(), ['m1', 'm2']);
+  assert.deepEqual(state.removedCourseData, {});
+  assert.throws(() => removeCourse(state, '存在しない授業'));
+});
+test('削除した授業は同期で読まない', async () => {
+  const state = {
+    tasks: [],
+    materials: [],
+    settings: {},
+    courses: [{name: '資格センター募集講座紹介', id: '2', removed: true}]
+  };
+  const m = new Manabo({
+    root: '/nonexistent',
+    work: '/nonexistent',
+    state,
+    save: async () => {},
+    credentials: async () => null,
+    ai: async () => {}
+  });
+  let opened = false;
+  await m.crawlCourse(
+    0,
+    {
+      goto: async () => {
+        opened = true;
+      }
+    },
+    {missing: new Map(), infoIssues: [], queue: [], timing: {courses: {}}}
+  );
+  assert.equal(opened, false);
+});
+function boot() {
+  const nodes = new Map();
+  const el = id => {
+    if (!nodes.has(id))
+      nodes.set(id, {
+        innerHTML: '',
+        textContent: '',
+        value: '',
+        style: {},
+        classList: {
+          add() {},
+          remove() {},
+          contains() {
+            return false;
+          }
+        },
+        focus() {}
+      });
+    return nodes.get(id);
+  };
+  const context = {
+    location: {hostname: 'example.com', port: '', hash: ''},
+    localStorage: {getItem: () => null, setItem() {}, removeItem() {}},
+    document: {
+      getElementById: el,
+      querySelector: el,
+      querySelectorAll: () => [],
+      addEventListener() {},
+      body: {style: {}},
+      activeElement: null
+    },
+    crypto: webcrypto,
+    setInterval() {},
+    setTimeout() {},
+    clearTimeout() {},
+    window: {},
+    URLSearchParams,
+    console
+  };
+  vm.createContext(context);
+  for (const f of ['dist/app.js', 'dist/timetable.js']) vm.runInContext(readFileSync(f, 'utf8'), context);
+  return src => vm.runInContext(src, context);
+}
+test('画面：削除した授業は授業一覧・時間割に出さず、「削除した授業」から元に戻せる', () => {
+  const run = boot();
+  const out = run(
+    `key='k';state.courses=[{name:'経営科学Ⅱ',id:'1'},{name:'資格センター募集講座紹介',id:'2',removed:true}];state.features=['removecourse'];adoptCourses();JSON.stringify({table:courseTable(),removed:removedCourses(),header:courseHeader(0),sessions:sessionsOn('2026-10-13').map(s=>s.i)})`
+  );
+  const r = JSON.parse(out);
+  assert.match(r.table, /経営科学Ⅱ/);
+  assert.doesNotMatch(r.table, /資格センター/);
+  assert.match(r.removed, /資格センター募集講座紹介[\s\S]*data-restorecourse="1"/);
+  assert.match(r.header, /data-removecourse="0"/);
+  assert(!r.sessions.includes(1));
+});

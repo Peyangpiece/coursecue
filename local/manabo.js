@@ -1,190 +1,2126 @@
-import '../dist/profile-form.js';import {chooseContent,isLate,regularOnly,regularFor,SPARE,dropSpareTasks} from './content-resolution.js';import {cleanAnswer,AiPending,AiTruncated,personalCandidate,PERSONAL_ACTION,writingStyle} from './generate.js';
+import '../dist/profile-form.js';
+import {chooseContent, isLate, regularOnly, regularFor, SPARE, dropSpareTasks} from './content-resolution.js';
+import {cleanAnswer, AiPending, AiTruncated, personalCandidate, PERSONAL_ACTION, writingStyle} from './generate.js';
 // 同期の並行数（授業ページを同時に開く数）と、CUBICS を読み直すまでの時間
-const SYNC_PARALLEL=Math.max(1,Math.min(5,Number(process.env.COURSECUE_SYNC_PARALLEL)||3)),CUBICS_MAX_AGE=60*60*1000;
-import {taskIdentity,mergeTasks} from './task-identity.js';import {weekdayOf,periodOf,scheduleFor,calendar,calendarEnd} from './calendar.js';import {courseInfoPlan,mergeCourseInfo,quoteSource,fileRound,modeExcerpt} from './timetable.js';import {CUBICS_URL,extractGrid,parseGrid,mapEntries} from './cubics.js';import {inside,duplicateCandidates,trashFile,preferLayout,layoutDuplicates} from './download-dir.js';
-import { chromium } from 'playwright';import AdmZip from 'adm-zip';import { mkdir,readFile,writeFile,readdir,access,stat,rm } from 'node:fs/promises';import { join,basename } from 'node:path';import {aiPolicyFrom,aiForbidden,AI_FORBIDDEN_ACTION, courseList,courseNames,courseIdOf,mergeCourses,LMS,validLms,hash,scrubIds,lectureDate,inWindow,deadline,deadlineFromText,deadlineFromMaterials,attendance,submissionGate,roundOf,roundPattern,contentType } from './core.js';
+const SYNC_PARALLEL = Math.max(1, Math.min(5, Number(process.env.COURSECUE_SYNC_PARALLEL) || 3)),
+  CUBICS_MAX_AGE = 60 * 60 * 1000;
+import {taskIdentity, mergeTasks} from './task-identity.js';
+import {weekdayOf, periodOf, scheduleFor, calendar, calendarEnd} from './calendar.js';
+import {courseInfoPlan, mergeCourseInfo, quoteSource, fileRound, modeExcerpt} from './timetable.js';
+import {CUBICS_URL, extractGrid, parseGrid, mapEntries} from './cubics.js';
+import {inside, duplicateCandidates, trashFile, preferLayout, layoutDuplicates} from './download-dir.js';
+import {chromium} from 'playwright';
+import AdmZip from 'adm-zip';
+import {mkdir, readFile, writeFile, readdir, access, stat, rm} from 'node:fs/promises';
+import {join, basename} from 'node:path';
+import {
+  aiPolicyFrom,
+  aiForbidden,
+  AI_FORBIDDEN_ACTION,
+  courseList,
+  courseNames,
+  courseIdOf,
+  mergeCourses,
+  LMS,
+  validLms,
+  hash,
+  scrubIds,
+  lectureDate,
+  inWindow,
+  deadline,
+  deadlineFromText,
+  deadlineFromMaterials,
+  attendance,
+  submissionGate,
+  roundOf,
+  roundPattern,
+  contentType
+} from './core.js';
 // manabo のボタンの文字（以前の版で課題名として拾ってしまったもの）
-const BUTTON_TITLE=/^(受講|開始|受講開始|解答開始|回答開始)$/;
-const contentId=url=>{try{return new URL(url).pathname.match(/^\/content\/(\d+)\//)?.[1]||null}catch{return null}};
+const BUTTON_TITLE = /^(受講|開始|受講開始|解答開始|回答開始)$/;
+const contentId = url => {
+  try {
+    return new URL(url).pathname.match(/^\/content\/(\d+)\//)?.[1] || null;
+  } catch {
+    return null;
+  }
+};
 // [1,2,3,5] → 「第1〜3・5回」
-const roundRanges=rounds=>{const rs=[...new Set(rounds)].sort((a,b)=>a-b),parts=[];for(let i=0;i<rs.length;i++){let j=i;while(rs[j+1]===rs[j]+1)j++;parts.push(i===j?`${rs[i]}`:`${rs[i]}〜${rs[j]}`);i=j}return `第${parts.join('・')}回`};
-const markDone=t=>{t.status='done';t.action='';t.submissionIntent=null;t.submittedAt=t.submittedAt||new Date().toISOString()};
+const roundRanges = rounds => {
+  const rs = [...new Set(rounds)].sort((a, b) => a - b),
+    parts = [];
+  for (let i = 0; i < rs.length; i++) {
+    let j = i;
+    while (rs[j + 1] === rs[j] + 1) j++;
+    parts.push(i === j ? `${rs[i]}` : `${rs[i]}〜${rs[j]}`);
+    i = j;
+  }
+  return `第${parts.join('・')}回`;
+};
+const markDone = t => {
+  t.status = 'done';
+  t.action = '';
+  t.submissionIntent = null;
+  t.submittedAt = t.submittedAt || new Date().toISOString();
+};
 // 授業ページ内で実行：シラバスの表（「授業計画」の欄がある表）・授業計画の各行・お知らせ欄を読む
-export function classInfo(){const vis=e=>!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length);const own=e=>(e.textContent||'').replace(/\s+/g,'');const label=[...document.querySelectorAll('th,td,dt,div,span,p,h2,h3,h4,h5,label')].find(e=>own(e)==='授業計画'&&vis(e)&&![...e.children].some(c=>own(c)==='授業計画'));let syllabus='',rows=[];if(label){const table=label.closest('table')||label.parentElement?.parentElement;syllabus=table?.innerText||'';const plan=label.closest('tr')?.querySelector('table')||[...(table?.querySelectorAll('table')||[])].find(t=>/項目|内容|テーマ/.test(t.rows[0]?.innerText||''))||label.parentElement?.querySelector('table');rows=[...(plan?.rows||[])].map(r=>[...r.cells].map(c=>c.innerText.trim())).map(c=>({round:Number((c[0]||'').normalize('NFKC').match(/^第?\s*(\d{1,2})\s*回?$/)?.[1]||0),text:c.slice(1).join(' ')})).filter(r=>r.round)}const head=[...document.querySelectorAll('h1,h2,h3,h4,h5,div,span,p')].find(e=>own(e)==='お知らせ'&&vis(e)&&![...e.children].some(c=>own(c)==='お知らせ'));const box=head&&(head.closest('.panel,.card,section')||head.parentElement?.parentElement);const notice=box&&!box.querySelector('#div-class-directories')?box.innerText:'';return {syllabus,rows,notice}}
+export function classInfo() {
+  const vis = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+  const own = e => (e.textContent || '').replace(/\s+/g, '');
+  const label = [...document.querySelectorAll('th,td,dt,div,span,p,h2,h3,h4,h5,label')].find(
+    e => own(e) === '授業計画' && vis(e) && ![...e.children].some(c => own(c) === '授業計画')
+  );
+  let syllabus = '',
+    rows = [];
+  if (label) {
+    const table = label.closest('table') || label.parentElement?.parentElement;
+    syllabus = table?.innerText || '';
+    const plan =
+      label.closest('tr')?.querySelector('table') ||
+      [...(table?.querySelectorAll('table') || [])].find(t => /項目|内容|テーマ/.test(t.rows[0]?.innerText || '')) ||
+      label.parentElement?.querySelector('table');
+    rows = [...(plan?.rows || [])]
+      .map(r => [...r.cells].map(c => c.innerText.trim()))
+      .map(c => ({
+        round: Number((c[0] || '').normalize('NFKC').match(/^第?\s*(\d{1,2})\s*回?$/)?.[1] || 0),
+        text: c.slice(1).join(' ')
+      }))
+      .filter(r => r.round);
+  }
+  const head = [...document.querySelectorAll('h1,h2,h3,h4,h5,div,span,p')].find(
+    e => own(e) === 'お知らせ' && vis(e) && ![...e.children].some(c => own(c) === 'お知らせ')
+  );
+  const box = head && (head.closest('.panel,.card,section') || head.parentElement?.parentElement);
+  const notice = box && !box.querySelector('#div-class-directories') ? box.innerText : '';
+  return {syllabus, rows, notice};
+}
 // ディレクトリ名・授業計画の行に【動画】などがある回をオンデマンドとする（manabo の表記の決まり）
-const ondemand=/【\s*動画\s*】|\[\s*動画\s*\]|（\s*動画\s*）|動画配信|オンデマンド/;
-export function plannedModes(dirs=[],rows=[]){const out=new Map();for(const r of rows||[])if(r.round&&ondemand.test(r.text))out.set(r.round,{from:r.round,to:r.round,mode:'オンデマンド',evidence:`${r.round} ${r.text}`.slice(0,300),file:'シラバス（授業計画）'});for(const d of dirs||[])if(d.round&&ondemand.test(d.title))out.set(d.round,{from:d.round,to:d.round,mode:'オンデマンド',evidence:d.title.slice(0,300),file:'manabo のディレクトリ'});return [...out.values()].sort((a,b)=>a.from-b.from)}
+const ondemand = /【\s*動画\s*】|\[\s*動画\s*\]|（\s*動画\s*）|動画配信|オンデマンド/;
+export function plannedModes(dirs = [], rows = []) {
+  const out = new Map();
+  for (const r of rows || [])
+    if (r.round && ondemand.test(r.text))
+      out.set(r.round, {
+        from: r.round,
+        to: r.round,
+        mode: 'オンデマンド',
+        evidence: `${r.round} ${r.text}`.slice(0, 300),
+        file: 'シラバス（授業計画）'
+      });
+  for (const d of dirs || [])
+    if (d.round && ondemand.test(d.title))
+      out.set(d.round, {
+        from: d.round,
+        to: d.round,
+        mode: 'オンデマンド',
+        evidence: d.title.slice(0, 300),
+        file: 'manabo のディレクトリ'
+      });
+  return [...out.values()].sort((a, b) => a.from - b.from);
+}
 // ページ側で実行する。行に期間がないときだけ、リンクを含まない後続の行（manabo は受講期間を別の行に置くことがある）を足す。まだ開いていない別枠（リンクなし）の行は足さない
 // 折りたたみ行（tr.toggle-area）の「受講」ボタンなら、題名・受講期間・提出済みの印は直前の行（教材のアイコンがある行）から読む。題名は a.a-content-open（閉じた行）か、最初の太字（開いた行）
-const extractEntries=es=>es.map(e=>{const box=e.closest('tr')||e.closest('.plugin-content')||e.parentElement.parentElement;const head=box.matches?.('tr.toggle-area')&&box.previousElementSibling?.querySelector('.plugin-icon-wrapper')?box.previousElementSibling:null;const headTitle=head&&(head.querySelector('.a-content-open')||head.querySelector('td > div > b'))?.textContent.trim();const hasLink=x=>x.querySelector('a[href*="/content/"],a[href*="/file/"]');const period=/期間|期限|締切|〆切/;let text=(head?head.innerText+'\n':'')+box.innerText;if(!period.test(text))for(let s=box.nextElementSibling,n=0;s&&n<3&&!hasLink(s);s=s.nextElementSibling,n++){const t=s.innerText.trim();if(/^第?\s*[0-9０-９〇一二三四五六七八九十]+\s*(回|講)/.test(t)||/期限後|遅延|遅れ|再提出|やむを得ない/.test(t))break;text+='\n'+t}return{url:e.href,name:e.textContent.trim(),text,title:headTitle||box.querySelector('.content-name,.plugin-name,h3,h4')?.textContent||'',done:!![box,box.previousElementSibling].some(x=>x?.querySelector('.img-checked, [class*="img-checked"]'))}});
+const extractEntries = es =>
+  es.map(e => {
+    const box = e.closest('tr') || e.closest('.plugin-content') || e.parentElement.parentElement;
+    const head =
+      box.matches?.('tr.toggle-area') && box.previousElementSibling?.querySelector('.plugin-icon-wrapper')
+        ? box.previousElementSibling
+        : null;
+    const headTitle =
+      head && (head.querySelector('.a-content-open') || head.querySelector('td > div > b'))?.textContent.trim();
+    const hasLink = x => x.querySelector('a[href*="/content/"],a[href*="/file/"]');
+    const period = /期間|期限|締切|〆切/;
+    let text = (head ? head.innerText + '\n' : '') + box.innerText;
+    if (!period.test(text))
+      for (let s = box.nextElementSibling, n = 0; s && n < 3 && !hasLink(s); s = s.nextElementSibling, n++) {
+        const t = s.innerText.trim();
+        if (
+          /^第?\s*[0-9０-９〇一二三四五六七八九十]+\s*(回|講)/.test(t) ||
+          /期限後|遅延|遅れ|再提出|やむを得ない/.test(t)
+        )
+          break;
+        text += '\n' + t;
+      }
+    return {
+      url: e.href,
+      name: e.textContent.trim(),
+      text,
+      title: headTitle || box.querySelector('.content-name,.plugin-name,h3,h4')?.textContent || '',
+      done: !![box, box.previousElementSibling].some(x => x?.querySelector('.img-checked, [class*="img-checked"]'))
+    };
+  });
 // 受講期間が過ぎてボタンがなくなった行のうち提出済みの印があるもの（開いた行は教材 ID がないので、題名と説明で既知の課題と照らし合わせる）
-const closedRows=rows=>rows.map(tr=>{const next=tr.nextElementSibling;if(!next?.matches('tr.toggle-area')||next.querySelector('a[href*="/content/"]')||!tr.querySelector('.plugin-icon-wrapper'))return null;const head=tr.querySelector('.a-content-open')||tr.querySelector('td > div > b');if(!head)return null;return {title:head.textContent.trim(),text:tr.innerText,description:(next.querySelector('.description')?.innerText||'').trim(),contentId:tr.querySelector('.a-content-open')?.getAttribute('content_id')||'',done:!!tr.querySelector('.img-checked, [class*="img-checked"]')}}).filter(x=>x&&x.done);
+const closedRows = rows =>
+  rows
+    .map(tr => {
+      const next = tr.nextElementSibling;
+      if (
+        !next?.matches('tr.toggle-area') ||
+        next.querySelector('a[href*="/content/"]') ||
+        !tr.querySelector('.plugin-icon-wrapper')
+      )
+        return null;
+      const head = tr.querySelector('.a-content-open') || tr.querySelector('td > div > b');
+      if (!head) return null;
+      return {
+        title: head.textContent.trim(),
+        text: tr.innerText,
+        description: (next.querySelector('.description')?.innerText || '').trim(),
+        contentId: tr.querySelector('.a-content-open')?.getAttribute('content_id') || '',
+        done: !!tr.querySelector('.img-checked, [class*="img-checked"]')
+      };
+    })
+    .filter(x => x && x.done);
 // 受講期間が過ぎて「受講」ボタンがなくなった課題のうち、提出済みの印があるもの（提出済みの記録として扱う。開けないので URL は教材 ID と種類だけ）
-const closedEntries=es=>es.filter(a=>{const next=a.closest('tr')?.nextElementSibling;return next?.matches('tr.toggle-area')&&!next.querySelector('a[href*="/content/"]')&&/^\d+$/.test(a.getAttribute('content_id')||'')&&/^(report|quiz|board)$/.test(a.getAttribute('plugin_key')||'')}).map(a=>{const row=a.closest('tr');return {url:`${location.origin}/content/${a.getAttribute('content_id')}/${a.getAttribute('plugin_key')}/`,name:a.textContent.trim(),title:a.textContent.trim(),text:row.innerText,done:!!row.querySelector('.img-checked, [class*="img-checked"]'),closed:true}}).filter(x=>x.done);
-const CODE_ACTION='manabo ブラウザに開いたページで、出席コード以外の回答を入力しました。出席コードを選んで提出してください';
-const GATE_REASON={needs_user:'根拠の引用が資料と一致しないため提出を止めています。回答を確認してください',expired:'締切を過ぎています',missing_answer:'根拠のない回答があります。回答を確認してください',invalid_answer:'選択肢に合わない回答があります。回答を確認してください',result_unknown:'提出結果をmanaboで確認',already_submitted:'提出済み'};
+const closedEntries = es =>
+  es
+    .filter(a => {
+      const next = a.closest('tr')?.nextElementSibling;
+      return (
+        next?.matches('tr.toggle-area') &&
+        !next.querySelector('a[href*="/content/"]') &&
+        /^\d+$/.test(a.getAttribute('content_id') || '') &&
+        /^(report|quiz|board)$/.test(a.getAttribute('plugin_key') || '')
+      );
+    })
+    .map(a => {
+      const row = a.closest('tr');
+      return {
+        url: `${location.origin}/content/${a.getAttribute('content_id')}/${a.getAttribute('plugin_key')}/`,
+        name: a.textContent.trim(),
+        title: a.textContent.trim(),
+        text: row.innerText,
+        done: !!row.querySelector('.img-checked, [class*="img-checked"]'),
+        closed: true
+      };
+    })
+    .filter(x => x.done);
+const CODE_ACTION =
+  'manabo ブラウザに開いたページで、出席コード以外の回答を入力しました。出席コードを選んで提出してください';
+const GATE_REASON = {
+  needs_user: '根拠の引用が資料と一致しないため提出を止めています。回答を確認してください',
+  expired: '締切を過ぎています',
+  missing_answer: '根拠のない回答があります。回答を確認してください',
+  invalid_answer: '選択肢に合わない回答があります。回答を確認してください',
+  result_unknown: '提出結果をmanaboで確認',
+  already_submitted: '提出済み'
+};
 // 画面に出す短いエラー（Playwright の英語のメッセージや呼び出しの記録は出さない）
 // 同期の問題の一覧のうち、その授業のもの（「授業名：…」「授業名 第4回：…」）。授業ごとの同期では、その授業の分だけ入れ替える
 // 質問への答えを「自分について」に足す（同じ行は足さない。2000 字まで）
-export const mergeProfile=(profile,answers)=>{const lines=(answers||[]).filter(a=>a.answer&&!/^(なし|特にない)$/.test(a.answer)).map(a=>`${a.text}：${a.answer}`).filter(l=>!String(profile).includes(l));return [profile,...lines].filter(Boolean).join('\n').slice(0,2000)};
-export const courseIssue=(issue,name)=>typeof issue==='string'&&(issue.startsWith(name+'：')||issue.startsWith(name+' '));
-export const shortError=e=>{const m=String(e?.message||e||'');if(/Timeout \d+ms exceeded/i.test(m))return 'manabo の応答がありませんでした（時間切れ）';if(/net::ERR_|ECONNRESET|ENOTFOUND|EAI_AGAIN/.test(m))return 'manabo に接続できませんでした（ネットワーク）';return m.split('\n')[0].slice(0,80)};
+export const mergeProfile = (profile, answers) => {
+  const lines = (answers || [])
+    .filter(a => a.answer && !/^(なし|特にない)$/.test(a.answer))
+    .map(a => `${a.text}：${a.answer}`)
+    .filter(l => !String(profile).includes(l));
+  return [profile, ...lines].filter(Boolean).join('\n').slice(0, 2000);
+};
+export const courseIssue = (issue, name) =>
+  typeof issue === 'string' && (issue.startsWith(name + '：') || issue.startsWith(name + ' '));
+export const shortError = e => {
+  const m = String(e?.message || e || '');
+  if (/Timeout \d+ms exceeded/i.test(m)) return 'manabo の応答がありませんでした（時間切れ）';
+  if (/net::ERR_|ECONNRESET|ENOTFOUND|EAI_AGAIN/.test(m)) return 'manabo に接続できませんでした（ネットワーク）';
+  return m.split('\n')[0].slice(0, 80);
+};
 // 自動操作のタブに出たダイアログ：お知らせ（alert）は OK、確認（confirm）はキャンセルで閉じる（開いたままだとページが固まり、次の page.goto が時間切れになる）
 // 入力（prompt：授業ページで出る出席コードの入力）は閉じずに本人に渡す。そのタブは自動操作に使わない（watchPrompt）。出席コードは入れない
-export const closeDialog=async d=>{if(d.type()==='prompt')return;await (['alert','beforeunload'].includes(d.type())?d.accept():d.dismiss()).catch(()=>{})};
+export const closeDialog = async d => {
+  if (d.type() === 'prompt') return;
+  await (['alert', 'beforeunload'].includes(d.type()) ? d.accept() : d.dismiss()).catch(() => {});
+};
 // 出席コードの入力が出たタブを本人に渡したことを、同期の授業の読み取りに知らせる
-export class PromptHandOver extends Error{constructor(message=''){super('出席コードの入力画面を本人に渡しました');this.prompt=message}}
+export class PromptHandOver extends Error {
+  constructor(message = '') {
+    super('出席コードの入力画面を本人に渡しました');
+    this.prompt = message;
+  }
+}
 // 回答欄（提出前のページにだけある入力欄・選択肢）
-const ANSWER_FIELDS='input[name]:not([type=hidden]):not([type=submit]):not([type=button]),textarea[name],select[name]';
-const watchPrompt=p=>{if(!p.promptSeen)p.promptSeen=new Promise(r=>p.on('dialog',d=>{if(d.type()!=='prompt')return;p.handedOver=true;p.bringToFront().catch(()=>{});r(d.message())}));return p.promptSeen};
+const ANSWER_FIELDS =
+  'input[name]:not([type=hidden]):not([type=submit]):not([type=button]),textarea[name],select[name]';
+const watchPrompt = p => {
+  if (!p.promptSeen)
+    p.promptSeen = new Promise(r =>
+      p.on('dialog', d => {
+        if (d.type() !== 'prompt') return;
+        p.handedOver = true;
+        p.bringToFront().catch(() => {});
+        r(d.message());
+      })
+    );
+  return p.promptSeen;
+};
 // 渡したタブで出席コードの入力がまだ開いているか（開いている間はページの処理が止まり、2 秒で応答しない）
-const promptOpen=async p=>!p.isClosed()&&await Promise.race([p.evaluate(()=>1).then(()=>false,()=>false),new Promise(r=>setTimeout(()=>r(true),2000))]);
+const promptOpen = async p =>
+  !p.isClosed() &&
+  (await Promise.race([
+    p
+      .evaluate(() => 1)
+      .then(
+        () => false,
+        () => false
+      ),
+    new Promise(r => setTimeout(() => r(true), 2000))
+  ]));
 // SaBoRo の AI の Batch で回答を作っている間の案内
-export const AI_PENDING_ACTION='回答を作成中です（SaBoRo課題サポート。通常 1 時間以内、遅くとも 24 時間以内に入力します）';
+export const AI_PENDING_ACTION =
+  '回答を作成中です（SaBoRo課題サポート。通常 1 時間以内、遅くとも 24 時間以内に入力します）';
 export class Manabo {
- constructor({root,work,credentials,state,save,ai,extract,ask,trash=trashFile,quarantine=null}){Object.assign(this,{baseRoot:root,work,credentials,state,ai,extract,ask,trash,quarantine});this.spareIds=new Set();this.held=new Map();this.promptTabs=new Map();this.pending=new Map();let chain=Promise.resolve();this.save=()=>(chain=chain.then(save,save))}
- // 資料・授業フォルダの置き場所。設定欄で指定したフォルダ、なければ既定（2026秋学期 フォルダ）
- get root(){return this.state.settings?.downloadDir||this.baseRoot}
- // manabo を読むブラウザ。同期などは画面に出さずに裏で動かし（headless）、本人の操作が要るとき（「manabo ブラウザを開く」）だけ画面に出す（visible）。どちらも同じ保存場所なのでログインは引き継ぐ
- async page(){if(this.p?.isClosed()){this.p=null;let alive=false;try{alive=!!this.ctx&&this.ctx.pages().length>0}catch{}if(alive){try{this.p=await this.ctx.newPage();this.p.on('dialog',closeDialog);watchPrompt(this.p);return this.p}catch{}}await this.ctx?.close().catch(()=>{});this.ctx=null}if(!this.ctx){await mkdir(join(this.work,'browser'),{recursive:true,mode:0o700});this.ctx=await chromium.launchPersistentContext(join(this.work,'browser'),this.visible?{headless:false,viewport:{width:1100,height:850}}:{headless:true,channel:'chromium',viewport:{width:1100,height:850}});this.p=this.ctx.pages()[0]||await this.ctx.newPage();this.p.on('dialog',closeDialog);watchPrompt(this.p);}return this.p}
- async login(){const p=await this.page();await p.goto(LMS+'/auth/shibboleth/');await p.waitForLoadState('domcontentloaded');await p.locator('#button-logout,input[type=password]').first().waitFor({timeout:15000});if(await p.locator('#button-logout').count())return true;await this.submitIdp(p,p.locator('#button-logout'));return true}
- // 大学の統合ログイン（manabo・CUBICS 共通）。done はログイン後に現れる要素
- async submitIdp(p,done){const c=await this.credentials();if(!c?.username||!c?.password)throw Error('ログインID・パスワードをアプリの設定画面で保存してください。');const u=new URL(p.url());if(!u.hostname.endsWith('.chukyo-u.ac.jp')&&u.hostname!=='chukyo-u.ac.jp')throw Error('ログイン先を確認してください。');if(await p.locator('iframe[src*="captcha"], [class*="captcha"], input[name*="otp"]').count())throw Error('追加認証が必要です。ローカルのブラウザで操作してください。');const pass=p.locator('input[type=password]');if(await pass.count()!==1)throw Error('ログイン画面の確認が必要です。');const user=p.locator('input[name="j_username"],input[name="username"],input[name="user"],input[type=email],input[type=text]').filter({visible:true});if(await user.count()!==1)throw Error('ログインID欄の確認が必要です。');await user.fill(c.username);await pass.fill(c.password);const named=p.getByRole('button',{name:/^(ログイン|Login|Sign in)$/i}).filter({visible:true});const button=await named.count()===1?named:p.locator('button[type=submit],input[type=submit]').filter({visible:true});if(await button.count()!==1)throw Error('ログインボタンを確認してください。');await button.click();const second=p.getByRole('button',{name:'二段階認証でログイン',exact:true});await done.or(second).first().waitFor({timeout:15000});if(await second.isVisible().catch(()=>false)){const nextPassword=p.locator('input[type=password]').filter({visible:true});if(await nextPassword.count()===1)await nextPassword.fill(c.password);await second.click();}try{await done.waitFor({timeout:15000})}catch{throw Error('自動ログインに失敗。ID・パスワードまたは追加認証を確認してください。')}}
- async settled(p){await p.locator('#div-class-directories').waitFor({timeout:20000});await p.waitForFunction(()=>!document.querySelector('#div-class-contents .loading'),{timeout:10000}).catch(()=>{})}
- async directories(p){return (await p.locator('#div-class-directories .a-open-contents').evaluateAll(es=>es.map(e=>({title:(e.closest('tr')?.previousElementSibling?.innerText||e.textContent).trim(),directory:e.getAttribute('directory_id')})))).map(d=>({...d,round:roundOf(d.title)}))}
- async openDirectory(p,d){await p.locator(`#div-class-directories a[directory_id="${d.directory}"]`).click();const opened=await p.waitForFunction(label=>document.querySelector('#div-class-contents')?.textContent.includes(label),d.title.split(/\s/)[0],{timeout:10000}).then(()=>true,()=>false);await p.locator('#div-class-contents').waitFor();await p.waitForFunction(()=>!document.querySelector('#div-class-contents .loading'),{timeout:10000}).catch(()=>{});return opened}
- // 受講期間が過ぎた提出済みの行に当たる未完了の課題を提出済みにする。教材 ID・説明文（既知の課題の本文に含まれ、締切も同じ）・同じ回の題名の順に照らし合わせる
- // 以前の版で説明文の 1 行目が題名になっていた課題は、正しい題名に直す
- async markClosedDone(p,tasks,round){const rows=await p.locator('#div-class-contents tr').evaluateAll(closedRows).catch(()=>[]);if(!rows.length)return;const n=v=>String(v||'').normalize('NFKC').replace(/\s+/g,'');for(const t of tasks){if(t.status==='done')continue;const r=rows.find(r=>(r.contentId&&contentId(t.url)===r.contentId)||(n(r.description).length>=10&&n(t.description).includes(n(r.description))&&(!t.dueAt||!deadline(r.text)||deadline(r.text)===t.dueAt))||(t.round===round&&n(t.title)&&n(t.title)===n(r.title)));if(!r)continue;if(r.title&&n(t.title)&&n(r.description).startsWith(n(t.title)))t.title=r.title;markDone(t)}}
- async entries(p){const open=await p.locator('#div-class-contents a[href*="/content/"],#div-class-contents a[href*="/file/"]').evaluateAll(extractEntries),closed=await p.locator('#div-class-contents a.a-content-open').evaluateAll(closedEntries).catch(()=>[]);const list=[...open,...closed.filter(c=>!open.some(o=>contentId(o.url)===contentId(c.url)))];for(const e of list)if(SPARE.test(e.title||e.name||'')){const id=contentId(e.url);if(id)this.spareIds.add(id)}return list}
- // 開いている回の一覧を work/class に残す（締切などが読めないときの確認用）
- async snapshot(id,round,p){const html=await p.locator('#div-class-contents').evaluate(e=>e.innerHTML).catch(()=>'');if(!html)return;const dir=join(this.work,'class');await mkdir(dir,{recursive:true,mode:0o700}).then(()=>writeFile(join(dir,`${id}_${round||'x'}.html`),html,{mode:0o600})).catch(()=>{})}
- // 取込み課題（授業トップのURLのまま）を、その回の課題の中から特定する
- matchImported(t,assignments){return chooseContent(assignments.map(e=>({...e,title:e.title.trim()||e.name})),t)}
- // 授業ページの「経済原論Ⅱ（金曜／2限）」から曜日を読み、学年暦の授業日で未設定の回を埋める（設定済みの回は変えない）
- async applyCalendar(p,id){const label=[await p.locator('.breadcrumb').first().innerText({timeout:2000}).catch(()=>''),await p.title().catch(()=>'')].join(' ');const weekday=weekdayOf(label),period=periodOf(label),auto=weekday&&scheduleFor(weekday);if(period)this.state.periods={...this.state.periods,[id]:period};if(!auto)return;this.state.schedules={...this.state.schedules,[id]:{...auto,...(this.state.schedules?.[id]||{})}};this.state.weekdays={...this.state.weekdays,[id]:weekday}}
- // 初回・ガイダンス資料（第1回までの資料）と manabo のシラバス詳細から、教室・授業形式（回ごとの形式も）・欠席上限などを読み取る。資料が変わったときだけ読み直す
- // AI 利用の方針は課題ごとに、その回の授業資料（ファイル名の回が同じもの）と課題の説明から判断する（t.aiPolicy）。資料のダウンロードの後に読む
- aiPolicyOf(t,materials){return aiPolicyFrom([...materials.filter(m=>m.text&&m.text!=='読取り失敗'&&fileRound(m.file)===t.round),{file:'課題の説明',text:t.description||''}])||{forbidden:false}}
- async updateAiPolicy(i){const name=this.courses()[i].name;const tasks=this.state.tasks.filter(t=>t.course===i&&t.round&&t.status!=='done');if(!tasks.length)return;const all=await this.materials(name,30).catch(()=>[]);for(const t of tasks)t.aiPolicy=this.aiPolicyOf(t,all)}
- // シラバス（授業計画）とお知らせは授業ページを開いた直後に読む（回ごとの予定 plannedModes に使う）
- async readSyllabus(i,p){const name=this.courses()[i].name,id=courseIdOf(i,this.state);const page=p?await this.syllabus(p,id).catch(()=>null):null;if(page?.rows)this.state.syllabusRows={...this.state.syllabusRows,[name]:page.rows};return page}
- // 授業情報の読み取り。同期では資料をダウンロードし終えてから呼ぶ（初回の同期や新しい資料を取り込んだ同期でも、その資料の対面・オンデマンドの記載をすぐ反映する）。read は readSyllabus の結果
- // 一度読んだ資料は読み直さない（courseInfoPlan）。初めて読む授業・初回の同期・次の授業が明日までにある授業はすぐ作り、それ以外は SaBoRo の AI では Batch（半額）にする
- async updateCourseInfo(i,p,read){const name=this.courses()[i].name;const page=read!==undefined?read:await this.readSyllabus(i,p);if(!this.extract||this.aiAvailable===false)return;// 授業全体の情報（教室・形式・欠席上限など）は第1回までの資料とシラバス・お知らせから、回ごとの形式は第2回以降の資料の該当箇所も合わせて読む
-let base=[],later=[];try{const all=(await this.materials(name,30)).filter(m=>m.text&&m.text!=='読取り失敗');base=all.filter(m=>fileRound(m.file)<=1);later=all.filter(m=>fileRound(m.file)>1).map(m=>({file:m.file,text:modeExcerpt(m.text)})).filter(m=>m.text)}catch{}if(page)base.push(...page.sources);if(!base.length&&!later.length)return;
- // Batch の結果待ちがあれば先に受け取る。出来上がるまでは新しく頼まない（同じ資料を二重に頼まないため）
- if(this.state.courseInfo?.[name]?.pending&&!await this.resumeCourseInfo(name))return;
- const info=this.state.courseInfo?.[name],plan=courseInfoPlan(info,base,later);
- if(!plan.sources.length){if(info.baseKey===plan.baseKey&&JSON.stringify(info.read)===JSON.stringify(plan.read))return;this.setCourseInfo(name,plan,null,base);await this.save();return}
- const key='info-'+hash(JSON.stringify([name,plan.sources.map(m=>[m.file,hash(m.text)])])).slice(0,40);await this.readCourseInfo(name,{key,plan,base},{urgent:!info||!!this.firstSync||this.classSoon(i)})}
- setCourseInfo(name,plan,raw,base){const {sourceKey,pending,...old}=this.state.courseInfo?.[name]||{};this.state.courseInfo={...this.state.courseInfo,[name]:{...mergeCourseInfo(old,plan,raw,base),files:Object.keys(plan.read),syllabus:'シラバス' in plan.read,generatedBy:raw?raw.generatedBy:old.generatedBy,extractedAt:raw?new Date().toISOString():old.extractedAt}}}
- // 読み取って記録する。SaBoRo の AI の Batch で結果待ちになったら、頼んだ内容を work に残して pending に目印を置く（状態はクラウドにも送るので、資料の本文は状態に入れない）。true：記録した、false：結果待ち
- async readCourseInfo(name,job,{urgent}){let raw;try{raw=await this.extract(name,job.plan.sources,{key:job.key,urgent})}catch(e){if(!(e instanceof AiPending))throw e;const dir=join(this.work,'course-info');await mkdir(dir,{recursive:true,mode:0o700});await writeFile(join(dir,job.key+'.json'),JSON.stringify(job),{mode:0o600});this.state.courseInfo={...this.state.courseInfo,[name]:{...this.state.courseInfo?.[name],pending:job.key}};await this.save();return false}
-  this.setCourseInfo(name,job.plan,raw,job.base);await this.save();return true}
- // Batch の結果を受け取る。true：受け取った（失敗したときは pending を外して例外。次の同期で頼み直す）、false：まだ結果待ち
- async resumeCourseInfo(name){const key=this.state.courseInfo?.[name]?.pending;if(!key)return true;const file=join(this.work,'course-info',key+'.json');let job=null;try{job=JSON.parse(await readFile(file,'utf8'))}catch{}
-  const clear=async()=>{const {pending,...rest}=this.state.courseInfo[name];this.state.courseInfo={...this.state.courseInfo,[name]:rest};await rm(file,{force:true}).catch(()=>{});await this.save()};if(!job){await clear();return true}
-  try{if(!await this.readCourseInfo(name,job,{urgent:false}))return false}catch(e){await clear();throw e}await rm(file,{force:true}).catch(()=>{});return true}
- // 次の授業（学年暦の授業日）が明日までにあるか。授業日が分からなければ急がない
- classSoon(i){const day=d=>new Date(d).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}),today=day(Date.now()),tomorrow=day(Date.now()+864e5);return Object.values(this.state.schedules?.[courseIdOf(i,this.state)]||{}).some(d=>typeof d==='string'&&d>=today&&d<=tomorrow)}
- // 授業ページのシラバス（授業計画の表）とお知らせを読む。シラバスが隠れていれば「シラバス」のリンク・ボタンで開く
- // 学生名などヘッダーの情報は読まない。読んだ本文は確認用に保存する
- async syllabus(p,id){let info=await p.evaluate(classInfo);const cached=await this.cachedSyllabus(id),fromCache=!!cached;if(cached)info={...info,syllabus:cached};if(!info.syllabus){const all=p.locator('a:has-text("シラバス"),button:has-text("シラバス")');const k=await all.evaluateAll(es=>es.findIndex(e=>!e.closest('#div-class-contents,#div-class-directories')&&!/\/(file|content)\//.test(e.getAttribute('href')||'')));if(k>=0){const link=all.nth(k),allowed=u=>{try{const x=new URL(u),h=x.hostname;return /^https?:$/.test(x.protocol)&&(h===new URL(LMS).hostname||h==='chukyo-u.ac.jp'||h.endsWith('.chukyo-u.ac.jp'))}catch{return false}};const href=await link.getAttribute('href').catch(()=>null),url=href&&!/^(#|javascript:)/i.test(href)?new URL(href,p.url()).href:null;let page=null;try{if(url){if(allowed(url)){page=await this.ctx.newPage();await page.goto(url)}}else page=await Promise.all([this.ctx.waitForEvent('page',{timeout:5000}).catch(()=>null),link.click()]).then(([x])=>x);if(page&&allowed(page.url())){await page.waitForLoadState('domcontentloaded');await page.waitForLoadState('networkidle',{timeout:10000}).catch(()=>{});info={...info,...await page.evaluate(classInfo),notice:info.notice}}else if(!url){await p.getByText('授業計画',{exact:true}).first().waitFor({timeout:5000}).catch(()=>{});info=await p.evaluate(classInfo);await p.keyboard.press('Escape').catch(()=>{})}}finally{await page?.close().catch(()=>{})}}}const scrub=t=>scrubIds(t).trim();const out=[];if(info.syllabus)out.push({file:'シラバス',text:scrub(info.syllabus).slice(0,40000)});if(info.notice)out.push({file:'お知らせ',text:scrub(info.notice).slice(0,8000)});if(out.length&&!fromCache){await mkdir(join(this.work,'syllabus'),{recursive:true}).then(()=>writeFile(join(this.work,'syllabus',`${id}.txt`),out.map(o=>`## ${o.file}\n${o.text}`).join('\n\n'),{mode:0o600})).catch(()=>{});this.state.syllabusReadAt={...this.state.syllabusReadAt,[id]:new Date().toISOString()};if(info.syllabus)this.state.syllabusTerm={...this.state.syllabusTerm,[id]:calendar.term}}return {sources:out,rows:fromCache?null:(info.rows||[])}}
- // 読んだシラバスの本文。シラバスは学期の最初の同期でだけ読み、同じ学期（学年暦の term）の間は保存したテキストを返す（別タブを開き直さない。お知らせは毎回授業ページから読む）
- async cachedSyllabus(id){if(!calendar.term||this.state.syllabusTerm?.[id]!==calendar.term)return '';try{const text=await readFile(join(this.work,'syllabus',`${id}.txt`),'utf8');return text.split(/\n\n## /).map(b=>b.replace(/^## /,'')).find(b=>b.startsWith('シラバス\n'))?.slice('シラバス\n'.length)||''}catch{return ''}}
- // CUBICS の授業時間割照会から、今週〜3週先の教室・休講・補講・授業変更を読む（時間割の表だけを読み、学生情報欄は読まない）
- async cubics(weeks=4){const p=await this.page();await p.goto(CUBICS_URL);await p.waitForLoadState('domcontentloaded');const ready=p.getByText('授業時間割照会',{exact:false}).first();await ready.or(p.locator('input[type=password]').first()).waitFor({timeout:20000});if(!await ready.isVisible().catch(()=>false))await this.submitIdp(p,ready);await ready.waitFor({timeout:20000});const raws=[];for(let w=0;w<weeks;w++){const raw=await p.evaluate(extractGrid);if(!raw)break;raws.push(raw);if(w===weeks-1||!await this.cubicsNextWeek(p,raw))break}if(!raws.length)throw Error('時間割の表が見つかりません');await writeFile(join(this.work,'cubics-grid.html'),raws.map(r=>r.html).join('\n'),{mode:0o600}).catch(()=>{});const seen=new Set(),entries=raws.flatMap(parseGrid).filter(e=>{const k=`${e.date}|${e.period}|${e.label}|${e.status}`;return !seen.has(k)&&seen.add(k)});const names=courseNames(this.state),known=Object.fromEntries(this.courses().map(({name:n,id})=>[n,{weekday:this.state.timetable?.[n]?.weekday||this.state.weekdays?.[id],period:this.state.timetable?.[n]?.period||this.state.periods?.[id]}]));const mapped=mapEntries(entries,names,known),first=entries.map(e=>e.date).sort()[0]||'';this.state.cubics={...mapped,events:[...(this.state.cubics?.events||[]).filter(e=>first&&e.date<first),...mapped.events],weeks:raws.map(r=>r.range),fetchedAt:new Date().toISOString()};await this.save()}
- // 次の週へ（▶ ボタン、なければ日付欄に翌週を入れて GO）。週が変わったら true
- async cubicsNextWeek(p,raw){const [y,m,d]=raw.range;if(!y)return false;const before=`${y}年${String(m).padStart(2,'0')}月${String(d).padStart(2,'0')}日`;const changed=()=>p.waitForFunction(b=>{const t=document.body.innerText.match(/\d{4}年\d{1,2}月\d{1,2}日/);return t&&t[0]!==b},before,{timeout:15000}).then(()=>true,()=>false);const arrow=p.locator('[title*="次"],[alt*="次"],img[src*="next" i],input[type=image][src*="next" i],a:has(img[src*="next" i])').first();if(await arrow.count()){await arrow.click();if(await changed())return true}const next=new Date(Date.UTC(y,m-1,d+7));const inputs=p.locator('input[type=text]').filter({visible:true});const go=p.locator('input[value="GO" i],input[alt="GO" i],img[alt="GO" i],button:has-text("GO"),a:has-text("GO")').first();if(await inputs.count()<3||!await go.count())return false;const nums=[];for(const e of await inputs.all())if(/^\d{1,4}$/.test(await e.inputValue()))nums.push(e);if(nums.length<3)return false;await nums[0].fill(String(next.getUTCFullYear()));await nums[1].fill(String(next.getUTCMonth()+1));await nums[2].fill(String(next.getUTCDate()));await go.click();return changed()}
- dedupe(){const m=mergeTasks(this.state.tasks);if(m.archived.length){this.state.tasks=m.tasks;this.state.duplicateArchive=[...(this.state.duplicateArchive||[]),...m.archived].slice(-100)}const spare=dropSpareTasks(this.state.tasks,this.spareIds);if(spare.archived.length){this.state.tasks=spare.tasks;this.state.spareArchive=[...(this.state.spareArchive||[]),...spare.archived].slice(-100)}}
- // 資料の本文。PDF などの読み取りは重いので、パス・サイズ・更新時刻が同じ間は work/text-cache に置いた結果を使う
- async materials(course,round){const folder=await this.courseDir(course),out=[];for(const name of await readdir(folder)){if(!/\.(pdf|pptx|docx|txt|md)$/i.test(name))continue;if(fileRound(name)>round)continue;try{out.push({file:name,text:await this.textOf(join(folder,name))})}catch{out.push({file:name,text:'読取り失敗'})}}return out}
- async textOf(path){const st=await stat(path),dir=join(this.work,'text-cache'),key=join(dir,hash(`${path}|${st.size}|${Math.floor(st.mtimeMs)}`)+'.txt');try{return await readFile(key,'utf8')}catch{}const data=await readFile(path);let text='';if(/\.pdf$/i.test(path)){const {PDFParse}=await import('pdf-parse');const pdf=new PDFParse({data});text=(await pdf.getText()).text;await pdf.destroy()}else if(/\.(pptx|docx)$/i.test(path)){const zip=new AdmZip(data);for(const e of zip.getEntries().filter(e=>/^ppt\/slides\/slide\d+\.xml$|^word\/document\.xml$/.test(e.entryName)))text+=e.getData().toString().replace(/<\/a:p>|<\/w:p>/g,'\n').replace(/<[^>]+>/g,' ')}else text=data.toString();text=text.slice(0,40000);await mkdir(dir,{recursive:true,mode:0o700}).then(()=>writeFile(key,text,{mode:0o600})).catch(()=>{});return text}
- // 授業ごとのフォルダ。なければ作る（名前の濁点などの表記ゆれは同じフォルダとみなす）
- async courseDir(name){await mkdir(this.root,{recursive:true});const dirs=await readdir(this.root);const found=dirs.find(d=>d.normalize('NFC')===name.normalize('NFC'));const folder=join(this.root,found||name.replace(/[\\/:\x00-\x1f]/g,'_'));if(!found)await mkdir(folder,{recursive:true});return folder}
- async saveDraft(t){const folder=join(await this.courseDir(this.courses()[t.course].name),'課題',t.round?`第${t.round}回`:'回数不明');await mkdir(folder,{recursive:true});const stem=`${t.round?'第'+t.round+'回':'回数不明'}_${t.title.replace(/[\\/:\x00-\x1f]/g,'_')}_下書き`;let file=join(folder,stem+'.md'),n=2;while(true){try{await writeFile(file,t.answer,{flag:'wx'});break}catch(e){if(e.code!=='EEXIST')throw e;if(await readFile(file,'utf8')===t.answer)break;file=join(folder,stem+` (${n++}).md`)}}t.draftPath=file;await writeFile(join(folder,'CourseCue確認メモ.md'),`# ${t.title}\n\nURL: ${t.url}\n締切: ${t.dueAt||'不明'}\n状態: ${t.status}\n${t.action||''}\n`)}
- async boardCompleted(t,p){if(!new URL(t.url).pathname.includes('/board/'))return false;await p.goto(validLms(t.url));await p.waitForLoadState('domcontentloaded');await p.locator('textarea').first().waitFor({timeout:10000}).catch(()=>{});return p.locator('body').evaluate(root=>{const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);while(walker.nextNode()){const node=walker.currentNode;if(node.parentElement.closest('a,textarea,input,script,style,template,[hidden]'))continue;const text=node.textContent.trim();if(/^あなたの発言(?:\s|$)/.test(text)&&/\d+月\d+日.*\d{1,2}:\d{2}/.test(node.parentElement.textContent))return true;}return false;});}
- // 開いた回の教材一覧から、未提出の既知課題の提出状況を確かめる（掲示板は page で開いて確かめる）
- async checkPending(ts,entries,assignments,page){for(const t of ts){let entry=contentId(t.url)&&entries.find(e=>contentId(e.url)===contentId(t.url));if(entry&&isLate(entry)){const alt=regularFor(entry,assignments);if(alt){t.url=validLms(alt.url);t.type=contentType(t.url);delete t.candidates;entry=alt}}if(!entry&&/^\/class\/\d+\/?$/.test(new URL(t.url).pathname)){entry=this.matchImported(t,assignments);if(entry){t.url=validLms(entry.url);t.type=contentType(t.url);t.imported=false;delete t.candidates}else this.offerCandidates(t,assignments)}if(!entry)continue;t.checkedAt=new Date().toISOString();this.applyDeadline(t,entry.text);if(!entry.done){await this.pageDeadline(t,page);if(!t.dueAt)this.deadlineFromSources(t,'',await this.materials(this.courses()[t.course].name,t.round).catch(()=>[]))}if(entry.done||await this.boardCompleted(t,page))markDone(t)}}
- // manabo の表示（期間・受講期間）から締切を入れる。読めなければ前の値を残し、読んだ表示の該当行を記録する（画面で確認できるように）
- // 一覧の行に期間がないときは、課題のページ自体の「期間」「期限」行から締切を読む（未提出で締切が入っていない課題だけ）
- async pageDeadline(t,page){if(t.dueAt||!contentId(t.url||''))return;const p=page||await this.ctx.newPage();try{await p.goto(validLms(t.url),{waitUntil:'domcontentloaded'});await p.waitForLoadState('networkidle',{timeout:10000}).catch(()=>{});const text=await p.evaluate(()=>document.body.innerText).catch(()=>'');const lines=text.split('\n').map(x=>x.trim()).filter(x=>/期間|期限|締切|〆切/.test(x)&&/\d/.test(x));if(!lines.length)return;const d=deadline(lines.join('\n'));if(d)t.dueAt=d;t.deadlineText=('課題ページ：'+lines.join(' / ')).slice(0,200)}catch{}finally{if(!page)await p.close().catch(()=>{})}}
- // manabo で締切が読めていない課題は、課題ページの本文 → 資料の本文（提出期限・締切・まで の行）の順に読む
- deadlineFromSources(t,pageText,source){if(t.dueAt)return;const fromPage=deadlineFromText(pageText);if(fromPage){t.dueAt=fromPage.dueAt;t.deadlineText=('課題ページ：'+fromPage.line).slice(0,200);return}const d=deadlineFromMaterials(source);if(d){t.dueAt=d.dueAt;t.deadlineText=(`資料（${d.file}）：${d.line}`).slice(0,200)}}
- applyDeadline(t,text){const d=deadline(text||'');if(d)t.dueAt=d;const line=String(text||'').split('\n').map(s=>s.trim()).filter(s=>/期間|期限|締切|〆切|まで/.test(s));t.deadlineText=line.join(' / ').slice(0,200)||'（期間の表示なし）'}
- // 取込み課題が特定できない理由を要対応の文言に残す（本人が manabo 側を確認できるように）
- explain(ts,reason){for(const t of ts)if(t.imported&&!t.candidates?.length)t.action=reason.slice(0,300)}
- // 取込み課題を manabo の課題に特定できなかったとき、その回の課題を候補として残し、画面で本人が選べるようにする
- offerCandidates(t,assignments){const cands=regularOnly(assignments).map(e=>({url:validLms(e.url),title:(e.title||'').trim()||e.name})).filter((x,i,a)=>a.findIndex(y=>y.url===x.url)===i);if(!cands.length)return;t.candidates=cands;t.action=`manabo で対応する課題を特定できませんでした。課題詳細で候補（${cands.length}件）から選んでください`}
- // 同期の対象期間（前後7日）や授業日の設定に関係なく、未提出の既知課題はすべて提出状況を確認する（同期の中でも授業ページを開いたついでに確かめる）
- async refreshPending(only=()=>true){const waiting=this.state.tasks.filter(t=>t.status!=='done'&&t.round&&this.courses()[t.course]&&only(t));if(!waiting.length)return;await this.page();const active=this.p,check=await this.ctx.newPage();try{this.p=check;await this.login();const groups=new Map();for(const t of waiting){const k=t.course+':'+t.round;groups.set(k,[...(groups.get(k)||[]),t])}for(const ts of groups.values()){const {course,round}=ts[0];const classId=courseIdOf(course,this.state);if(!classId){this.explain(ts,`${this.courses()[course].name}：manabo の授業一覧に見つかりません（授業 ID 未設定）`);continue}await check.goto(`${LMS}/class/${classId}/`);await this.settled(check);const all=await this.directories(check),dirs=all.filter(d=>d.round===round);if(dirs.length!==1||!await this.openDirectory(check,dirs[0])){this.explain(ts,dirs.length>1?`第${round}回のディレクトリが複数あり特定できません`:`manabo に第${round}回のディレクトリが見つかりません（回の一覧：${all.map(d=>d.title).join('、')||'なし'}）`);continue}const raw=await this.entries(check),entries=raw.filter(e=>contentId(e.url)),assignments=entries.filter(e=>taskIdentity(e.url,course));if(!assignments.length)this.explain(ts,`第${round}回に課題（レポート・クイズ・掲示板）がありません（教材：${raw.map(e=>e.name).filter(Boolean).join('、')||'なし'}）`);await this.checkPending(ts,entries,assignments,check)}this.dedupe();await this.save();}finally{this.p=active;await check.close();}}
- // 同期中は画像・フォント・動画を読み込まない（終わったら元に戻す。本人がこのブラウザで操作するときは普段どおり表示する）
- async light(fn){const ctx=this.ctx,block=r=>['image','font','media'].includes(r.request().resourceType())?r.abort():r.fallback();await ctx?.route('**/*',block).catch(()=>{});try{return await fn()}finally{await ctx?.unroute('**/*',block).catch(()=>{})}}
- // 1. 全授業を回って課題・提出状況・資料を集める → 2. 結果を保存して画面に反映 → 3. 新しい課題の回答を生成する
- // 以前の同期で「名前 (2).pdf」として保存してしまった複製をゴミ箱へ移す。中身が記録どおり（本人が編集していない）で、元の名前のファイルが残っているものだけ。元のファイルには触れない
- async trashDuplicates(){const moved=[];for(const {record,base} of duplicateCandidates(this.state.materials,this.root)){let data;try{data=await readFile(record.path);await access(base)}catch{continue}if(hash(data)!==record.sha256)continue;await this.trash(record.path);moved.push(basename(record.path));const hasBase=this.state.materials.some(x=>x!==record&&x.url===record.url&&x.path===base);this.state.materials=hasBase?this.state.materials.filter(x=>x!==record):this.state.materials.map(x=>x===record?{...x,path:base,name:basename(base)}:x)}for(const record of layoutDuplicates(this.state.materials,this.root)){let data;try{data=await readFile(record.path)}catch{continue}if(hash(data)!==record.sha256)continue;await this.trash(record.path);moved.push(basename(record.path));this.state.materials=this.state.materials.filter(x=>x!==record)}if(moved.length){this.state.trashed=[...(this.state.trashed||[]),...moved.map(name=>({name,at:new Date().toISOString()}))].slice(-50);await this.save()}return moved}
- // 授業を1つ回る：課題・提出状況・資料・授業情報を集める。ページは呼び出し側が渡す（並行実行のため）
- courses(){return courseList(this.state)}
- // manabo のトップ（授業一覧）から履修中の授業を取り、一覧を更新する（新しい授業は末尾に足し、ID のない授業には ID を入れる）
- async discoverCourses(p){await p.goto(LMS+'/',{waitUntil:'domcontentloaded'});await p.locator('a[href*="/class/"]').first().waitFor({timeout:10000}).catch(()=>{});const links=await p.locator('a[href*="/class/"]').evaluateAll(es=>es.map(e=>({href:e.href,text:e.textContent})));if(!links.length)return;const merged=mergeCourses(this.courses(),links);if(JSON.stringify(merged)!==JSON.stringify(this.courses())){this.state.courses=merged;await this.save()}}
- // 授業ページで出席コードの入力が出たら、そのタブは本人に渡し、この授業は今回は読まない（PromptHandOver で同期は別のタブで続ける）
- async crawlCourse(i,p,ctx){if(this.courses()[i].removed)return;const name=this.courses()[i].name,open=this.promptTabs.get(name);if(open&&await promptOpen(open)){ctx.infoIssues.push(`${name}：出席コードの入力画面が開いています（manabo ブラウザで入力してください）`);return}this.promptTabs.delete(name);if(p.handedOver)throw Object.assign(new PromptHandOver(),{retry:true});const work=this.crawlCourseOn(i,p,ctx);work.catch(()=>{});const message=await Promise.race([work.then(()=>null),watchPrompt(p)]);if(message===null)return;this.promptTabs.set(name,p);ctx.infoIssues.push(`${name}：出席コードの入力画面が出たため、今回は読みませんでした（manabo ブラウザで入力できます）`);throw new PromptHandOver(message)}
- async crawlCourseOn(i,p,{missing,infoIssues,queue,timing}){// 削除した授業は読まない
- const name=this.courses()[i].name,id=courseIdOf(i,this.state),at=Date.now();if(!id){infoIssues.push(`${name}：manabo の授業一覧に見つかりません（授業 ID 未設定）`);return}await p.goto(`${LMS}/class/${id}/`,{waitUntil:'domcontentloaded'});await this.settled(p);await this.applyCalendar(p,id);const syllabus=await this.readSyllabus(i,p);try{const dirs=await this.directories(p);this.state.plannedModes={...this.state.plannedModes,[name]:plannedModes(dirs,this.state.syllabusRows?.[name])};const full=this.state.scanned?.[name]!==this.root;const pending=this.state.tasks.filter(t=>t.status!=='done'&&t.round&&t.course===i);for(const d of dirs){if(p.handedOver)return;const round=d.round;const date=lectureDate(d.title,this.state.schedules?.[id],round);if(!date&&round)missing.set(name,[...(missing.get(name)||[]),round]);if(!date||!inWindow(date)){
- // 期間外の回：このフォルダで初めての同期なら資料を確かめ、未提出の既知課題があれば提出状況を確かめる
- const waiting=pending.filter(t=>t.round===round);if((full||waiting.length)&&await this.openDirectory(p,d)){await this.snapshot(id,round,p);const entries=await this.entries(p);await this.markClosedDone(p,this.state.tasks.filter(t=>t.course===i),round);if(full)for(const e of this.wantedFiles(entries))await this.download(e,name);if(waiting.length){const check=await this.ctx.newPage();try{await this.checkPending(waiting,entries.filter(e=>contentId(e.url)),entries.filter(e=>taskIdentity(e.url,i)),check)}finally{await check.close()}}}continue}await this.openDirectory(p,d);await this.snapshot(id,round,p);const entries=await this.entries(p),assignments=entries.filter(e=>taskIdentity(e.url,i));await this.markClosedDone(p,this.state.tasks.filter(t=>t.course===i),round);const hasRegular=assignments.some(e=>!isLate(e));for(const late of assignments.filter(isLate)){const alt=regularFor(late,assignments);if(!alt)continue;for(const t of this.state.tasks)if(t.url===validLms(late.url)){t.url=validLms(alt.url);t.type=contentType(t.url);delete t.candidates}}const wanted=this.wantedFiles(entries);for(const entry of entries){if(/\/file\//.test(entry.url)){if(wanted.includes(entry))await this.download(entry,name);continue}if(hasRegular&&isLate(entry))continue;const identity=taskIdentity(entry.url,i),key=hash(identity||entry.url).slice(0,20),old=(identity&&this.state.tasks.find(t=>taskIdentity(t.url,t.course)===identity))||this.state.tasks.find(t=>t.key===key)||(identity&&this.state.tasks.find(t=>t.imported&&t.course===i&&t.round===round&&taskIdentity(this.matchImported(t,assignments)?.url||'',i)===identity));const title=entry.title.trim()||entry.text.split('\n').map(x=>x.trim()).find(x=>x&&x!=='教材名'&&!x.includes('期間:'))||d.title;if(SPARE.test(title)||SPARE.test(d.title))continue;if(old&&BUTTON_TITLE.test(old.title||''))old.title=title;const t=old||{id:key,key,course:i,round,title,url:validLms(entry.url),type:contentType(entry.url),answer:'',status:'ready'};t.key=key;t.url=validLms(entry.url);if(t.imported){t.type=contentType(entry.url);t.status=t.answer?'draft':'ready';t.imported=false;delete t.candidates}this.applyDeadline(t,entry.text);if(!entry.done&&!t.dueAt){const check=await this.ctx.newPage();try{await this.pageDeadline(t,check)}finally{await check.close()}}if(!entry.done&&!t.dueAt)this.deadlineFromSources(t,'',await this.materials(name,round).catch(()=>[]));t.due=t.dueAt?new Date(t.dueAt).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'}):'締切不明';t.checkedAt=new Date().toISOString();t.description=scrubIds(entry.text).slice(0,10000);t.date=date;t.contentHash=hash(t.description);if(!entry.done&&t.type==='掲示板'){const check=await this.ctx.newPage();try{entry.done=await this.boardCompleted(t,check)}finally{await check.close()}}if(entry.done)markDone(t);else if(t.status==='done'){t.status='unknown';t.action='提出表示を再確認'}if(!old)this.state.tasks.push(t);if(!entry.done&&t.status==='ready'&&(!t.dueAt||new Date(t.dueAt)>new Date())&&!queue.includes(t))queue.push(t)}for(const t of this.state.tasks)if(t.imported&&t.course===i&&t.round===round)this.offerCandidates(t,assignments)}for(const t of this.state.tasks)if(t.imported&&t.course===i&&t.round&&!dirs.some(d=>d.round===t.round))this.explain([t],`manabo に第${t.round}回のディレクトリが見つかりません（回の一覧：${dirs.map(d=>d.title).join('、')||'なし'}）`);}finally{await this.updateAiPolicy(i).catch(()=>{});await this.updateCourseInfo(i,null,syllabus).catch(e=>infoIssues.push(`${name}：授業情報を読み取れません（${String(e.message).slice(0,80)}）`))}this.state.scanned={...this.state.scanned,[name]:this.root};timing.courses[name]=Date.now()-at;await this.save()}
- // 同期。CUBICS は直近 1 時間に読んでいれば省き、授業は SYNC_PARALLEL 件ずつ並行して回る
- // course（授業の番号）を渡すとその授業だけ読む（授業の一覧・CUBICS は読まない。ほかの授業の問題の表示・前回の同期の記録・かかった時間は前のまま。AI の使い方は全体の同期と同じ）
- // 同期の進み具合（画面に「同期中 3/9（管理会計Ⅱ）」と出す。at が長く変わらなければ画面が「応答がありません」と出す）
- async progress(phase,extra={}){this.state.progress={phase,...extra,at:new Date().toISOString()};await this.save().catch(()=>{})}
- async sync({course}={}){await this.hideBrowserIfIdle();const only=course==null?null:course;if(only!==null&&(!Number.isInteger(only)||!this.courses()[only]||this.courses()[only].removed))throw Error('その授業は見つかりません');const started=Date.now(),timing={courses:{}};this.firstSync=!this.state.lastSync;const ended=calendarEnd()<new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});await this.trashDuplicates().catch(()=>{});await this.progress('manabo にログイン');await this.login();const p=await this.page(),missing=new Map(),infoIssues=ended?[`学年暦（${calendar.term}）の期間が終わっています。新しい学期の授業日は、時間割の画面で設定してください`]:[],queue=[];if(only===null)await this.discoverCourses(p).catch(e=>infoIssues.push(`manabo の授業一覧を読み取れません（${String(e.message).slice(0,80)}）`));await this.light(async()=>{let at=Date.now();await this.progress('時間割（CUBICS）');const cubicsAge=Date.now()-new Date(this.state.cubics?.fetchedAt||0).getTime();if(only!==null||cubicsAge<CUBICS_MAX_AGE)timing.cubicsSkipped=true;else await this.cubics().catch(e=>infoIssues.push(`CUBICS：時間割を読み取れません（${String(e.message).split('\n')[0].slice(0,80)}）`));timing.cubics=Date.now()-at;at=Date.now();const total=this.courses().length,parallel=only!==null?1:Math.max(1,Math.min(SYNC_PARALLEL,total));const fresh=async()=>{const x=await this.ctx.newPage();x.on('dialog',closeDialog);watchPrompt(x);return x};const pages=[p];for(let k=1;k<parallel;k++)pages.push(await fresh());const order=only!==null?[only]:[...Array(total).keys()],active=only!==null?1:this.courses().filter(c=>!c.removed).length,reading=new Set();let done=0;const tell=()=>this.progress('授業',{done,total:active,current:[...reading].join('、')});const errors=[];try{await Promise.all(pages.map(async(page,k)=>{while(order.length){const i=order.shift(),name=this.courses()[i].name,counted=!this.courses()[i].removed;if(counted){reading.add(name);await tell()}try{await this.crawlCourse(i,page,{missing,infoIssues,queue,timing})}catch(e){if(!(e instanceof PromptHandOver)){errors.push({i,e});continue}// 出席コードの入力を本人に渡したタブは閉じずに残し、以後は新しいタブで続ける
-if(e.retry){order.unshift(i);reading.delete(name)}page=pages[k]=await fresh();if(k===0)this.p=page}finally{if(counted&&reading.delete(name)){done++;await tell()}}}}))}finally{for(const page of pages.slice(1))await page.close().catch(()=>{})}// 一部の授業だけ失敗（manabo の応答の時間切れなど）なら同期は続け、その授業の問題として出す。全部の授業で失敗したときだけ同期の失敗にする
-if(errors.length&&errors.length>=active)throw errors[0].e;for(const {i,e} of errors)infoIssues.push(`${this.courses()[i].name}：同期できませんでした（${shortError(e)}）`);timing.classes=Date.now()-at});
- this.dedupe();const found=[...[...missing].map(([name,rounds])=>`${name}：授業日未設定（${roundRanges(rounds)}）`),...infoIssues];if(only===null){this.state.issues=found;this.state.lastSync=new Date().toISOString();timing.crawl=Date.now()-started;this.state.syncTiming={...timing,at:this.state.lastSync,generate:0,generated:0}}else{const name=this.courses()[only].name;this.state.issues=[...(this.state.issues||[]).filter(x=>!courseIssue(x,name)),...found];this.state.courseSynced={...this.state.courseSynced,[name]:new Date().toISOString()}}this.state.connection='connected';await this.save();
- // 回答の生成は集め終わってから（生成に時間がかかっても提出状況は先に反映される）
- const at=Date.now();// AI が使えない端末では回答を作らない（毎回の失敗を出さず、画面には「この端末では AI を使えません」と 1 か所だけ出す）
-// クイズは設定にかかわらず常に自動で回答を入力する（提出は本人）。レポートなどは「回答を自動で作る」の設定に従う
-const todo=this.aiAvailable!==false?queue.filter(t=>t.status==='ready'&&(t.type==='クイズ'||this.state.settings.autoGenerate!==false)):[];const st=only===null?this.state.syncTiming:{generated:0};for(const [k,t] of todo.entries()){if(t.status!=='ready')continue;await this.progress('回答の作成',{done:k,total:todo.length,current:t.title});await this.process(t,false,{urgent:this.firstSync});st.generated++;if(t.status==='code')this.state.connection='attendance_wait';else if(t.status==='answered'&&this.state.connection!=='attendance_wait')this.state.connection='submission_wait'}for(const id of [...this.held.keys()]){const t=this.state.tasks.find(x=>x.id===id);if(!t||t.status==='done')await this.releasePage(id)}st.generate=Date.now()-at;st.total=Date.now()-started;await this.save()}
- // 同じ URL の資料をこのフォルダに記録済みなら取りに行かない。本人が編集して中身が変わっていても、消していても、ダウンロードし直さない
- // ダウンロードする資料：同じ資料の 4up・2up などの形式違いがあれば 1up（印なし）だけ
- wantedFiles(entries){return preferLayout(entries.filter(e=>/\/file\//.test(e.url)),e=>e.name||e.title||'')}
- async download(entry,course){const here=m=>inside(m.path,this.root);if(this.state.materials.some(m=>m.url===entry.url&&here(m)))return;const p=await this.page();const r=await this.ctx.request.get(validLms(entry.url));if(!r.ok()||r.headers()['content-type']?.includes('text/html'))return;const data=await r.body(),h=hash(data),folder=await this.courseDir(course);if(this.state.materials.some(m=>m.sha256===h&&m.course===course&&here(m)))return;const raw=r.headers()['content-disposition']||'';let name;try{name=decodeURIComponent(raw.match(/filename\*=UTF-8''([^;]+)/i)?.[1]||raw.match(/filename="?([^";]+)/i)?.[1]||'')}catch{}if(!name)return;name=basename(name);let file=join(folder,name),n=2;while(true){try{await writeFile(file,data,{flag:'wx'});break}catch(e){if(e.code!=='EEXIST')throw e;if(hash(await readFile(file))===h)break;file=join(folder,name.replace(/(\.[^.]+)$/,(ext)=>` (${n++})${ext}`))}}if(this.quarantine)await this.quarantine(file).catch(()=>{});this.state.materials=[...this.state.materials.filter(m=>!(m.url===entry.url&&!here(m))),{course,url:entry.url,name,path:file,sha256:h,textHash:hash(entry.text),downloadedAt:new Date().toISOString()}]}
- async resolveQuiz(t){if(!new URL(t.url).pathname.match(/^\/class\/\d+\/?$/))return;const p=await this.page();await p.goto(validLms(t.url));await this.settled(p);const dirs=p.locator('#div-class-directories .a-open-contents').filter({hasText:new RegExp(roundPattern(t.round))});if(await dirs.count()!==1)throw Error('対象の授業回を特定できません');await dirs.click();await p.waitForFunction(pattern=>document.querySelector('#div-class-contents')?.textContent.match(new RegExp(pattern)),roundPattern(t.round));const heading=p.locator('#div-class-contents a:not([href*="/content/"])').filter({hasText:new RegExp(roundPattern(t.round)+'.*(課題|レポート|提出)')});if(await heading.count()===1){await heading.click();await p.locator('#div-class-contents a[href*="/content/"]').first().waitFor({timeout:10000});}const links=(await p.locator('#div-class-contents a[href*="/content/"]').evaluateAll(extractEntries)).map(l=>({...l,title:l.name||l.title}));const chosen=chooseContent(links.filter(l=>taskIdentity(l.url,t.course)),t);if(!chosen)throw Error('対象課題を特定できません');t.url=validLms(chosen.url);t.type=contentType(t.url);t.imported=false;this.applyDeadline(t,chosen.text);await this.pageDeadline(t);await this.save();}
- async form(t){const p=await this.taskPage(t);await p.goto(validLms(t.url));await p.waitForLoadState('domcontentloaded');if(await p.locator('input[type=password]').count()){await this.login();await p.goto(validLms(t.url));await p.waitForLoadState('domcontentloaded');if(await p.locator('input[type=password]').count())throw Error('追加認証が必要です。ローカルブラウザで認証してください');}const start=p.getByRole('button',{name:/^(受講開始|開始|解答開始|回答開始)$/}).or(p.getByRole('link',{name:/^(受講開始|開始|解答開始|回答開始)$/}));if(await start.count()===1){await start.click();await p.waitForLoadState('domcontentloaded');await p.locator('input[name]:not([type=hidden]):not([type=submit]):not([type=button]),textarea[name],select[name]').first().waitFor({timeout:15000});}if(new URL(t.url).pathname.includes('/board/')){const fields=p.locator('textarea,[contenteditable="true"]').filter({visible:true});await fields.first().waitFor({timeout:15000});const notice=[await fields.first().evaluate(field=>{const range=document.createRange();range.setStart(document.body,0);range.setEndBefore(field);const fragment=range.cloneContents();fragment.querySelectorAll('script,style,template,[hidden]').forEach(e=>e.remove());return fragment.textContent.replace(/\s+/g,' ').trim();})];const title=await p.title();return {p,questions:[{name:'board-response',type:'text',text:title+'\n'+notice.join('\n')+'\n配付資料の巻末にある当該回の事後課題に回答。掲示板上の他の学生の投稿は回答資料に使用しない。',options:[]}],text:title+'\n'+notice.join('\n')};}const q=await this.questionsOf(p);return {p,questions:q,text:scrubIds(await p.locator('body').innerText()).slice(0,24000)}}
- // 回答を入力する課題は課題ごとのタブで開く。出席コード待ち・本人の提出待ち（クイズ・掲示板）のときはタブを閉じずに残し、
- // 同期やログインで画面が切り替わって入力が消えないようにする。それ以外は処理が終わったら閉じる
- async taskPage(t){await this.releasePage(t.id);const p=await (await this.page()).context().newPage();p.on('dialog',closeDialog);this.pending.set(t.id,p);return p}
- async releasePage(id){for(const m of [this.held,this.pending]){const p=m.get(id);m.delete(id);if(p&&!p.isClosed())await p.close().catch(()=>{})}}
- async settlePage(t){const p=this.pending.get(t.id);this.pending.delete(t.id);if(!p||p.isClosed())return;const keep=['code','answered'].includes(t.status)||(/\/board\//.test(t.url||'')&&['draft','wait'].includes(t.status));if(!keep){await p.close().catch(()=>{});return}
- // 残したタブは本人が操作する。ここで出る確認（提出の確認・ページを離れる確認など）は本人が押した操作から出るので「OK」で進める
- // （受け取るだけで答えないと、ブラウザを動かす仕組みの決まりでページが確認の返事を待ったまま止まる）。出席コードの入力（prompt）は本人に任せる
- p.removeAllListeners('dialog');p.on('dialog',d=>{if(d.type()!=='prompt')d.accept().catch(()=>{})});this.held.set(t.id,p);await p.bringToFront().catch(()=>{})}
- // SaBoRo の画面で本人が入れた出席コードを選び、入力済みの回答と一緒に提出する（本人が提出を確かめて押したときだけ呼ばれる）
- // 入力済みのタブが閉じられていれば、生成済みの回答で入力し直してから
- async enterAttendance(t,raw){if(aiForbidden(this.state,t,this.courses()[t.course]?.name))throw Error('この回は AI の利用が禁止されているため、saboro からは提出しません。manabo で提出してください');const code=String(raw||'').normalize('NFKC').trim();if(!code)throw Error('出席コードを入れてください');if(t.status==='done')return;let p=this.held.get(t.id);if(!p||p.isClosed()){await this.process(t,false,{urgent:true});p=this.held.get(t.id)}if(t.status!=='code'||!p||p.isClosed())throw Error(t.action||'出席コードの欄のあるページを開けませんでした');const questions=await this.questionsOf(p),codes=questions.filter(q=>attendance(q.text));if(codes.length!==1)throw Error('出席コードの欄を特定できません。manabo ブラウザで入力してください');const q=codes[0],same=v=>String(v||'').normalize('NFKC').replace(/\s+/g,'')===code.replace(/\s+/g,'');let value=code;if(['select','radio'].includes(q.type)){const o=q.options.find(o=>o.value&&(same(o.value)||same(o.text)));if(!o)throw Error(`出席コード「${code}」は選択肢にありません`);value=o.value}const control=p.locator(`[name="${q.name.replace(/"/g,'\\"')}"]`);if(q.type==='select')await control.selectOption(value);else if(q.type==='radio'){for(const c of await control.all())if(await c.getAttribute('value')===value)await c.check()}else await control.fill(value);const answer={...t.generation,answers:[...(t.generation?.answers||[]).filter(a=>a.name!==q.name),{name:q.name,value,values:[],evidence:'本人が入力した出席コード'}]};await this.submitForm(t,p,questions,answer,{attendanceCode:true});if(t.status==='done')await this.releasePage(t.id);else{t.action=t.action||'manabo で提出結果を確認してください';await this.save()}}
- // 待機中のタブで本人が提出を終えていれば、提出済みにしてタブを閉じる（同期の前に確かめる）
- // 入力済みのタブは同期と別のタブなので、出席コード待ち・提出待ちがあっても同期は止めない
- async collectSubmitted(){for(const [id,p] of [...this.held]){const t=this.state.tasks.find(x=>x.id===id);if(!t){await this.releasePage(id);continue}if(p.isClosed())continue;const text=await p.locator('body').innerText().catch(()=>''),answering=await p.locator(ANSWER_FIELDS).count().catch(()=>0);// 全問に答えると「回答が完了」と出るクイズがあるので、回答欄が残っている間（提出前）は提出済みにせず、ページも閉じない
-if(p.url().startsWith(LMS)&&!answering&&/提出が完了|回答が完了|解答が完了|送信しました|提出しました/.test(text)){t.status='done';t.submittedAt=new Date().toISOString();t.action='';t.submissionIntent=null;await this.releasePage(id)}}}
- // 「待機中のブラウザ」：入力済みで待っているタブがあればそれを前に出す
- async showBrowser(){if(!this.visible)await this.switchBrowser(true);const p=[...this.held.values()].filter(x=>!x.isClosed()).at(-1)||[...this.promptTabs.values()].filter(x=>!x.isClosed()).at(-1)||await this.page();await p.bringToFront().catch(()=>{})}
- // 画面に出す／出さないを切り替える。裏で開いていた本人の操作待ち（出席コードの入力画面・回答を入れた提出待ちの課題）は、切り替えたブラウザで開き直す（回答は作り直さず入れ直すだけ）
- async switchBrowser(visible){const held=[...this.held.keys()],prompts=[...this.promptTabs.entries()].filter(([,p])=>!p.isClosed()).map(([name,p])=>({name,url:p.url()}));this.visible=visible;await this.ctx?.close().catch(()=>{});this.ctx=null;this.p=null;this.held.clear();this.pending.clear();this.promptTabs.clear();await this.page();for(const x of prompts){const tab=await this.ctx.newPage();watchPrompt(tab);this.promptTabs.set(x.name,tab);await tab.goto(x.url,{waitUntil:'domcontentloaded'}).catch(()=>{})}for(const id of held){const t=this.state.tasks.find(t=>t.id===id);if(t&&t.status!=='done')await this.process(t,false).catch(()=>{})}}
- // 同期の前：画面に出したブラウザで本人の操作待ちがもう残っていなければ、裏で動くブラウザに戻す（同期のたびに画面が切り替わらないように）
- async hideBrowserIfIdle(){if(!this.visible)return;const busy=[...this.held.values(),...this.promptTabs.values()].some(p=>!p.isClosed());if(!busy)await this.switchBrowser(false)}
- // urgent：本人が画面で頼んだ処理（SaBoRo の AI を Batch にせず、すぐ作る）
- async process(t,manualSubmit,opts={}){try{return await this.processTask(t,manualSubmit,opts)}finally{await this.settlePage(t)}}
- // 回答欄の一覧（名前・種類・設問文・選択肢）
- async questionsOf(p){return p.locator('input:not([type=hidden]):not([type=submit]):not([type=button]),textarea,select').evaluateAll(es=>{const groups=new Map();for(const e of es){if(!e.name||e.type==='password'||e.disabled)continue;let box=e.closest('fieldset,.question,.quiz-question,.form-group,tr')||e.parentElement.parentElement;let text=box.innerText;const label=e.id?document.querySelector(`label[for="${CSS.escape(e.id)}"]`)?.innerText:'';let g=groups.get(e.name)||{name:e.name,type:e.tagName==='SELECT'?'select':e.type==='textarea'?'text':e.type,text,options:[]};if(['radio','checkbox'].includes(g.type))g.options.push({value:e.value,text:label||e.parentElement.innerText});if(g.type==='select')g.options=Array.from(e.options).map(o=>({value:o.value,text:o.text}));groups.set(e.name,g)}return [...groups.values()]});}
- // SaBoRo の AI の出力が上限で途切れたら、自動では作り直さず（同期のたびに費用がかかるため）本人の対応待ちにし、高度な生成（月の回数に上限あり）を選べるようにする
- offerAdvanced(t,key,a){const used=Number(a?.used)||0,limit=Number(a?.limit)||3;t.status='wait';t.advancedOffer={key,used,limit};t.action=used<limit?`出力が上限で途切れました。高度な生成を使用しますか？（${used}/${limit}）`:`出力が上限で途切れました。今月の高度な生成は使い切りました（${used}/${limit}）。補足で分量を指定して作り直してください`}
- async processTask(t,manualSubmit,{urgent=false,advanced=false,personal=null,answers=null,saveProfile=false}={}){if(t.status==='done')return;const forbidden=aiForbidden(this.state,t,this.courses()[t.course]?.name);if(manualSubmit&&forbidden)throw Error('この回は AI の利用が禁止されているため、saboro からは提出しません。manabo で提出してください');if(/期末試験|中間試験|定期試験/.test(t.title)){t.status='wait';t.action='試験は本人が受験してください';await this.save();return;}if(t.status==='code'&&!manualSubmit){const held=this.held.get(t.id);if(held&&!held.isClosed()){await held.bringToFront().catch(()=>{});t.action=CODE_ACTION;await this.save();return}}if(t.submissionIntent){t.status='unknown';t.action='提出結果をmanaboで確認';return}await this.resolveQuiz(t);const {p,questions,text}=await this.form(t);t.description=text;if(!questions.length){t.status='wait';t.action='設問を確認';await this.save();return}const fingerprint=hash(JSON.stringify(questions));const source=await this.materials(this.courses()[t.course].name,t.round);t.aiPolicy=this.aiPolicyOf(t,source);const banned=aiForbidden(this.state,t,this.courses()[t.course]?.name);if(manualSubmit&&banned)throw Error('この回は AI の利用が禁止されているため、saboro からは提出しません。manabo で提出してください');this.deadlineFromSources(t,text,source);// 回答の作成に使う「自分について」：アンケートの答え（profileForm）をまとめた文と、自由記述（profile）
-const profileNote=()=>String(this.state.settings?.profile||'').trim();let profile=[globalThis.ProfileForm.composeProfile(this.state.settings?.profileForm),profileNote()].filter(Boolean).join('\n');const ownStyle=String(this.state.settings?.style||'').trim();// 経験・体験を問う課題：本人が質問に答えるまで作らない（同期でも止める。AI が経験を組み立てる作り方は選べない）。ask：質問を作る、answers：本人の答えを元に作る
-if(personal==='answers'){t.personalMode=personal;if(personal==='answers'){t.personalAnswers=answers;if(saveProfile){const note=mergeProfile(profileNote(),answers);this.state.settings={...this.state.settings,profile:note};profile=[globalThis.ProfileForm.composeProfile(this.state.settings?.profileForm),note].filter(Boolean).join('\n')}}}else if(personal==='ask'||(!manualSubmit&&t.personalMode!=='answers'&&t.personalMode!=='plain'&&personalCandidate({title:t.title,description:text},questions))){if(personal==='ask'){const q=await this.ask({title:t.title,description:text.slice(0,6000),questions:questions.map(x=>x.text).filter(Boolean)},{profile});if(q.needsPersonal){t.personalChoice=true;t.personalQuestions=q.questions;t.status='wait';t.action=`経験・体験を元に答える課題です。質問（${q.questions.length}問）に答えると回答を作ります`;await this.save();return}t.personalMode='plain';delete t.personalQuestions}else{t.personalChoice=true;t.status='wait';t.action=PERSONAL_ACTION;await this.save();return}}
-if(!this.state.writingSeed)this.state.writingSeed=crypto.randomUUID();const style=writingStyle(this.state.writingSeed,t.id||t.key);const mode=t.personalMode==='answers'&&Array.isArray(t.personalAnswers)?'answers':'',supplement=[t.supplement,mode==='answers'?'質問への回答:\n'+t.personalAnswers.map(a=>`${a.text}：${a.answer||'（未回答）'}`).join('\n'):''].filter(Boolean).join('\n'),generationKey=hash(JSON.stringify({policy:'natural-v2',questions,source,supplement:t.supplement,...(profile?{profile}:{}),...(ownStyle?{ownStyle}:{}),...(mode?{personal:mode,answers:mode==='answers'?t.personalAnswers:undefined}:{}),...(banned?{reference:true}:{})}));// SaBoRo の AI は、急がない回答を Batch（半額）で作る。本人が頼んだとき・締切まで 24 時間以内ならすぐ作る。Batch の結果が出るまでは「作成中」で止め、結果が出たらアプリが同じ処理をやり直す
-const soon=!!t.dueAt&&new Date(t.dueAt)-Date.now()<24*3600e3;let generated=t.generationKey===generationKey&&t.generation?t.generation:null;if(!generated){try{generated=await this.ai({...t,questions,description:text},source,supplement,{...(banned?{reference:true}:{}),...(advanced?{advanced:true}:{}),...(profile?{profile}:{}),...(mode?{personal:mode}:{}),style,...(ownStyle?{ownStyle}:{}),key:generationKey,urgent:urgent||manualSubmit||soon||advanced})}catch(e){if(e instanceof AiTruncated){delete t.aiPending;this.offerAdvanced(t,generationKey,e.advanced);await this.save();return}if(!(e instanceof AiPending))throw e;t.aiPending=generationKey;t.action=AI_PENDING_ACTION;await this.save();return}}delete t.aiPending;delete t.advancedOffer;const answer=cleanAnswer(generated,questions);if(manualSubmit&&t.answerEdited){const fields=questions.filter(q=>!attendance(q.text));if(fields.length!==1||!['textarea','text'].includes(fields[0].type)){t.status='wait';t.action='編集した回答と各設問の対応を確認してください';await this.save();return}answer.draft=t.answer;answer.answers=answer.answers.map(a=>a.name===fields[0].name?{...a,value:t.answer}:a);t.answerEdited=false;}else if(!manualSubmit){t.answerEdited=false;}if(new URL(t.url).pathname.includes('/board/')){const response=answer.answers.find(a=>a.name==='board-response');if(response?.value?.trim())answer.draft=response.value;}t.generationKey=generationKey;t.generation=answer;t.questionHash=fingerprint;t.answer=answer.draft;if(!t.dueAt){const d=deadlineFromText((answer.notes||[]).join('\n'));if(d){t.dueAt=d.dueAt;t.deadlineText=('注意点：'+d.line).slice(0,200)}}t.status=answer.needsUser.length?'wait':'draft';t.action=answer.needsUser.join('\n');await this.saveDraft(t);await this.save();// AI の利用が禁止されている授業：回答は参考として saboro に残すだけにし、manabo には入力しない（提出・投稿もしない）
-if(banned&&t.type!=='クイズ'){t.status='draft';t.action=AI_FORBIDDEN_ACTION;await this.save();return}if(new URL(t.url).pathname.includes('/board/')){const field=p.locator('textarea,[contenteditable="true"]').filter({visible:true});if(await field.count()!==1)throw Error('掲示板の発言入力欄を特定できません');await field.fill(t.answer);t.status=answer.needsUser.length?'wait':'draft';t.action=answer.needsUser.join('\n')||'下書きを確認し、manaboの掲示板へ投稿してください';await this.save();return}for(const a of answer.answers){const q=questions.find(q=>q.name===a.name);if(!q||attendance(q.text))continue;const control=p.locator(`[name="${q.name.replace(/"/g,'\\"')}"]`);if(q.type==='radio'){const values=q.options.filter(o=>o.value===a.value);if(values.length===1)await (async()=>{for(const c of await control.all())if(await c.getAttribute('value')===a.value)await c.check()})()}else if(q.type==='checkbox'){for(const c of await control.all())await c.setChecked(a.values.includes(await c.getAttribute('value')))}else if(q.type==='select'){if(q.options.some(o=>o.value===a.value))await control.selectOption(a.value)}else await control.fill(a.value)}
-const evidencePresent=answer.answers.every(a=>{const quote=a.evidence.split('引用:')[1]?.trim();return !!quote&&source.some(m=>a.evidence.includes(m.file)&&quoteSource(quote,[m]))});if(!evidencePresent)answer.grounded=false;const gate=submissionGate(t,answer,questions);if(t.type==='クイズ'&&!questions.some(q=>attendance(q.text))){t.status='answered';const missing=questions.filter(q=>!attendance(q.text)&&!answer.answers.some(a=>a.name===q.name&&((a.value||'').trim()||a.values?.length)));t.action=gate==='ok'?'全問の回答を入力しました。本人が確認して提出してください。':`回答入力済み。未回答 ${missing.length}項目。${answer.needsUser.join('\n')||(answer.answers.some(a=>a.evidence.includes('一般知識'))?'一般知識で推定した回答を含みます。資料で未確認のため、誤っている可能性があります。':'回答の根拠を確認してください。')} 提出は本人が行ってください。`;t.answerProgress={total:questions.length,missing:missing.map(q=>q.name)};if(banned)t.action='この回は AI の利用が禁止されています。回答は入力済みです。内容を自分で確認・修正してから manabo で提出してください。';await this.save();return}if(gate==='attendance'){t.status='code';t.action=CODE_ACTION;await this.save();return}if(gate!=='ok'){t.status='wait';t.action=answer.needsUser.join('\n')||GATE_REASON[gate]||'回答・提出条件を確認';await this.save();return}if(!manualSubmit){t.status='draft';t.action='下書きを確認して提出';await this.save();return}await this.submitForm(t,p,questions,answer)}
- async submitForm(t,p,questions,answer,{attendanceCode=false}={}){for(const q of questions){const a=answer.answers.find(a=>a.name===q.name);if(!a)throw Error('回答不足');const cs=p.locator(`[name="${q.name}"]`);if(['radio','checkbox'].includes(q.type)){const checked=[];for(const c of await cs.all())if(await c.isChecked())checked.push(await c.getAttribute('value'));const expected=q.type==='radio'?[a.value]:a.values;if(JSON.stringify(checked.sort())!==JSON.stringify([...expected].sort()))throw Error('回答選択が一致しません')}else if(await cs.inputValue()!==a.value)throw Error('回答入力が一致しません')}const reread=await p.locator('body').innerText();if(!attendanceCode&&attendance(reread)){t.status='code';await this.save();return}const form=p.locator('form').filter({has:p.locator(`[name="${questions[0].name}"]`)});if(await form.count()!==1)throw Error('提出フォームを確認してください');const buttons=form.getByRole('button',{name:/^(提出|回答を提出|解答を提出|送信|回答する|解答する|回答確認|確認)$/});const inputs=form.locator('input[type=submit]');const button=await buttons.count()===1?buttons:inputs;if(await button.count()!==1)throw Error('提出ボタンを確認してください');if(await buttons.count()!==1&&!/^(提出|回答を提出|解答を提出|送信|回答する|解答する|回答確認|確認)$/.test((await button.getAttribute('value'))||''))throw Error('提出ボタンを確認してください');t.submissionIntent={at:new Date().toISOString(),fingerprint:t.questionHash};t.status='unknown';await this.save();await button.click();const confirm=p.getByRole('button',{name:/^(提出する|送信する|回答を送信|解答を送信|確定)$/});if(await confirm.count()===1){if(!attendanceCode&&attendance(await p.locator('body').innerText())){t.status='code';t.submissionIntent=null;await this.save();return}await confirm.click()}try{await p.waitForFunction(before=>{const text=document.body.innerText;return /提出が完了|回答が完了|解答が完了|送信しました|提出しました/.test(text)&&text!==before},reread,{timeout:12000});t.status='done';t.submittedAt=new Date().toISOString();t.submissionIntent=null;t.action=''}catch{t.status='unknown';t.action='manaboで提出結果を確認。自動再送信しません。'}await this.save()}
+  constructor({root, work, credentials, state, save, ai, extract, ask, trash = trashFile, quarantine = null}) {
+    Object.assign(this, {baseRoot: root, work, credentials, state, ai, extract, ask, trash, quarantine});
+    this.spareIds = new Set();
+    this.held = new Map();
+    this.promptTabs = new Map();
+    this.pending = new Map();
+    let chain = Promise.resolve();
+    this.save = () => (chain = chain.then(save, save));
+  }
+  // 資料・授業フォルダの置き場所。設定欄で指定したフォルダ、なければ既定（2026秋学期 フォルダ）
+  get root() {
+    return this.state.settings?.downloadDir || this.baseRoot;
+  }
+  // manabo を読むブラウザ。同期などは画面に出さずに裏で動かし（headless）、本人の操作が要るとき（「manabo ブラウザを開く」）だけ画面に出す（visible）。どちらも同じ保存場所なのでログインは引き継ぐ
+  async page() {
+    if (this.p?.isClosed()) {
+      this.p = null;
+      let alive = false;
+      try {
+        alive = !!this.ctx && this.ctx.pages().length > 0;
+      } catch {}
+      if (alive) {
+        try {
+          this.p = await this.ctx.newPage();
+          this.p.on('dialog', closeDialog);
+          watchPrompt(this.p);
+          return this.p;
+        } catch {}
+      }
+      await this.ctx?.close().catch(() => {});
+      this.ctx = null;
+    }
+    if (!this.ctx) {
+      await mkdir(join(this.work, 'browser'), {recursive: true, mode: 0o700});
+      this.ctx = await chromium.launchPersistentContext(
+        join(this.work, 'browser'),
+        this.visible
+          ? {headless: false, viewport: {width: 1100, height: 850}}
+          : {headless: true, channel: 'chromium', viewport: {width: 1100, height: 850}}
+      );
+      this.p = this.ctx.pages()[0] || (await this.ctx.newPage());
+      this.p.on('dialog', closeDialog);
+      watchPrompt(this.p);
+    }
+    return this.p;
+  }
+  async login() {
+    const p = await this.page();
+    await p.goto(LMS + '/auth/shibboleth/');
+    await p.waitForLoadState('domcontentloaded');
+    await p.locator('#button-logout,input[type=password]').first().waitFor({timeout: 15000});
+    if (await p.locator('#button-logout').count()) return true;
+    await this.submitIdp(p, p.locator('#button-logout'));
+    return true;
+  }
+  // 大学の統合ログイン（manabo・CUBICS 共通）。done はログイン後に現れる要素
+  async submitIdp(p, done) {
+    const c = await this.credentials();
+    if (!c?.username || !c?.password) throw Error('ログインID・パスワードをアプリの設定画面で保存してください。');
+    const u = new URL(p.url());
+    if (!u.hostname.endsWith('.chukyo-u.ac.jp') && u.hostname !== 'chukyo-u.ac.jp')
+      throw Error('ログイン先を確認してください。');
+    if (await p.locator('iframe[src*="captcha"], [class*="captcha"], input[name*="otp"]').count())
+      throw Error('追加認証が必要です。ローカルのブラウザで操作してください。');
+    const pass = p.locator('input[type=password]');
+    if ((await pass.count()) !== 1) throw Error('ログイン画面の確認が必要です。');
+    const user = p
+      .locator('input[name="j_username"],input[name="username"],input[name="user"],input[type=email],input[type=text]')
+      .filter({visible: true});
+    if ((await user.count()) !== 1) throw Error('ログインID欄の確認が必要です。');
+    await user.fill(c.username);
+    await pass.fill(c.password);
+    const named = p.getByRole('button', {name: /^(ログイン|Login|Sign in)$/i}).filter({visible: true});
+    const button =
+      (await named.count()) === 1 ? named : p.locator('button[type=submit],input[type=submit]').filter({visible: true});
+    if ((await button.count()) !== 1) throw Error('ログインボタンを確認してください。');
+    await button.click();
+    const second = p.getByRole('button', {name: '二段階認証でログイン', exact: true});
+    await done.or(second).first().waitFor({timeout: 15000});
+    if (await second.isVisible().catch(() => false)) {
+      const nextPassword = p.locator('input[type=password]').filter({visible: true});
+      if ((await nextPassword.count()) === 1) await nextPassword.fill(c.password);
+      await second.click();
+    }
+    try {
+      await done.waitFor({timeout: 15000});
+    } catch {
+      throw Error('自動ログインに失敗。ID・パスワードまたは追加認証を確認してください。');
+    }
+  }
+  async settled(p) {
+    await p.locator('#div-class-directories').waitFor({timeout: 20000});
+    await p
+      .waitForFunction(() => !document.querySelector('#div-class-contents .loading'), {timeout: 10000})
+      .catch(() => {});
+  }
+  async directories(p) {
+    return (
+      await p
+        .locator('#div-class-directories .a-open-contents')
+        .evaluateAll(es =>
+          es.map(e => ({
+            title: (e.closest('tr')?.previousElementSibling?.innerText || e.textContent).trim(),
+            directory: e.getAttribute('directory_id')
+          }))
+        )
+    ).map(d => ({...d, round: roundOf(d.title)}));
+  }
+  async openDirectory(p, d) {
+    await p.locator(`#div-class-directories a[directory_id="${d.directory}"]`).click();
+    const opened = await p
+      .waitForFunction(
+        label => document.querySelector('#div-class-contents')?.textContent.includes(label),
+        d.title.split(/\s/)[0],
+        {timeout: 10000}
+      )
+      .then(
+        () => true,
+        () => false
+      );
+    await p.locator('#div-class-contents').waitFor();
+    await p
+      .waitForFunction(() => !document.querySelector('#div-class-contents .loading'), {timeout: 10000})
+      .catch(() => {});
+    return opened;
+  }
+  // 受講期間が過ぎた提出済みの行に当たる未完了の課題を提出済みにする。教材 ID・説明文（既知の課題の本文に含まれ、締切も同じ）・同じ回の題名の順に照らし合わせる
+  // 以前の版で説明文の 1 行目が題名になっていた課題は、正しい題名に直す
+  async markClosedDone(p, tasks, round) {
+    const rows = await p
+      .locator('#div-class-contents tr')
+      .evaluateAll(closedRows)
+      .catch(() => []);
+    if (!rows.length) return;
+    const n = v =>
+      String(v || '')
+        .normalize('NFKC')
+        .replace(/\s+/g, '');
+    for (const t of tasks) {
+      if (t.status === 'done') continue;
+      const r = rows.find(
+        r =>
+          (r.contentId && contentId(t.url) === r.contentId) ||
+          (n(r.description).length >= 10 &&
+            n(t.description).includes(n(r.description)) &&
+            (!t.dueAt || !deadline(r.text) || deadline(r.text) === t.dueAt)) ||
+          (t.round === round && n(t.title) && n(t.title) === n(r.title))
+      );
+      if (!r) continue;
+      if (r.title && n(t.title) && n(r.description).startsWith(n(t.title))) t.title = r.title;
+      markDone(t);
+    }
+  }
+  async entries(p) {
+    const open = await p
+        .locator('#div-class-contents a[href*="/content/"],#div-class-contents a[href*="/file/"]')
+        .evaluateAll(extractEntries),
+      closed = await p
+        .locator('#div-class-contents a.a-content-open')
+        .evaluateAll(closedEntries)
+        .catch(() => []);
+    const list = [...open, ...closed.filter(c => !open.some(o => contentId(o.url) === contentId(c.url)))];
+    for (const e of list)
+      if (SPARE.test(e.title || e.name || '')) {
+        const id = contentId(e.url);
+        if (id) this.spareIds.add(id);
+      }
+    return list;
+  }
+  // 開いている回の一覧を work/class に残す（締切などが読めないときの確認用）
+  async snapshot(id, round, p) {
+    const html = await p
+      .locator('#div-class-contents')
+      .evaluate(e => e.innerHTML)
+      .catch(() => '');
+    if (!html) return;
+    const dir = join(this.work, 'class');
+    await mkdir(dir, {recursive: true, mode: 0o700})
+      .then(() => writeFile(join(dir, `${id}_${round || 'x'}.html`), html, {mode: 0o600}))
+      .catch(() => {});
+  }
+  // 取込み課題（授業トップのURLのまま）を、その回の課題の中から特定する
+  matchImported(t, assignments) {
+    return chooseContent(
+      assignments.map(e => ({...e, title: e.title.trim() || e.name})),
+      t
+    );
+  }
+  // 授業ページの「経済原論Ⅱ（金曜／2限）」から曜日を読み、学年暦の授業日で未設定の回を埋める（設定済みの回は変えない）
+  async applyCalendar(p, id) {
+    const label = [
+      await p
+        .locator('.breadcrumb')
+        .first()
+        .innerText({timeout: 2000})
+        .catch(() => ''),
+      await p.title().catch(() => '')
+    ].join(' ');
+    const weekday = weekdayOf(label),
+      period = periodOf(label),
+      auto = weekday && scheduleFor(weekday);
+    if (period) this.state.periods = {...this.state.periods, [id]: period};
+    if (!auto) return;
+    this.state.schedules = {...this.state.schedules, [id]: {...auto, ...(this.state.schedules?.[id] || {})}};
+    this.state.weekdays = {...this.state.weekdays, [id]: weekday};
+  }
+  // 初回・ガイダンス資料（第1回までの資料）と manabo のシラバス詳細から、教室・授業形式（回ごとの形式も）・欠席上限などを読み取る。資料が変わったときだけ読み直す
+  // AI 利用の方針は課題ごとに、その回の授業資料（ファイル名の回が同じもの）と課題の説明から判断する（t.aiPolicy）。資料のダウンロードの後に読む
+  aiPolicyOf(t, materials) {
+    return (
+      aiPolicyFrom([
+        ...materials.filter(m => m.text && m.text !== '読取り失敗' && fileRound(m.file) === t.round),
+        {file: '課題の説明', text: t.description || ''}
+      ]) || {forbidden: false}
+    );
+  }
+  async updateAiPolicy(i) {
+    const name = this.courses()[i].name;
+    const tasks = this.state.tasks.filter(t => t.course === i && t.round && t.status !== 'done');
+    if (!tasks.length) return;
+    const all = await this.materials(name, 30).catch(() => []);
+    for (const t of tasks) t.aiPolicy = this.aiPolicyOf(t, all);
+  }
+  // シラバス（授業計画）とお知らせは授業ページを開いた直後に読む（回ごとの予定 plannedModes に使う）
+  async readSyllabus(i, p) {
+    const name = this.courses()[i].name,
+      id = courseIdOf(i, this.state);
+    const page = p ? await this.syllabus(p, id).catch(() => null) : null;
+    if (page?.rows) this.state.syllabusRows = {...this.state.syllabusRows, [name]: page.rows};
+    return page;
+  }
+  // 授業情報の読み取り。同期では資料をダウンロードし終えてから呼ぶ（初回の同期や新しい資料を取り込んだ同期でも、その資料の対面・オンデマンドの記載をすぐ反映する）。read は readSyllabus の結果
+  // 一度読んだ資料は読み直さない（courseInfoPlan）。初めて読む授業・初回の同期・次の授業が明日までにある授業はすぐ作り、それ以外は SaBoRo の AI では Batch（半額）にする
+  async updateCourseInfo(i, p, read) {
+    const name = this.courses()[i].name;
+    const page = read !== undefined ? read : await this.readSyllabus(i, p);
+    if (!this.extract || this.aiAvailable === false) return; // 授業全体の情報（教室・形式・欠席上限など）は第1回までの資料とシラバス・お知らせから、回ごとの形式は第2回以降の資料の該当箇所も合わせて読む
+    let base = [],
+      later = [];
+    try {
+      const all = (await this.materials(name, 30)).filter(m => m.text && m.text !== '読取り失敗');
+      base = all.filter(m => fileRound(m.file) <= 1);
+      later = all
+        .filter(m => fileRound(m.file) > 1)
+        .map(m => ({file: m.file, text: modeExcerpt(m.text)}))
+        .filter(m => m.text);
+    } catch {}
+    if (page) base.push(...page.sources);
+    if (!base.length && !later.length) return;
+    // Batch の結果待ちがあれば先に受け取る。出来上がるまでは新しく頼まない（同じ資料を二重に頼まないため）
+    if (this.state.courseInfo?.[name]?.pending && !(await this.resumeCourseInfo(name))) return;
+    const info = this.state.courseInfo?.[name],
+      plan = courseInfoPlan(info, base, later);
+    if (!plan.sources.length) {
+      if (info.baseKey === plan.baseKey && JSON.stringify(info.read) === JSON.stringify(plan.read)) return;
+      this.setCourseInfo(name, plan, null, base);
+      await this.save();
+      return;
+    }
+    const key = 'info-' + hash(JSON.stringify([name, plan.sources.map(m => [m.file, hash(m.text)])])).slice(0, 40);
+    await this.readCourseInfo(name, {key, plan, base}, {urgent: !info || !!this.firstSync || this.classSoon(i)});
+  }
+  setCourseInfo(name, plan, raw, base) {
+    const {sourceKey, pending, ...old} = this.state.courseInfo?.[name] || {};
+    this.state.courseInfo = {
+      ...this.state.courseInfo,
+      [name]: {
+        ...mergeCourseInfo(old, plan, raw, base),
+        files: Object.keys(plan.read),
+        syllabus: 'シラバス' in plan.read,
+        generatedBy: raw ? raw.generatedBy : old.generatedBy,
+        extractedAt: raw ? new Date().toISOString() : old.extractedAt
+      }
+    };
+  }
+  // 読み取って記録する。SaBoRo の AI の Batch で結果待ちになったら、頼んだ内容を work に残して pending に目印を置く（状態はクラウドにも送るので、資料の本文は状態に入れない）。true：記録した、false：結果待ち
+  async readCourseInfo(name, job, {urgent}) {
+    let raw;
+    try {
+      raw = await this.extract(name, job.plan.sources, {key: job.key, urgent});
+    } catch (e) {
+      if (!(e instanceof AiPending)) throw e;
+      const dir = join(this.work, 'course-info');
+      await mkdir(dir, {recursive: true, mode: 0o700});
+      await writeFile(join(dir, job.key + '.json'), JSON.stringify(job), {mode: 0o600});
+      this.state.courseInfo = {...this.state.courseInfo, [name]: {...this.state.courseInfo?.[name], pending: job.key}};
+      await this.save();
+      return false;
+    }
+    this.setCourseInfo(name, job.plan, raw, job.base);
+    await this.save();
+    return true;
+  }
+  // Batch の結果を受け取る。true：受け取った（失敗したときは pending を外して例外。次の同期で頼み直す）、false：まだ結果待ち
+  async resumeCourseInfo(name) {
+    const key = this.state.courseInfo?.[name]?.pending;
+    if (!key) return true;
+    const file = join(this.work, 'course-info', key + '.json');
+    let job = null;
+    try {
+      job = JSON.parse(await readFile(file, 'utf8'));
+    } catch {}
+    const clear = async () => {
+      const {pending, ...rest} = this.state.courseInfo[name];
+      this.state.courseInfo = {...this.state.courseInfo, [name]: rest};
+      await rm(file, {force: true}).catch(() => {});
+      await this.save();
+    };
+    if (!job) {
+      await clear();
+      return true;
+    }
+    try {
+      if (!(await this.readCourseInfo(name, job, {urgent: false}))) return false;
+    } catch (e) {
+      await clear();
+      throw e;
+    }
+    await rm(file, {force: true}).catch(() => {});
+    return true;
+  }
+  // 次の授業（学年暦の授業日）が明日までにあるか。授業日が分からなければ急がない
+  classSoon(i) {
+    const day = d => new Date(d).toLocaleDateString('sv-SE', {timeZone: 'Asia/Tokyo'}),
+      today = day(Date.now()),
+      tomorrow = day(Date.now() + 864e5);
+    return Object.values(this.state.schedules?.[courseIdOf(i, this.state)] || {}).some(
+      d => typeof d === 'string' && d >= today && d <= tomorrow
+    );
+  }
+  // 授業ページのシラバス（授業計画の表）とお知らせを読む。シラバスが隠れていれば「シラバス」のリンク・ボタンで開く
+  // 学生名などヘッダーの情報は読まない。読んだ本文は確認用に保存する
+  async syllabus(p, id) {
+    let info = await p.evaluate(classInfo);
+    const cached = await this.cachedSyllabus(id),
+      fromCache = !!cached;
+    if (cached) info = {...info, syllabus: cached};
+    if (!info.syllabus) {
+      const all = p.locator('a:has-text("シラバス"),button:has-text("シラバス")');
+      const k = await all.evaluateAll(es =>
+        es.findIndex(
+          e =>
+            !e.closest('#div-class-contents,#div-class-directories') &&
+            !/\/(file|content)\//.test(e.getAttribute('href') || '')
+        )
+      );
+      if (k >= 0) {
+        const link = all.nth(k),
+          allowed = u => {
+            try {
+              const x = new URL(u),
+                h = x.hostname;
+              return (
+                /^https?:$/.test(x.protocol) &&
+                (h === new URL(LMS).hostname || h === 'chukyo-u.ac.jp' || h.endsWith('.chukyo-u.ac.jp'))
+              );
+            } catch {
+              return false;
+            }
+          };
+        const href = await link.getAttribute('href').catch(() => null),
+          url = href && !/^(#|javascript:)/i.test(href) ? new URL(href, p.url()).href : null;
+        let page = null;
+        try {
+          if (url) {
+            if (allowed(url)) {
+              page = await this.ctx.newPage();
+              await page.goto(url);
+            }
+          } else
+            page = await Promise.all([
+              this.ctx.waitForEvent('page', {timeout: 5000}).catch(() => null),
+              link.click()
+            ]).then(([x]) => x);
+          if (page && allowed(page.url())) {
+            await page.waitForLoadState('domcontentloaded');
+            await page.waitForLoadState('networkidle', {timeout: 10000}).catch(() => {});
+            info = {...info, ...(await page.evaluate(classInfo)), notice: info.notice};
+          } else if (!url) {
+            await p
+              .getByText('授業計画', {exact: true})
+              .first()
+              .waitFor({timeout: 5000})
+              .catch(() => {});
+            info = await p.evaluate(classInfo);
+            await p.keyboard.press('Escape').catch(() => {});
+          }
+        } finally {
+          await page?.close().catch(() => {});
+        }
+      }
+    }
+    const scrub = t => scrubIds(t).trim();
+    const out = [];
+    if (info.syllabus) out.push({file: 'シラバス', text: scrub(info.syllabus).slice(0, 40000)});
+    if (info.notice) out.push({file: 'お知らせ', text: scrub(info.notice).slice(0, 8000)});
+    if (out.length && !fromCache) {
+      await mkdir(join(this.work, 'syllabus'), {recursive: true})
+        .then(() =>
+          writeFile(join(this.work, 'syllabus', `${id}.txt`), out.map(o => `## ${o.file}\n${o.text}`).join('\n\n'), {
+            mode: 0o600
+          })
+        )
+        .catch(() => {});
+      this.state.syllabusReadAt = {...this.state.syllabusReadAt, [id]: new Date().toISOString()};
+      if (info.syllabus) this.state.syllabusTerm = {...this.state.syllabusTerm, [id]: calendar.term};
+    }
+    return {sources: out, rows: fromCache ? null : info.rows || []};
+  }
+  // 読んだシラバスの本文。シラバスは学期の最初の同期でだけ読み、同じ学期（学年暦の term）の間は保存したテキストを返す（別タブを開き直さない。お知らせは毎回授業ページから読む）
+  async cachedSyllabus(id) {
+    if (!calendar.term || this.state.syllabusTerm?.[id] !== calendar.term) return '';
+    try {
+      const text = await readFile(join(this.work, 'syllabus', `${id}.txt`), 'utf8');
+      return (
+        text
+          .split(/\n\n## /)
+          .map(b => b.replace(/^## /, ''))
+          .find(b => b.startsWith('シラバス\n'))
+          ?.slice('シラバス\n'.length) || ''
+      );
+    } catch {
+      return '';
+    }
+  }
+  // CUBICS の授業時間割照会から、今週〜3週先の教室・休講・補講・授業変更を読む（時間割の表だけを読み、学生情報欄は読まない）
+  async cubics(weeks = 4) {
+    const p = await this.page();
+    await p.goto(CUBICS_URL);
+    await p.waitForLoadState('domcontentloaded');
+    const ready = p.getByText('授業時間割照会', {exact: false}).first();
+    await ready.or(p.locator('input[type=password]').first()).waitFor({timeout: 20000});
+    if (!(await ready.isVisible().catch(() => false))) await this.submitIdp(p, ready);
+    await ready.waitFor({timeout: 20000});
+    const raws = [];
+    for (let w = 0; w < weeks; w++) {
+      const raw = await p.evaluate(extractGrid);
+      if (!raw) break;
+      raws.push(raw);
+      if (w === weeks - 1 || !(await this.cubicsNextWeek(p, raw))) break;
+    }
+    if (!raws.length) throw Error('時間割の表が見つかりません');
+    await writeFile(join(this.work, 'cubics-grid.html'), raws.map(r => r.html).join('\n'), {mode: 0o600}).catch(
+      () => {}
+    );
+    const seen = new Set(),
+      entries = raws.flatMap(parseGrid).filter(e => {
+        const k = `${e.date}|${e.period}|${e.label}|${e.status}`;
+        return !seen.has(k) && seen.add(k);
+      });
+    const names = courseNames(this.state),
+      known = Object.fromEntries(
+        this.courses().map(({name: n, id}) => [
+          n,
+          {
+            weekday: this.state.timetable?.[n]?.weekday || this.state.weekdays?.[id],
+            period: this.state.timetable?.[n]?.period || this.state.periods?.[id]
+          }
+        ])
+      );
+    const mapped = mapEntries(entries, names, known),
+      first = entries.map(e => e.date).sort()[0] || '';
+    this.state.cubics = {
+      ...mapped,
+      events: [...(this.state.cubics?.events || []).filter(e => first && e.date < first), ...mapped.events],
+      weeks: raws.map(r => r.range),
+      fetchedAt: new Date().toISOString()
+    };
+    await this.save();
+  }
+  // 次の週へ（▶ ボタン、なければ日付欄に翌週を入れて GO）。週が変わったら true
+  async cubicsNextWeek(p, raw) {
+    const [y, m, d] = raw.range;
+    if (!y) return false;
+    const before = `${y}年${String(m).padStart(2, '0')}月${String(d).padStart(2, '0')}日`;
+    const changed = () =>
+      p
+        .waitForFunction(
+          b => {
+            const t = document.body.innerText.match(/\d{4}年\d{1,2}月\d{1,2}日/);
+            return t && t[0] !== b;
+          },
+          before,
+          {timeout: 15000}
+        )
+        .then(
+          () => true,
+          () => false
+        );
+    const arrow = p
+      .locator(
+        '[title*="次"],[alt*="次"],img[src*="next" i],input[type=image][src*="next" i],a:has(img[src*="next" i])'
+      )
+      .first();
+    if (await arrow.count()) {
+      await arrow.click();
+      if (await changed()) return true;
+    }
+    const next = new Date(Date.UTC(y, m - 1, d + 7));
+    const inputs = p.locator('input[type=text]').filter({visible: true});
+    const go = p
+      .locator('input[value="GO" i],input[alt="GO" i],img[alt="GO" i],button:has-text("GO"),a:has-text("GO")')
+      .first();
+    if ((await inputs.count()) < 3 || !(await go.count())) return false;
+    const nums = [];
+    for (const e of await inputs.all()) if (/^\d{1,4}$/.test(await e.inputValue())) nums.push(e);
+    if (nums.length < 3) return false;
+    await nums[0].fill(String(next.getUTCFullYear()));
+    await nums[1].fill(String(next.getUTCMonth() + 1));
+    await nums[2].fill(String(next.getUTCDate()));
+    await go.click();
+    return changed();
+  }
+  dedupe() {
+    const m = mergeTasks(this.state.tasks);
+    if (m.archived.length) {
+      this.state.tasks = m.tasks;
+      this.state.duplicateArchive = [...(this.state.duplicateArchive || []), ...m.archived].slice(-100);
+    }
+    const spare = dropSpareTasks(this.state.tasks, this.spareIds);
+    if (spare.archived.length) {
+      this.state.tasks = spare.tasks;
+      this.state.spareArchive = [...(this.state.spareArchive || []), ...spare.archived].slice(-100);
+    }
+  }
+  // 資料の本文。PDF などの読み取りは重いので、パス・サイズ・更新時刻が同じ間は work/text-cache に置いた結果を使う
+  async materials(course, round) {
+    const folder = await this.courseDir(course),
+      out = [];
+    for (const name of await readdir(folder)) {
+      if (!/\.(pdf|pptx|docx|txt|md)$/i.test(name)) continue;
+      if (fileRound(name) > round) continue;
+      try {
+        out.push({file: name, text: await this.textOf(join(folder, name))});
+      } catch {
+        out.push({file: name, text: '読取り失敗'});
+      }
+    }
+    return out;
+  }
+  async textOf(path) {
+    const st = await stat(path),
+      dir = join(this.work, 'text-cache'),
+      key = join(dir, hash(`${path}|${st.size}|${Math.floor(st.mtimeMs)}`) + '.txt');
+    try {
+      return await readFile(key, 'utf8');
+    } catch {}
+    const data = await readFile(path);
+    let text = '';
+    if (/\.pdf$/i.test(path)) {
+      const {PDFParse} = await import('pdf-parse');
+      const pdf = new PDFParse({data});
+      text = (await pdf.getText()).text;
+      await pdf.destroy();
+    } else if (/\.(pptx|docx)$/i.test(path)) {
+      const zip = new AdmZip(data);
+      for (const e of zip
+        .getEntries()
+        .filter(e => /^ppt\/slides\/slide\d+\.xml$|^word\/document\.xml$/.test(e.entryName)))
+        text += e
+          .getData()
+          .toString()
+          .replace(/<\/a:p>|<\/w:p>/g, '\n')
+          .replace(/<[^>]+>/g, ' ');
+    } else text = data.toString();
+    text = text.slice(0, 40000);
+    await mkdir(dir, {recursive: true, mode: 0o700})
+      .then(() => writeFile(key, text, {mode: 0o600}))
+      .catch(() => {});
+    return text;
+  }
+  // 授業ごとのフォルダ。なければ作る（名前の濁点などの表記ゆれは同じフォルダとみなす）
+  async courseDir(name) {
+    await mkdir(this.root, {recursive: true});
+    const dirs = await readdir(this.root);
+    const found = dirs.find(d => d.normalize('NFC') === name.normalize('NFC'));
+    const folder = join(this.root, found || name.replace(/[\\/:\x00-\x1f]/g, '_'));
+    if (!found) await mkdir(folder, {recursive: true});
+    return folder;
+  }
+  async saveDraft(t) {
+    const folder = join(
+      await this.courseDir(this.courses()[t.course].name),
+      '課題',
+      t.round ? `第${t.round}回` : '回数不明'
+    );
+    await mkdir(folder, {recursive: true});
+    const stem = `${t.round ? '第' + t.round + '回' : '回数不明'}_${t.title.replace(/[\\/:\x00-\x1f]/g, '_')}_下書き`;
+    let file = join(folder, stem + '.md'),
+      n = 2;
+    while (true) {
+      try {
+        await writeFile(file, t.answer, {flag: 'wx'});
+        break;
+      } catch (e) {
+        if (e.code !== 'EEXIST') throw e;
+        if ((await readFile(file, 'utf8')) === t.answer) break;
+        file = join(folder, stem + ` (${n++}).md`);
+      }
+    }
+    t.draftPath = file;
+    await writeFile(
+      join(folder, 'CourseCue確認メモ.md'),
+      `# ${t.title}\n\nURL: ${t.url}\n締切: ${t.dueAt || '不明'}\n状態: ${t.status}\n${t.action || ''}\n`
+    );
+  }
+  async boardCompleted(t, p) {
+    if (!new URL(t.url).pathname.includes('/board/')) return false;
+    await p.goto(validLms(t.url));
+    await p.waitForLoadState('domcontentloaded');
+    await p
+      .locator('textarea')
+      .first()
+      .waitFor({timeout: 10000})
+      .catch(() => {});
+    return p.locator('body').evaluate(root => {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (node.parentElement.closest('a,textarea,input,script,style,template,[hidden]')) continue;
+        const text = node.textContent.trim();
+        if (/^あなたの発言(?:\s|$)/.test(text) && /\d+月\d+日.*\d{1,2}:\d{2}/.test(node.parentElement.textContent))
+          return true;
+      }
+      return false;
+    });
+  }
+  // 開いた回の教材一覧から、未提出の既知課題の提出状況を確かめる（掲示板は page で開いて確かめる）
+  async checkPending(ts, entries, assignments, page) {
+    for (const t of ts) {
+      let entry = contentId(t.url) && entries.find(e => contentId(e.url) === contentId(t.url));
+      if (entry && isLate(entry)) {
+        const alt = regularFor(entry, assignments);
+        if (alt) {
+          t.url = validLms(alt.url);
+          t.type = contentType(t.url);
+          delete t.candidates;
+          entry = alt;
+        }
+      }
+      if (!entry && /^\/class\/\d+\/?$/.test(new URL(t.url).pathname)) {
+        entry = this.matchImported(t, assignments);
+        if (entry) {
+          t.url = validLms(entry.url);
+          t.type = contentType(t.url);
+          t.imported = false;
+          delete t.candidates;
+        } else this.offerCandidates(t, assignments);
+      }
+      if (!entry) continue;
+      t.checkedAt = new Date().toISOString();
+      this.applyDeadline(t, entry.text);
+      if (!entry.done) {
+        await this.pageDeadline(t, page);
+        if (!t.dueAt)
+          this.deadlineFromSources(t, '', await this.materials(this.courses()[t.course].name, t.round).catch(() => []));
+      }
+      if (entry.done || (await this.boardCompleted(t, page))) markDone(t);
+    }
+  }
+  // manabo の表示（期間・受講期間）から締切を入れる。読めなければ前の値を残し、読んだ表示の該当行を記録する（画面で確認できるように）
+  // 一覧の行に期間がないときは、課題のページ自体の「期間」「期限」行から締切を読む（未提出で締切が入っていない課題だけ）
+  async pageDeadline(t, page) {
+    if (t.dueAt || !contentId(t.url || '')) return;
+    const p = page || (await this.ctx.newPage());
+    try {
+      await p.goto(validLms(t.url), {waitUntil: 'domcontentloaded'});
+      await p.waitForLoadState('networkidle', {timeout: 10000}).catch(() => {});
+      const text = await p.evaluate(() => document.body.innerText).catch(() => '');
+      const lines = text
+        .split('\n')
+        .map(x => x.trim())
+        .filter(x => /期間|期限|締切|〆切/.test(x) && /\d/.test(x));
+      if (!lines.length) return;
+      const d = deadline(lines.join('\n'));
+      if (d) t.dueAt = d;
+      t.deadlineText = ('課題ページ：' + lines.join(' / ')).slice(0, 200);
+    } catch {
+    } finally {
+      if (!page) await p.close().catch(() => {});
+    }
+  }
+  // manabo で締切が読めていない課題は、課題ページの本文 → 資料の本文（提出期限・締切・まで の行）の順に読む
+  deadlineFromSources(t, pageText, source) {
+    if (t.dueAt) return;
+    const fromPage = deadlineFromText(pageText);
+    if (fromPage) {
+      t.dueAt = fromPage.dueAt;
+      t.deadlineText = ('課題ページ：' + fromPage.line).slice(0, 200);
+      return;
+    }
+    const d = deadlineFromMaterials(source);
+    if (d) {
+      t.dueAt = d.dueAt;
+      t.deadlineText = `資料（${d.file}）：${d.line}`.slice(0, 200);
+    }
+  }
+  applyDeadline(t, text) {
+    const d = deadline(text || '');
+    if (d) t.dueAt = d;
+    const line = String(text || '')
+      .split('\n')
+      .map(s => s.trim())
+      .filter(s => /期間|期限|締切|〆切|まで/.test(s));
+    t.deadlineText = line.join(' / ').slice(0, 200) || '（期間の表示なし）';
+  }
+  // 取込み課題が特定できない理由を要対応の文言に残す（本人が manabo 側を確認できるように）
+  explain(ts, reason) {
+    for (const t of ts) if (t.imported && !t.candidates?.length) t.action = reason.slice(0, 300);
+  }
+  // 取込み課題を manabo の課題に特定できなかったとき、その回の課題を候補として残し、画面で本人が選べるようにする
+  offerCandidates(t, assignments) {
+    const cands = regularOnly(assignments)
+      .map(e => ({url: validLms(e.url), title: (e.title || '').trim() || e.name}))
+      .filter((x, i, a) => a.findIndex(y => y.url === x.url) === i);
+    if (!cands.length) return;
+    t.candidates = cands;
+    t.action = `manabo で対応する課題を特定できませんでした。課題詳細で候補（${cands.length}件）から選んでください`;
+  }
+  // 同期の対象期間（前後7日）や授業日の設定に関係なく、未提出の既知課題はすべて提出状況を確認する（同期の中でも授業ページを開いたついでに確かめる）
+  async refreshPending(only = () => true) {
+    const waiting = this.state.tasks.filter(t => t.status !== 'done' && t.round && this.courses()[t.course] && only(t));
+    if (!waiting.length) return;
+    await this.page();
+    const active = this.p,
+      check = await this.ctx.newPage();
+    try {
+      this.p = check;
+      await this.login();
+      const groups = new Map();
+      for (const t of waiting) {
+        const k = t.course + ':' + t.round;
+        groups.set(k, [...(groups.get(k) || []), t]);
+      }
+      for (const ts of groups.values()) {
+        const {course, round} = ts[0];
+        const classId = courseIdOf(course, this.state);
+        if (!classId) {
+          this.explain(ts, `${this.courses()[course].name}：manabo の授業一覧に見つかりません（授業 ID 未設定）`);
+          continue;
+        }
+        await check.goto(`${LMS}/class/${classId}/`);
+        await this.settled(check);
+        const all = await this.directories(check),
+          dirs = all.filter(d => d.round === round);
+        if (dirs.length !== 1 || !(await this.openDirectory(check, dirs[0]))) {
+          this.explain(
+            ts,
+            dirs.length > 1
+              ? `第${round}回のディレクトリが複数あり特定できません`
+              : `manabo に第${round}回のディレクトリが見つかりません（回の一覧：${all.map(d => d.title).join('、') || 'なし'}）`
+          );
+          continue;
+        }
+        const raw = await this.entries(check),
+          entries = raw.filter(e => contentId(e.url)),
+          assignments = entries.filter(e => taskIdentity(e.url, course));
+        if (!assignments.length)
+          this.explain(
+            ts,
+            `第${round}回に課題（レポート・クイズ・掲示板）がありません（教材：${
+              raw
+                .map(e => e.name)
+                .filter(Boolean)
+                .join('、') || 'なし'
+            }）`
+          );
+        await this.checkPending(ts, entries, assignments, check);
+      }
+      this.dedupe();
+      await this.save();
+    } finally {
+      this.p = active;
+      await check.close();
+    }
+  }
+  // 同期中は画像・フォント・動画を読み込まない（終わったら元に戻す。本人がこのブラウザで操作するときは普段どおり表示する）
+  async light(fn) {
+    const ctx = this.ctx,
+      block = r => (['image', 'font', 'media'].includes(r.request().resourceType()) ? r.abort() : r.fallback());
+    await ctx?.route('**/*', block).catch(() => {});
+    try {
+      return await fn();
+    } finally {
+      await ctx?.unroute('**/*', block).catch(() => {});
+    }
+  }
+  // 1. 全授業を回って課題・提出状況・資料を集める → 2. 結果を保存して画面に反映 → 3. 新しい課題の回答を生成する
+  // 以前の同期で「名前 (2).pdf」として保存してしまった複製をゴミ箱へ移す。中身が記録どおり（本人が編集していない）で、元の名前のファイルが残っているものだけ。元のファイルには触れない
+  async trashDuplicates() {
+    const moved = [];
+    for (const {record, base} of duplicateCandidates(this.state.materials, this.root)) {
+      let data;
+      try {
+        data = await readFile(record.path);
+        await access(base);
+      } catch {
+        continue;
+      }
+      if (hash(data) !== record.sha256) continue;
+      await this.trash(record.path);
+      moved.push(basename(record.path));
+      const hasBase = this.state.materials.some(x => x !== record && x.url === record.url && x.path === base);
+      this.state.materials = hasBase
+        ? this.state.materials.filter(x => x !== record)
+        : this.state.materials.map(x => (x === record ? {...x, path: base, name: basename(base)} : x));
+    }
+    for (const record of layoutDuplicates(this.state.materials, this.root)) {
+      let data;
+      try {
+        data = await readFile(record.path);
+      } catch {
+        continue;
+      }
+      if (hash(data) !== record.sha256) continue;
+      await this.trash(record.path);
+      moved.push(basename(record.path));
+      this.state.materials = this.state.materials.filter(x => x !== record);
+    }
+    if (moved.length) {
+      this.state.trashed = [
+        ...(this.state.trashed || []),
+        ...moved.map(name => ({name, at: new Date().toISOString()}))
+      ].slice(-50);
+      await this.save();
+    }
+    return moved;
+  }
+  // 授業を1つ回る：課題・提出状況・資料・授業情報を集める。ページは呼び出し側が渡す（並行実行のため）
+  courses() {
+    return courseList(this.state);
+  }
+  // manabo のトップ（授業一覧）から履修中の授業を取り、一覧を更新する（新しい授業は末尾に足し、ID のない授業には ID を入れる）
+  async discoverCourses(p) {
+    await p.goto(LMS + '/', {waitUntil: 'domcontentloaded'});
+    await p
+      .locator('a[href*="/class/"]')
+      .first()
+      .waitFor({timeout: 10000})
+      .catch(() => {});
+    const links = await p
+      .locator('a[href*="/class/"]')
+      .evaluateAll(es => es.map(e => ({href: e.href, text: e.textContent})));
+    if (!links.length) return;
+    const merged = mergeCourses(this.courses(), links);
+    if (JSON.stringify(merged) !== JSON.stringify(this.courses())) {
+      this.state.courses = merged;
+      await this.save();
+    }
+  }
+  // 授業ページで出席コードの入力が出たら、そのタブは本人に渡し、この授業は今回は読まない（PromptHandOver で同期は別のタブで続ける）
+  async crawlCourse(i, p, ctx) {
+    if (this.courses()[i].removed) return;
+    const name = this.courses()[i].name,
+      open = this.promptTabs.get(name);
+    if (open && (await promptOpen(open))) {
+      ctx.infoIssues.push(`${name}：出席コードの入力画面が開いています（manabo ブラウザで入力してください）`);
+      return;
+    }
+    this.promptTabs.delete(name);
+    if (p.handedOver) throw Object.assign(new PromptHandOver(), {retry: true});
+    const work = this.crawlCourseOn(i, p, ctx);
+    work.catch(() => {});
+    const message = await Promise.race([work.then(() => null), watchPrompt(p)]);
+    if (message === null) return;
+    this.promptTabs.set(name, p);
+    ctx.infoIssues.push(
+      `${name}：出席コードの入力画面が出たため、今回は読みませんでした（manabo ブラウザで入力できます）`
+    );
+    throw new PromptHandOver(message);
+  }
+  async crawlCourseOn(i, p, {missing, infoIssues, queue, timing}) {
+    // 削除した授業は読まない
+    const name = this.courses()[i].name,
+      id = courseIdOf(i, this.state),
+      at = Date.now();
+    if (!id) {
+      infoIssues.push(`${name}：manabo の授業一覧に見つかりません（授業 ID 未設定）`);
+      return;
+    }
+    await p.goto(`${LMS}/class/${id}/`, {waitUntil: 'domcontentloaded'});
+    await this.settled(p);
+    await this.applyCalendar(p, id);
+    const syllabus = await this.readSyllabus(i, p);
+    try {
+      const dirs = await this.directories(p);
+      this.state.plannedModes = {
+        ...this.state.plannedModes,
+        [name]: plannedModes(dirs, this.state.syllabusRows?.[name])
+      };
+      const full = this.state.scanned?.[name] !== this.root;
+      const pending = this.state.tasks.filter(t => t.status !== 'done' && t.round && t.course === i);
+      for (const d of dirs) {
+        if (p.handedOver) return;
+        const round = d.round;
+        const date = lectureDate(d.title, this.state.schedules?.[id], round);
+        if (!date && round) missing.set(name, [...(missing.get(name) || []), round]);
+        if (!date || !inWindow(date)) {
+          // 期間外の回：このフォルダで初めての同期なら資料を確かめ、未提出の既知課題があれば提出状況を確かめる
+          const waiting = pending.filter(t => t.round === round);
+          if ((full || waiting.length) && (await this.openDirectory(p, d))) {
+            await this.snapshot(id, round, p);
+            const entries = await this.entries(p);
+            await this.markClosedDone(
+              p,
+              this.state.tasks.filter(t => t.course === i),
+              round
+            );
+            if (full) for (const e of this.wantedFiles(entries)) await this.download(e, name);
+            if (waiting.length) {
+              const check = await this.ctx.newPage();
+              try {
+                await this.checkPending(
+                  waiting,
+                  entries.filter(e => contentId(e.url)),
+                  entries.filter(e => taskIdentity(e.url, i)),
+                  check
+                );
+              } finally {
+                await check.close();
+              }
+            }
+          }
+          continue;
+        }
+        await this.openDirectory(p, d);
+        await this.snapshot(id, round, p);
+        const entries = await this.entries(p),
+          assignments = entries.filter(e => taskIdentity(e.url, i));
+        await this.markClosedDone(
+          p,
+          this.state.tasks.filter(t => t.course === i),
+          round
+        );
+        const hasRegular = assignments.some(e => !isLate(e));
+        for (const late of assignments.filter(isLate)) {
+          const alt = regularFor(late, assignments);
+          if (!alt) continue;
+          for (const t of this.state.tasks)
+            if (t.url === validLms(late.url)) {
+              t.url = validLms(alt.url);
+              t.type = contentType(t.url);
+              delete t.candidates;
+            }
+        }
+        const wanted = this.wantedFiles(entries);
+        for (const entry of entries) {
+          if (/\/file\//.test(entry.url)) {
+            if (wanted.includes(entry)) await this.download(entry, name);
+            continue;
+          }
+          if (hasRegular && isLate(entry)) continue;
+          const identity = taskIdentity(entry.url, i),
+            key = hash(identity || entry.url).slice(0, 20),
+            old =
+              (identity && this.state.tasks.find(t => taskIdentity(t.url, t.course) === identity)) ||
+              this.state.tasks.find(t => t.key === key) ||
+              (identity &&
+                this.state.tasks.find(
+                  t =>
+                    t.imported &&
+                    t.course === i &&
+                    t.round === round &&
+                    taskIdentity(this.matchImported(t, assignments)?.url || '', i) === identity
+                ));
+          const title =
+            entry.title.trim() ||
+            entry.text
+              .split('\n')
+              .map(x => x.trim())
+              .find(x => x && x !== '教材名' && !x.includes('期間:')) ||
+            d.title;
+          if (SPARE.test(title) || SPARE.test(d.title)) continue;
+          if (old && BUTTON_TITLE.test(old.title || '')) old.title = title;
+          const t = old || {
+            id: key,
+            key,
+            course: i,
+            round,
+            title,
+            url: validLms(entry.url),
+            type: contentType(entry.url),
+            answer: '',
+            status: 'ready'
+          };
+          t.key = key;
+          t.url = validLms(entry.url);
+          if (t.imported) {
+            t.type = contentType(entry.url);
+            t.status = t.answer ? 'draft' : 'ready';
+            t.imported = false;
+            delete t.candidates;
+          }
+          this.applyDeadline(t, entry.text);
+          if (!entry.done && !t.dueAt) {
+            const check = await this.ctx.newPage();
+            try {
+              await this.pageDeadline(t, check);
+            } finally {
+              await check.close();
+            }
+          }
+          if (!entry.done && !t.dueAt)
+            this.deadlineFromSources(t, '', await this.materials(name, round).catch(() => []));
+          t.due = t.dueAt ? new Date(t.dueAt).toLocaleString('ja-JP', {timeZone: 'Asia/Tokyo'}) : '締切不明';
+          t.checkedAt = new Date().toISOString();
+          t.description = scrubIds(entry.text).slice(0, 10000);
+          t.date = date;
+          t.contentHash = hash(t.description);
+          if (!entry.done && t.type === '掲示板') {
+            const check = await this.ctx.newPage();
+            try {
+              entry.done = await this.boardCompleted(t, check);
+            } finally {
+              await check.close();
+            }
+          }
+          if (entry.done) markDone(t);
+          else if (t.status === 'done') {
+            t.status = 'unknown';
+            t.action = '提出表示を再確認';
+          }
+          if (!old) this.state.tasks.push(t);
+          if (!entry.done && t.status === 'ready' && (!t.dueAt || new Date(t.dueAt) > new Date()) && !queue.includes(t))
+            queue.push(t);
+        }
+        for (const t of this.state.tasks)
+          if (t.imported && t.course === i && t.round === round) this.offerCandidates(t, assignments);
+      }
+      for (const t of this.state.tasks)
+        if (t.imported && t.course === i && t.round && !dirs.some(d => d.round === t.round))
+          this.explain(
+            [t],
+            `manabo に第${t.round}回のディレクトリが見つかりません（回の一覧：${dirs.map(d => d.title).join('、') || 'なし'}）`
+          );
+    } finally {
+      await this.updateAiPolicy(i).catch(() => {});
+      await this.updateCourseInfo(i, null, syllabus).catch(e =>
+        infoIssues.push(`${name}：授業情報を読み取れません（${String(e.message).slice(0, 80)}）`)
+      );
+    }
+    this.state.scanned = {...this.state.scanned, [name]: this.root};
+    timing.courses[name] = Date.now() - at;
+    await this.save();
+  }
+  // 同期。CUBICS は直近 1 時間に読んでいれば省き、授業は SYNC_PARALLEL 件ずつ並行して回る
+  // course（授業の番号）を渡すとその授業だけ読む（授業の一覧・CUBICS は読まない。ほかの授業の問題の表示・前回の同期の記録・かかった時間は前のまま。AI の使い方は全体の同期と同じ）
+  // 同期の進み具合（画面に「同期中 3/9（管理会計Ⅱ）」と出す。at が長く変わらなければ画面が「応答がありません」と出す）
+  async progress(phase, extra = {}) {
+    this.state.progress = {phase, ...extra, at: new Date().toISOString()};
+    await this.save().catch(() => {});
+  }
+  async sync({course} = {}) {
+    await this.hideBrowserIfIdle();
+    const only = course == null ? null : course;
+    if (only !== null && (!Number.isInteger(only) || !this.courses()[only] || this.courses()[only].removed))
+      throw Error('その授業は見つかりません');
+    const started = Date.now(),
+      timing = {courses: {}};
+    this.firstSync = !this.state.lastSync;
+    const ended = calendarEnd() < new Date().toLocaleDateString('sv-SE', {timeZone: 'Asia/Tokyo'});
+    await this.trashDuplicates().catch(() => {});
+    await this.progress('manabo にログイン');
+    await this.login();
+    const p = await this.page(),
+      missing = new Map(),
+      infoIssues = ended
+        ? [`学年暦（${calendar.term}）の期間が終わっています。新しい学期の授業日は、時間割の画面で設定してください`]
+        : [],
+      queue = [];
+    if (only === null)
+      await this.discoverCourses(p).catch(e =>
+        infoIssues.push(`manabo の授業一覧を読み取れません（${String(e.message).slice(0, 80)}）`)
+      );
+    await this.light(async () => {
+      let at = Date.now();
+      await this.progress('時間割（CUBICS）');
+      const cubicsAge = Date.now() - new Date(this.state.cubics?.fetchedAt || 0).getTime();
+      if (only !== null || cubicsAge < CUBICS_MAX_AGE) timing.cubicsSkipped = true;
+      else
+        await this.cubics().catch(e =>
+          infoIssues.push(`CUBICS：時間割を読み取れません（${String(e.message).split('\n')[0].slice(0, 80)}）`)
+        );
+      timing.cubics = Date.now() - at;
+      at = Date.now();
+      const total = this.courses().length,
+        parallel = only !== null ? 1 : Math.max(1, Math.min(SYNC_PARALLEL, total));
+      const fresh = async () => {
+        const x = await this.ctx.newPage();
+        x.on('dialog', closeDialog);
+        watchPrompt(x);
+        return x;
+      };
+      const pages = [p];
+      for (let k = 1; k < parallel; k++) pages.push(await fresh());
+      const order = only !== null ? [only] : [...Array(total).keys()],
+        active = only !== null ? 1 : this.courses().filter(c => !c.removed).length,
+        reading = new Set();
+      let done = 0;
+      const tell = () => this.progress('授業', {done, total: active, current: [...reading].join('、')});
+      const errors = [];
+      try {
+        await Promise.all(
+          pages.map(async (page, k) => {
+            while (order.length) {
+              const i = order.shift(),
+                name = this.courses()[i].name,
+                counted = !this.courses()[i].removed;
+              if (counted) {
+                reading.add(name);
+                await tell();
+              }
+              try {
+                await this.crawlCourse(i, page, {missing, infoIssues, queue, timing});
+              } catch (e) {
+                if (!(e instanceof PromptHandOver)) {
+                  errors.push({i, e});
+                  continue;
+                } // 出席コードの入力を本人に渡したタブは閉じずに残し、以後は新しいタブで続ける
+                if (e.retry) {
+                  order.unshift(i);
+                  reading.delete(name);
+                }
+                page = pages[k] = await fresh();
+                if (k === 0) this.p = page;
+              } finally {
+                if (counted && reading.delete(name)) {
+                  done++;
+                  await tell();
+                }
+              }
+            }
+          })
+        );
+      } finally {
+        for (const page of pages.slice(1)) await page.close().catch(() => {});
+      } // 一部の授業だけ失敗（manabo の応答の時間切れなど）なら同期は続け、その授業の問題として出す。全部の授業で失敗したときだけ同期の失敗にする
+      if (errors.length && errors.length >= active) throw errors[0].e;
+      for (const {i, e} of errors)
+        infoIssues.push(`${this.courses()[i].name}：同期できませんでした（${shortError(e)}）`);
+      timing.classes = Date.now() - at;
+    });
+    this.dedupe();
+    const found = [
+      ...[...missing].map(([name, rounds]) => `${name}：授業日未設定（${roundRanges(rounds)}）`),
+      ...infoIssues
+    ];
+    if (only === null) {
+      this.state.issues = found;
+      this.state.lastSync = new Date().toISOString();
+      timing.crawl = Date.now() - started;
+      this.state.syncTiming = {...timing, at: this.state.lastSync, generate: 0, generated: 0};
+    } else {
+      const name = this.courses()[only].name;
+      this.state.issues = [...(this.state.issues || []).filter(x => !courseIssue(x, name)), ...found];
+      this.state.courseSynced = {...this.state.courseSynced, [name]: new Date().toISOString()};
+    }
+    this.state.connection = 'connected';
+    await this.save();
+    // 回答の生成は集め終わってから（生成に時間がかかっても提出状況は先に反映される）
+    const at = Date.now(); // AI が使えない端末では回答を作らない（毎回の失敗を出さず、画面には「この端末では AI を使えません」と 1 か所だけ出す）
+    // クイズは設定にかかわらず常に自動で回答を入力する（提出は本人）。レポートなどは「回答を自動で作る」の設定に従う
+    const todo =
+      this.aiAvailable !== false
+        ? queue.filter(t => t.status === 'ready' && (t.type === 'クイズ' || this.state.settings.autoGenerate !== false))
+        : [];
+    const st = only === null ? this.state.syncTiming : {generated: 0};
+    for (const [k, t] of todo.entries()) {
+      if (t.status !== 'ready') continue;
+      await this.progress('回答の作成', {done: k, total: todo.length, current: t.title});
+      await this.process(t, false, {urgent: this.firstSync});
+      st.generated++;
+      if (t.status === 'code') this.state.connection = 'attendance_wait';
+      else if (t.status === 'answered' && this.state.connection !== 'attendance_wait')
+        this.state.connection = 'submission_wait';
+    }
+    for (const id of [...this.held.keys()]) {
+      const t = this.state.tasks.find(x => x.id === id);
+      if (!t || t.status === 'done') await this.releasePage(id);
+    }
+    st.generate = Date.now() - at;
+    st.total = Date.now() - started;
+    await this.save();
+  }
+  // 同じ URL の資料をこのフォルダに記録済みなら取りに行かない。本人が編集して中身が変わっていても、消していても、ダウンロードし直さない
+  // ダウンロードする資料：同じ資料の 4up・2up などの形式違いがあれば 1up（印なし）だけ
+  wantedFiles(entries) {
+    return preferLayout(
+      entries.filter(e => /\/file\//.test(e.url)),
+      e => e.name || e.title || ''
+    );
+  }
+  async download(entry, course) {
+    const here = m => inside(m.path, this.root);
+    if (this.state.materials.some(m => m.url === entry.url && here(m))) return;
+    const p = await this.page();
+    const r = await this.ctx.request.get(validLms(entry.url));
+    if (!r.ok() || r.headers()['content-type']?.includes('text/html')) return;
+    const data = await r.body(),
+      h = hash(data),
+      folder = await this.courseDir(course);
+    if (this.state.materials.some(m => m.sha256 === h && m.course === course && here(m))) return;
+    const raw = r.headers()['content-disposition'] || '';
+    let name;
+    try {
+      name = decodeURIComponent(
+        raw.match(/filename\*=UTF-8''([^;]+)/i)?.[1] || raw.match(/filename="?([^";]+)/i)?.[1] || ''
+      );
+    } catch {}
+    if (!name) return;
+    name = basename(name);
+    let file = join(folder, name),
+      n = 2;
+    while (true) {
+      try {
+        await writeFile(file, data, {flag: 'wx'});
+        break;
+      } catch (e) {
+        if (e.code !== 'EEXIST') throw e;
+        if (hash(await readFile(file)) === h) break;
+        file = join(
+          folder,
+          name.replace(/(\.[^.]+)$/, ext => ` (${n++})${ext}`)
+        );
+      }
+    }
+    if (this.quarantine) await this.quarantine(file).catch(() => {});
+    this.state.materials = [
+      ...this.state.materials.filter(m => !(m.url === entry.url && !here(m))),
+      {
+        course,
+        url: entry.url,
+        name,
+        path: file,
+        sha256: h,
+        textHash: hash(entry.text),
+        downloadedAt: new Date().toISOString()
+      }
+    ];
+  }
+  async resolveQuiz(t) {
+    if (!new URL(t.url).pathname.match(/^\/class\/\d+\/?$/)) return;
+    const p = await this.page();
+    await p.goto(validLms(t.url));
+    await this.settled(p);
+    const dirs = p
+      .locator('#div-class-directories .a-open-contents')
+      .filter({hasText: new RegExp(roundPattern(t.round))});
+    if ((await dirs.count()) !== 1) throw Error('対象の授業回を特定できません');
+    await dirs.click();
+    await p.waitForFunction(
+      pattern => document.querySelector('#div-class-contents')?.textContent.match(new RegExp(pattern)),
+      roundPattern(t.round)
+    );
+    const heading = p
+      .locator('#div-class-contents a:not([href*="/content/"])')
+      .filter({hasText: new RegExp(roundPattern(t.round) + '.*(課題|レポート|提出)')});
+    if ((await heading.count()) === 1) {
+      await heading.click();
+      await p.locator('#div-class-contents a[href*="/content/"]').first().waitFor({timeout: 10000});
+    }
+    const links = (await p.locator('#div-class-contents a[href*="/content/"]').evaluateAll(extractEntries)).map(l => ({
+      ...l,
+      title: l.name || l.title
+    }));
+    const chosen = chooseContent(
+      links.filter(l => taskIdentity(l.url, t.course)),
+      t
+    );
+    if (!chosen) throw Error('対象課題を特定できません');
+    t.url = validLms(chosen.url);
+    t.type = contentType(t.url);
+    t.imported = false;
+    this.applyDeadline(t, chosen.text);
+    await this.pageDeadline(t);
+    await this.save();
+  }
+  async form(t) {
+    const p = await this.taskPage(t);
+    await p.goto(validLms(t.url));
+    await p.waitForLoadState('domcontentloaded');
+    if (await p.locator('input[type=password]').count()) {
+      await this.login();
+      await p.goto(validLms(t.url));
+      await p.waitForLoadState('domcontentloaded');
+      if (await p.locator('input[type=password]').count())
+        throw Error('追加認証が必要です。ローカルブラウザで認証してください');
+    }
+    const start = p
+      .getByRole('button', {name: /^(受講開始|開始|解答開始|回答開始)$/})
+      .or(p.getByRole('link', {name: /^(受講開始|開始|解答開始|回答開始)$/}));
+    if ((await start.count()) === 1) {
+      await start.click();
+      await p.waitForLoadState('domcontentloaded');
+      await p
+        .locator('input[name]:not([type=hidden]):not([type=submit]):not([type=button]),textarea[name],select[name]')
+        .first()
+        .waitFor({timeout: 15000});
+    }
+    if (new URL(t.url).pathname.includes('/board/')) {
+      const fields = p.locator('textarea,[contenteditable="true"]').filter({visible: true});
+      await fields.first().waitFor({timeout: 15000});
+      const notice = [
+        await fields.first().evaluate(field => {
+          const range = document.createRange();
+          range.setStart(document.body, 0);
+          range.setEndBefore(field);
+          const fragment = range.cloneContents();
+          fragment.querySelectorAll('script,style,template,[hidden]').forEach(e => e.remove());
+          return fragment.textContent.replace(/\s+/g, ' ').trim();
+        })
+      ];
+      const title = await p.title();
+      return {
+        p,
+        questions: [
+          {
+            name: 'board-response',
+            type: 'text',
+            text:
+              title +
+              '\n' +
+              notice.join('\n') +
+              '\n配付資料の巻末にある当該回の事後課題に回答。掲示板上の他の学生の投稿は回答資料に使用しない。',
+            options: []
+          }
+        ],
+        text: title + '\n' + notice.join('\n')
+      };
+    }
+    const q = await this.questionsOf(p);
+    return {p, questions: q, text: scrubIds(await p.locator('body').innerText()).slice(0, 24000)};
+  }
+  // 回答を入力する課題は課題ごとのタブで開く。出席コード待ち・本人の提出待ち（クイズ・掲示板）のときはタブを閉じずに残し、
+  // 同期やログインで画面が切り替わって入力が消えないようにする。それ以外は処理が終わったら閉じる
+  async taskPage(t) {
+    await this.releasePage(t.id);
+    const p = await (await this.page()).context().newPage();
+    p.on('dialog', closeDialog);
+    this.pending.set(t.id, p);
+    return p;
+  }
+  async releasePage(id) {
+    for (const m of [this.held, this.pending]) {
+      const p = m.get(id);
+      m.delete(id);
+      if (p && !p.isClosed()) await p.close().catch(() => {});
+    }
+  }
+  async settlePage(t) {
+    const p = this.pending.get(t.id);
+    this.pending.delete(t.id);
+    if (!p || p.isClosed()) return;
+    const keep =
+      ['code', 'answered'].includes(t.status) ||
+      (/\/board\//.test(t.url || '') && ['draft', 'wait'].includes(t.status));
+    if (!keep) {
+      await p.close().catch(() => {});
+      return;
+    }
+    // 残したタブは本人が操作する。ここで出る確認（提出の確認・ページを離れる確認など）は本人が押した操作から出るので「OK」で進める
+    // （受け取るだけで答えないと、ブラウザを動かす仕組みの決まりでページが確認の返事を待ったまま止まる）。出席コードの入力（prompt）は本人に任せる
+    p.removeAllListeners('dialog');
+    p.on('dialog', d => {
+      if (d.type() !== 'prompt') d.accept().catch(() => {});
+    });
+    this.held.set(t.id, p);
+    await p.bringToFront().catch(() => {});
+  }
+  // SaBoRo の画面で本人が入れた出席コードを選び、入力済みの回答と一緒に提出する（本人が提出を確かめて押したときだけ呼ばれる）
+  // 入力済みのタブが閉じられていれば、生成済みの回答で入力し直してから
+  async enterAttendance(t, raw) {
+    if (aiForbidden(this.state, t, this.courses()[t.course]?.name))
+      throw Error('この回は AI の利用が禁止されているため、saboro からは提出しません。manabo で提出してください');
+    const code = String(raw || '')
+      .normalize('NFKC')
+      .trim();
+    if (!code) throw Error('出席コードを入れてください');
+    if (t.status === 'done') return;
+    let p = this.held.get(t.id);
+    if (!p || p.isClosed()) {
+      await this.process(t, false, {urgent: true});
+      p = this.held.get(t.id);
+    }
+    if (t.status !== 'code' || !p || p.isClosed())
+      throw Error(t.action || '出席コードの欄のあるページを開けませんでした');
+    const questions = await this.questionsOf(p),
+      codes = questions.filter(q => attendance(q.text));
+    if (codes.length !== 1) throw Error('出席コードの欄を特定できません。manabo ブラウザで入力してください');
+    const q = codes[0],
+      same = v =>
+        String(v || '')
+          .normalize('NFKC')
+          .replace(/\s+/g, '') === code.replace(/\s+/g, '');
+    let value = code;
+    if (['select', 'radio'].includes(q.type)) {
+      const o = q.options.find(o => o.value && (same(o.value) || same(o.text)));
+      if (!o) throw Error(`出席コード「${code}」は選択肢にありません`);
+      value = o.value;
+    }
+    const control = p.locator(`[name="${q.name.replace(/"/g, '\\"')}"]`);
+    if (q.type === 'select') await control.selectOption(value);
+    else if (q.type === 'radio') {
+      for (const c of await control.all()) if ((await c.getAttribute('value')) === value) await c.check();
+    } else await control.fill(value);
+    const answer = {
+      ...t.generation,
+      answers: [
+        ...(t.generation?.answers || []).filter(a => a.name !== q.name),
+        {name: q.name, value, values: [], evidence: '本人が入力した出席コード'}
+      ]
+    };
+    await this.submitForm(t, p, questions, answer, {attendanceCode: true});
+    if (t.status === 'done') await this.releasePage(t.id);
+    else {
+      t.action = t.action || 'manabo で提出結果を確認してください';
+      await this.save();
+    }
+  }
+  // 待機中のタブで本人が提出を終えていれば、提出済みにしてタブを閉じる（同期の前に確かめる）
+  // 入力済みのタブは同期と別のタブなので、出席コード待ち・提出待ちがあっても同期は止めない
+  async collectSubmitted() {
+    for (const [id, p] of [...this.held]) {
+      const t = this.state.tasks.find(x => x.id === id);
+      if (!t) {
+        await this.releasePage(id);
+        continue;
+      }
+      if (p.isClosed()) continue;
+      const text = await p
+          .locator('body')
+          .innerText()
+          .catch(() => ''),
+        answering = await p
+          .locator(ANSWER_FIELDS)
+          .count()
+          .catch(() => 0); // 全問に答えると「回答が完了」と出るクイズがあるので、回答欄が残っている間（提出前）は提出済みにせず、ページも閉じない
+      if (
+        p.url().startsWith(LMS) &&
+        !answering &&
+        /提出が完了|回答が完了|解答が完了|送信しました|提出しました/.test(text)
+      ) {
+        t.status = 'done';
+        t.submittedAt = new Date().toISOString();
+        t.action = '';
+        t.submissionIntent = null;
+        await this.releasePage(id);
+      }
+    }
+  }
+  // 「待機中のブラウザ」：入力済みで待っているタブがあればそれを前に出す
+  async showBrowser() {
+    if (!this.visible) await this.switchBrowser(true);
+    const p =
+      [...this.held.values()].filter(x => !x.isClosed()).at(-1) ||
+      [...this.promptTabs.values()].filter(x => !x.isClosed()).at(-1) ||
+      (await this.page());
+    await p.bringToFront().catch(() => {});
+  }
+  // 画面に出す／出さないを切り替える。裏で開いていた本人の操作待ち（出席コードの入力画面・回答を入れた提出待ちの課題）は、切り替えたブラウザで開き直す（回答は作り直さず入れ直すだけ）
+  async switchBrowser(visible) {
+    const held = [...this.held.keys()],
+      prompts = [...this.promptTabs.entries()]
+        .filter(([, p]) => !p.isClosed())
+        .map(([name, p]) => ({name, url: p.url()}));
+    this.visible = visible;
+    await this.ctx?.close().catch(() => {});
+    this.ctx = null;
+    this.p = null;
+    this.held.clear();
+    this.pending.clear();
+    this.promptTabs.clear();
+    await this.page();
+    for (const x of prompts) {
+      const tab = await this.ctx.newPage();
+      watchPrompt(tab);
+      this.promptTabs.set(x.name, tab);
+      await tab.goto(x.url, {waitUntil: 'domcontentloaded'}).catch(() => {});
+    }
+    for (const id of held) {
+      const t = this.state.tasks.find(t => t.id === id);
+      if (t && t.status !== 'done') await this.process(t, false).catch(() => {});
+    }
+  }
+  // 同期の前：画面に出したブラウザで本人の操作待ちがもう残っていなければ、裏で動くブラウザに戻す（同期のたびに画面が切り替わらないように）
+  async hideBrowserIfIdle() {
+    if (!this.visible) return;
+    const busy = [...this.held.values(), ...this.promptTabs.values()].some(p => !p.isClosed());
+    if (!busy) await this.switchBrowser(false);
+  }
+  // urgent：本人が画面で頼んだ処理（SaBoRo の AI を Batch にせず、すぐ作る）
+  async process(t, manualSubmit, opts = {}) {
+    try {
+      return await this.processTask(t, manualSubmit, opts);
+    } finally {
+      await this.settlePage(t);
+    }
+  }
+  // 回答欄の一覧（名前・種類・設問文・選択肢）
+  async questionsOf(p) {
+    return p
+      .locator('input:not([type=hidden]):not([type=submit]):not([type=button]),textarea,select')
+      .evaluateAll(es => {
+        const groups = new Map();
+        for (const e of es) {
+          if (!e.name || e.type === 'password' || e.disabled) continue;
+          let box = e.closest('fieldset,.question,.quiz-question,.form-group,tr') || e.parentElement.parentElement;
+          let text = box.innerText;
+          const label = e.id ? document.querySelector(`label[for="${CSS.escape(e.id)}"]`)?.innerText : '';
+          let g = groups.get(e.name) || {
+            name: e.name,
+            type: e.tagName === 'SELECT' ? 'select' : e.type === 'textarea' ? 'text' : e.type,
+            text,
+            options: []
+          };
+          if (['radio', 'checkbox'].includes(g.type))
+            g.options.push({value: e.value, text: label || e.parentElement.innerText});
+          if (g.type === 'select') g.options = Array.from(e.options).map(o => ({value: o.value, text: o.text}));
+          groups.set(e.name, g);
+        }
+        return [...groups.values()];
+      });
+  }
+  // SaBoRo の AI の出力が上限で途切れたら、自動では作り直さず（同期のたびに費用がかかるため）本人の対応待ちにし、高度な生成（月の回数に上限あり）を選べるようにする
+  offerAdvanced(t, key, a) {
+    const used = Number(a?.used) || 0,
+      limit = Number(a?.limit) || 3;
+    t.status = 'wait';
+    t.advancedOffer = {key, used, limit};
+    t.action =
+      used < limit
+        ? `出力が上限で途切れました。高度な生成を使用しますか？（${used}/${limit}）`
+        : `出力が上限で途切れました。今月の高度な生成は使い切りました（${used}/${limit}）。補足で分量を指定して作り直してください`;
+  }
+  async processTask(
+    t,
+    manualSubmit,
+    {urgent = false, advanced = false, personal = null, answers = null, saveProfile = false} = {}
+  ) {
+    if (t.status === 'done') return;
+    const forbidden = aiForbidden(this.state, t, this.courses()[t.course]?.name);
+    if (manualSubmit && forbidden)
+      throw Error('この回は AI の利用が禁止されているため、saboro からは提出しません。manabo で提出してください');
+    if (/期末試験|中間試験|定期試験/.test(t.title)) {
+      t.status = 'wait';
+      t.action = '試験は本人が受験してください';
+      await this.save();
+      return;
+    }
+    if (t.status === 'code' && !manualSubmit) {
+      const held = this.held.get(t.id);
+      if (held && !held.isClosed()) {
+        await held.bringToFront().catch(() => {});
+        t.action = CODE_ACTION;
+        await this.save();
+        return;
+      }
+    }
+    if (t.submissionIntent) {
+      t.status = 'unknown';
+      t.action = '提出結果をmanaboで確認';
+      return;
+    }
+    await this.resolveQuiz(t);
+    const {p, questions, text} = await this.form(t);
+    t.description = text;
+    if (!questions.length) {
+      t.status = 'wait';
+      t.action = '設問を確認';
+      await this.save();
+      return;
+    }
+    const fingerprint = hash(JSON.stringify(questions));
+    const source = await this.materials(this.courses()[t.course].name, t.round);
+    t.aiPolicy = this.aiPolicyOf(t, source);
+    const banned = aiForbidden(this.state, t, this.courses()[t.course]?.name);
+    if (manualSubmit && banned)
+      throw Error('この回は AI の利用が禁止されているため、saboro からは提出しません。manabo で提出してください');
+    this.deadlineFromSources(t, text, source); // 回答の作成に使う「自分について」：アンケートの答え（profileForm）をまとめた文と、自由記述（profile）
+    const profileNote = () => String(this.state.settings?.profile || '').trim();
+    let profile = [globalThis.ProfileForm.composeProfile(this.state.settings?.profileForm), profileNote()]
+      .filter(Boolean)
+      .join('\n');
+    const ownStyle = String(this.state.settings?.style || '').trim(); // 経験・体験を問う課題：本人が質問に答えるまで作らない（同期でも止める。AI が経験を組み立てる作り方は選べない）。ask：質問を作る、answers：本人の答えを元に作る
+    if (personal === 'answers') {
+      t.personalMode = personal;
+      if (personal === 'answers') {
+        t.personalAnswers = answers;
+        if (saveProfile) {
+          const note = mergeProfile(profileNote(), answers);
+          this.state.settings = {...this.state.settings, profile: note};
+          profile = [globalThis.ProfileForm.composeProfile(this.state.settings?.profileForm), note]
+            .filter(Boolean)
+            .join('\n');
+        }
+      }
+    } else if (
+      personal === 'ask' ||
+      (!manualSubmit &&
+        t.personalMode !== 'answers' &&
+        t.personalMode !== 'plain' &&
+        personalCandidate({title: t.title, description: text}, questions))
+    ) {
+      if (personal === 'ask') {
+        const q = await this.ask(
+          {title: t.title, description: text.slice(0, 6000), questions: questions.map(x => x.text).filter(Boolean)},
+          {profile}
+        );
+        if (q.needsPersonal) {
+          t.personalChoice = true;
+          t.personalQuestions = q.questions;
+          t.status = 'wait';
+          t.action = `経験・体験を元に答える課題です。質問（${q.questions.length}問）に答えると回答を作ります`;
+          await this.save();
+          return;
+        }
+        t.personalMode = 'plain';
+        delete t.personalQuestions;
+      } else {
+        t.personalChoice = true;
+        t.status = 'wait';
+        t.action = PERSONAL_ACTION;
+        await this.save();
+        return;
+      }
+    }
+    if (!this.state.writingSeed) this.state.writingSeed = crypto.randomUUID();
+    const style = writingStyle(this.state.writingSeed, t.id || t.key);
+    const mode = t.personalMode === 'answers' && Array.isArray(t.personalAnswers) ? 'answers' : '',
+      supplement = [
+        t.supplement,
+        mode === 'answers'
+          ? '質問への回答:\n' + t.personalAnswers.map(a => `${a.text}：${a.answer || '（未回答）'}`).join('\n')
+          : ''
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      generationKey = hash(
+        JSON.stringify({
+          policy: 'natural-v2',
+          questions,
+          source,
+          supplement: t.supplement,
+          ...(profile ? {profile} : {}),
+          ...(ownStyle ? {ownStyle} : {}),
+          ...(mode ? {personal: mode, answers: mode === 'answers' ? t.personalAnswers : undefined} : {}),
+          ...(banned ? {reference: true} : {})
+        })
+      ); // SaBoRo の AI は、急がない回答を Batch（半額）で作る。本人が頼んだとき・締切まで 24 時間以内ならすぐ作る。Batch の結果が出るまでは「作成中」で止め、結果が出たらアプリが同じ処理をやり直す
+    const soon = !!t.dueAt && new Date(t.dueAt) - Date.now() < 24 * 3600e3;
+    let generated = t.generationKey === generationKey && t.generation ? t.generation : null;
+    if (!generated) {
+      try {
+        generated = await this.ai({...t, questions, description: text}, source, supplement, {
+          ...(banned ? {reference: true} : {}),
+          ...(advanced ? {advanced: true} : {}),
+          ...(profile ? {profile} : {}),
+          ...(mode ? {personal: mode} : {}),
+          style,
+          ...(ownStyle ? {ownStyle} : {}),
+          key: generationKey,
+          urgent: urgent || manualSubmit || soon || advanced
+        });
+      } catch (e) {
+        if (e instanceof AiTruncated) {
+          delete t.aiPending;
+          this.offerAdvanced(t, generationKey, e.advanced);
+          await this.save();
+          return;
+        }
+        if (!(e instanceof AiPending)) throw e;
+        t.aiPending = generationKey;
+        t.action = AI_PENDING_ACTION;
+        await this.save();
+        return;
+      }
+    }
+    delete t.aiPending;
+    delete t.advancedOffer;
+    const answer = cleanAnswer(generated, questions);
+    if (manualSubmit && t.answerEdited) {
+      const fields = questions.filter(q => !attendance(q.text));
+      if (fields.length !== 1 || !['textarea', 'text'].includes(fields[0].type)) {
+        t.status = 'wait';
+        t.action = '編集した回答と各設問の対応を確認してください';
+        await this.save();
+        return;
+      }
+      answer.draft = t.answer;
+      answer.answers = answer.answers.map(a => (a.name === fields[0].name ? {...a, value: t.answer} : a));
+      t.answerEdited = false;
+    } else if (!manualSubmit) {
+      t.answerEdited = false;
+    }
+    if (new URL(t.url).pathname.includes('/board/')) {
+      const response = answer.answers.find(a => a.name === 'board-response');
+      if (response?.value?.trim()) answer.draft = response.value;
+    }
+    t.generationKey = generationKey;
+    t.generation = answer;
+    t.questionHash = fingerprint;
+    t.answer = answer.draft;
+    if (!t.dueAt) {
+      const d = deadlineFromText((answer.notes || []).join('\n'));
+      if (d) {
+        t.dueAt = d.dueAt;
+        t.deadlineText = ('注意点：' + d.line).slice(0, 200);
+      }
+    }
+    t.status = answer.needsUser.length ? 'wait' : 'draft';
+    t.action = answer.needsUser.join('\n');
+    await this.saveDraft(t);
+    await this.save(); // AI の利用が禁止されている授業：回答は参考として saboro に残すだけにし、manabo には入力しない（提出・投稿もしない）
+    if (banned && t.type !== 'クイズ') {
+      t.status = 'draft';
+      t.action = AI_FORBIDDEN_ACTION;
+      await this.save();
+      return;
+    }
+    if (new URL(t.url).pathname.includes('/board/')) {
+      const field = p.locator('textarea,[contenteditable="true"]').filter({visible: true});
+      if ((await field.count()) !== 1) throw Error('掲示板の発言入力欄を特定できません');
+      await field.fill(t.answer);
+      t.status = answer.needsUser.length ? 'wait' : 'draft';
+      t.action = answer.needsUser.join('\n') || '下書きを確認し、manaboの掲示板へ投稿してください';
+      await this.save();
+      return;
+    }
+    for (const a of answer.answers) {
+      const q = questions.find(q => q.name === a.name);
+      if (!q || attendance(q.text)) continue;
+      const control = p.locator(`[name="${q.name.replace(/"/g, '\\"')}"]`);
+      if (q.type === 'radio') {
+        const values = q.options.filter(o => o.value === a.value);
+        if (values.length === 1)
+          await (async () => {
+            for (const c of await control.all()) if ((await c.getAttribute('value')) === a.value) await c.check();
+          })();
+      } else if (q.type === 'checkbox') {
+        for (const c of await control.all()) await c.setChecked(a.values.includes(await c.getAttribute('value')));
+      } else if (q.type === 'select') {
+        if (q.options.some(o => o.value === a.value)) await control.selectOption(a.value);
+      } else await control.fill(a.value);
+    }
+    const evidencePresent = answer.answers.every(a => {
+      const quote = a.evidence.split('引用:')[1]?.trim();
+      return !!quote && source.some(m => a.evidence.includes(m.file) && quoteSource(quote, [m]));
+    });
+    if (!evidencePresent) answer.grounded = false;
+    const gate = submissionGate(t, answer, questions);
+    if (t.type === 'クイズ' && !questions.some(q => attendance(q.text))) {
+      t.status = 'answered';
+      const missing = questions.filter(
+        q =>
+          !attendance(q.text) &&
+          !answer.answers.some(a => a.name === q.name && ((a.value || '').trim() || a.values?.length))
+      );
+      t.action =
+        gate === 'ok'
+          ? '全問の回答を入力しました。本人が確認して提出してください。'
+          : `回答入力済み。未回答 ${missing.length}項目。${answer.needsUser.join('\n') || (answer.answers.some(a => a.evidence.includes('一般知識')) ? '一般知識で推定した回答を含みます。資料で未確認のため、誤っている可能性があります。' : '回答の根拠を確認してください。')} 提出は本人が行ってください。`;
+      t.answerProgress = {total: questions.length, missing: missing.map(q => q.name)};
+      if (banned)
+        t.action =
+          'この回は AI の利用が禁止されています。回答は入力済みです。内容を自分で確認・修正してから manabo で提出してください。';
+      await this.save();
+      return;
+    }
+    if (gate === 'attendance') {
+      t.status = 'code';
+      t.action = CODE_ACTION;
+      await this.save();
+      return;
+    }
+    if (gate !== 'ok') {
+      t.status = 'wait';
+      t.action = answer.needsUser.join('\n') || GATE_REASON[gate] || '回答・提出条件を確認';
+      await this.save();
+      return;
+    }
+    if (!manualSubmit) {
+      t.status = 'draft';
+      t.action = '下書きを確認して提出';
+      await this.save();
+      return;
+    }
+    await this.submitForm(t, p, questions, answer);
+  }
+  async submitForm(t, p, questions, answer, {attendanceCode = false} = {}) {
+    for (const q of questions) {
+      const a = answer.answers.find(a => a.name === q.name);
+      if (!a) throw Error('回答不足');
+      const cs = p.locator(`[name="${q.name}"]`);
+      if (['radio', 'checkbox'].includes(q.type)) {
+        const checked = [];
+        for (const c of await cs.all()) if (await c.isChecked()) checked.push(await c.getAttribute('value'));
+        const expected = q.type === 'radio' ? [a.value] : a.values;
+        if (JSON.stringify(checked.sort()) !== JSON.stringify([...expected].sort()))
+          throw Error('回答選択が一致しません');
+      } else if ((await cs.inputValue()) !== a.value) throw Error('回答入力が一致しません');
+    }
+    const reread = await p.locator('body').innerText();
+    if (!attendanceCode && attendance(reread)) {
+      t.status = 'code';
+      await this.save();
+      return;
+    }
+    const form = p.locator('form').filter({has: p.locator(`[name="${questions[0].name}"]`)});
+    if ((await form.count()) !== 1) throw Error('提出フォームを確認してください');
+    const buttons = form.getByRole('button', {
+      name: /^(提出|回答を提出|解答を提出|送信|回答する|解答する|回答確認|確認)$/
+    });
+    const inputs = form.locator('input[type=submit]');
+    const button = (await buttons.count()) === 1 ? buttons : inputs;
+    if ((await button.count()) !== 1) throw Error('提出ボタンを確認してください');
+    if (
+      (await buttons.count()) !== 1 &&
+      !/^(提出|回答を提出|解答を提出|送信|回答する|解答する|回答確認|確認)$/.test(
+        (await button.getAttribute('value')) || ''
+      )
+    )
+      throw Error('提出ボタンを確認してください');
+    t.submissionIntent = {at: new Date().toISOString(), fingerprint: t.questionHash};
+    t.status = 'unknown';
+    await this.save();
+    await button.click();
+    const confirm = p.getByRole('button', {name: /^(提出する|送信する|回答を送信|解答を送信|確定)$/});
+    if ((await confirm.count()) === 1) {
+      if (!attendanceCode && attendance(await p.locator('body').innerText())) {
+        t.status = 'code';
+        t.submissionIntent = null;
+        await this.save();
+        return;
+      }
+      await confirm.click();
+    }
+    try {
+      await p.waitForFunction(
+        before => {
+          const text = document.body.innerText;
+          return /提出が完了|回答が完了|解答が完了|送信しました|提出しました/.test(text) && text !== before;
+        },
+        reread,
+        {timeout: 12000}
+      );
+      t.status = 'done';
+      t.submittedAt = new Date().toISOString();
+      t.submissionIntent = null;
+      t.action = '';
+    } catch {
+      t.status = 'unknown';
+      t.action = 'manaboで提出結果を確認。自動再送信しません。';
+    }
+    await this.save();
+  }
 }

@@ -1,13 +1,168 @@
 // CUBICS（授業・時間割照会）の週表から、教室・休講・補講・授業変更を読み取る。個人情報欄は読まない
-export const CUBICS_URL='https://cubics-as.chukyo-u.ac.jp/unias/UnSSOLoginControl2?REQ_LOGIN_NO=2&REQ_ACTION_DO=/ARF010.do&REQ_PRFR_MNU_ID=MNUIDSTD0103';
-const norm=s=>String(s||'').normalize('NFKC').replace(/[\s・･()（）]/g,'');
-const statusOf=(v,isText)=>{const s=String(v||'');if(isText)return /^(休|休講)$/.test(s)?'休講':/^(補|補講)$/.test(s)?'補講':/^(授|授業変更)$/.test(s)?'授業変更':'';return /休講|kyuko|kyu[_-]?ko|[^a-z]kyu[^a-z]/i.test(s)?'休講':/補講|hoko|ho[_-]ko/i.test(s)?'補講':/授業変更|henko|henkou/i.test(s)?'授業変更':''};
-const isRoom=s=>s.length<=20&&(/^[0-9]{3,4}[A-Z]?$/.test(s.normalize('NFKC'))||/号館|教室|ホール|講堂|館\d|室$/.test(s));
+export const CUBICS_URL =
+  'https://cubics-as.chukyo-u.ac.jp/unias/UnSSOLoginControl2?REQ_LOGIN_NO=2&REQ_ACTION_DO=/ARF010.do&REQ_PRFR_MNU_ID=MNUIDSTD0103';
+const norm = s =>
+  String(s || '')
+    .normalize('NFKC')
+    .replace(/[\s・･()（）]/g, '');
+const statusOf = (v, isText) => {
+  const s = String(v || '');
+  if (isText)
+    return /^(休|休講)$/.test(s)
+      ? '休講'
+      : /^(補|補講)$/.test(s)
+        ? '補講'
+        : /^(授|授業変更)$/.test(s)
+          ? '授業変更'
+          : '';
+  return /休講|kyuko|kyu[_-]?ko|[^a-z]kyu[^a-z]/i.test(s)
+    ? '休講'
+    : /補講|hoko|ho[_-]ko/i.test(s)
+      ? '補講'
+      : /授業変更|henko|henkou/i.test(s)
+        ? '授業変更'
+        : '';
+};
+const isRoom = s =>
+  s.length <= 20 && (/^[0-9]{3,4}[A-Z]?$/.test(s.normalize('NFKC')) || /号館|教室|ホール|講堂|館\d|室$/.test(s));
 // ブラウザ内で実行：「時限」見出しと「N時限」行をもつ表を探し、マスごとに文字と印（画像の alt/title/src）を出現順に集める
-export function extractGrid(){const text=e=>(e?.innerText||e?.textContent||'').trim();const table=[...document.querySelectorAll('table')].find(t=>t.rows.length>2&&/^時限/.test(text(t.rows[0]?.cells[0]))&&[...t.rows].some(r=>/^\d\s*時限/.test(text(r.cells[0]))));if(!table)return null;const range=(document.body.innerText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s*[〜~～-]\s*(\d{4})年(\d{1,2})月(\d{1,2})日/)||[]).slice(1).map(Number);const headers=[...table.rows[0].cells].map(text);const rows=[...table.rows].slice(1).map(r=>({label:text(r.cells[0]),cells:[...r.cells].slice(1).map(cell=>{const tokens=[];const walk=n=>{for(const c of n.childNodes){if(c.nodeType===3){const v=c.textContent.trim();if(v)tokens.push({t:'text',v})}else if(c.nodeType===1){const attrs=['alt','title','src','class'].map(a=>c.getAttribute(a)||'').join(' ').trim();if(c.tagName==='IMG'||(c.getAttribute('title')||c.getAttribute('alt'))){if(attrs)tokens.push({t:'mark',v:attrs})}if(c.tagName!=='IMG')walk(c)}}};walk(cell);return tokens})}));return {range,headers,rows,html:table.outerHTML.slice(0,200000)}}
+export function extractGrid() {
+  const text = e => (e?.innerText || e?.textContent || '').trim();
+  const table = [...document.querySelectorAll('table')].find(
+    t =>
+      t.rows.length > 2 &&
+      /^時限/.test(text(t.rows[0]?.cells[0])) &&
+      [...t.rows].some(r => /^\d\s*時限/.test(text(r.cells[0])))
+  );
+  if (!table) return null;
+  const range = (
+    document.body.innerText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s*[〜~～-]\s*(\d{4})年(\d{1,2})月(\d{1,2})日/) || []
+  )
+    .slice(1)
+    .map(Number);
+  const headers = [...table.rows[0].cells].map(text);
+  const rows = [...table.rows].slice(1).map(r => ({
+    label: text(r.cells[0]),
+    cells: [...r.cells].slice(1).map(cell => {
+      const tokens = [];
+      const walk = n => {
+        for (const c of n.childNodes) {
+          if (c.nodeType === 3) {
+            const v = c.textContent.trim();
+            if (v) tokens.push({t: 'text', v});
+          } else if (c.nodeType === 1) {
+            const attrs = ['alt', 'title', 'src', 'class']
+              .map(a => c.getAttribute(a) || '')
+              .join(' ')
+              .trim();
+            if (c.tagName === 'IMG' || c.getAttribute('title') || c.getAttribute('alt')) {
+              if (attrs) tokens.push({t: 'mark', v: attrs});
+            }
+            if (c.tagName !== 'IMG') walk(c);
+          }
+        }
+      };
+      walk(cell);
+      return tokens;
+    })
+  }));
+  return {range, headers, rows, html: table.outerHTML.slice(0, 200000)};
+}
 // 抽出結果 → [{date,weekday,period,room,label,status}]
-export function parseGrid(raw){if(!raw)return [];const [sy,sm]=raw.range||[];const days=raw.headers.slice(1).map(h=>{const w=h.match(/[月火水木金土日]/)?.[0],m=h.match(/(\d{1,2})\/(\d{1,2})/);if(!m||!sy)return {weekday:w,date:null};const mo=+m[1],y=mo<sm?sy+1:sy;return {weekday:w,date:`${y}-${String(mo).padStart(2,'0')}-${m[2].padStart(2,'0')}`}});const out=[];for(const row of raw.rows){const period=Number(row.label.normalize('NFKC').match(/(\d)\s*時限/)?.[1]);if(!period)continue;row.cells.forEach((tokens,k)=>{const day=days[k];if(!day?.date)return;let cur=null,pending='';const flush=()=>{if(cur&&(cur.label||cur.room))out.push({...day,period,room:cur.room,label:cur.label,status:cur.status})};for(const tok of tokens){const st=statusOf(tok.v,tok.t==='text');if(st){if(cur)cur.status=cur.status||st;else pending=st;continue}if(tok.t!=='text')continue;if(isRoom(tok.v)){if(cur&&(cur.room||cur.label)){flush();cur=null}cur={room:tok.v,label:'',status:pending};pending=''}else{if(!cur){cur={room:'',label:'',status:pending};pending=''}if(cur.label){flush();cur={room:'',label:'',status:''}}cur.label=tok.v}}flush()})}return out}
+export function parseGrid(raw) {
+  if (!raw) return [];
+  const [sy, sm] = raw.range || [];
+  const days = raw.headers.slice(1).map(h => {
+    const w = h.match(/[月火水木金土日]/)?.[0],
+      m = h.match(/(\d{1,2})\/(\d{1,2})/);
+    if (!m || !sy) return {weekday: w, date: null};
+    const mo = +m[1],
+      y = mo < sm ? sy + 1 : sy;
+    return {weekday: w, date: `${y}-${String(mo).padStart(2, '0')}-${m[2].padStart(2, '0')}`};
+  });
+  const out = [];
+  for (const row of raw.rows) {
+    const period = Number(row.label.normalize('NFKC').match(/(\d)\s*時限/)?.[1]);
+    if (!period) continue;
+    row.cells.forEach((tokens, k) => {
+      const day = days[k];
+      if (!day?.date) return;
+      let cur = null,
+        pending = '';
+      const flush = () => {
+        if (cur && (cur.label || cur.room))
+          out.push({...day, period, room: cur.room, label: cur.label, status: cur.status});
+      };
+      for (const tok of tokens) {
+        const st = statusOf(tok.v, tok.t === 'text');
+        if (st) {
+          if (cur) cur.status = cur.status || st;
+          else pending = st;
+          continue;
+        }
+        if (tok.t !== 'text') continue;
+        if (isRoom(tok.v)) {
+          if (cur && (cur.room || cur.label)) {
+            flush();
+            cur = null;
+          }
+          cur = {room: tok.v, label: '', status: pending};
+          pending = '';
+        } else {
+          if (!cur) {
+            cur = {room: '', label: '', status: pending};
+            pending = '';
+          }
+          if (cur.label) {
+            flush();
+            cur = {room: '', label: '', status: ''};
+          }
+          cur.label = tok.v;
+        }
+      }
+      flush();
+    });
+  }
+  return out;
+}
 // CUBICS の略称（「コーポ・ファイⅡ」など）を saboro の授業に対応づける。名前の部分一致→曜日・時限の順
-const subseq=(a,b)=>{let i=0;for(const ch of b)if(ch===a[i])i++;return a.length>0&&i===a.length};
-export function matchCourse(entry,courses,known){const e=norm(entry.label);const byName=courses.filter(c=>{const n=norm(c);return e&&(subseq(e,n)||subseq(n,e))});if(byName.length===1)return byName[0];const pool=byName.length?byName:courses;const bySlot=pool.filter(c=>known[c]?.weekday===entry.weekday&&known[c]?.period===entry.period);return bySlot.length===1?bySlot[0]:null}
-export function mapEntries(entries,courses,known){const result={courses:{},events:[],unmatched:[]};const seen=new Set();for(const e of entries){const course=matchCourse(e,courses,e.status==='補講'?{}:known);if(!course){const k=`${e.label}|${e.weekday}|${e.period}`;if(!seen.has(k)&&e.status!=='補講'){seen.add(k);result.unmatched.push({label:e.label,weekday:e.weekday,period:e.period,room:e.room})}continue}if(e.status!=='補講'){const c=result.courses[course]||={label:e.label};c.weekday=e.weekday;c.period=e.period;if(e.room&&e.status!=='授業変更')c.room=e.room}if(e.status)result.events.push({course,date:e.date,period:e.period,status:e.status,room:e.room,label:e.label})}return result}
+const subseq = (a, b) => {
+  let i = 0;
+  for (const ch of b) if (ch === a[i]) i++;
+  return a.length > 0 && i === a.length;
+};
+export function matchCourse(entry, courses, known) {
+  const e = norm(entry.label);
+  const byName = courses.filter(c => {
+    const n = norm(c);
+    return e && (subseq(e, n) || subseq(n, e));
+  });
+  if (byName.length === 1) return byName[0];
+  const pool = byName.length ? byName : courses;
+  const bySlot = pool.filter(c => known[c]?.weekday === entry.weekday && known[c]?.period === entry.period);
+  return bySlot.length === 1 ? bySlot[0] : null;
+}
+export function mapEntries(entries, courses, known) {
+  const result = {courses: {}, events: [], unmatched: []};
+  const seen = new Set();
+  for (const e of entries) {
+    const course = matchCourse(e, courses, e.status === '補講' ? {} : known);
+    if (!course) {
+      const k = `${e.label}|${e.weekday}|${e.period}`;
+      if (!seen.has(k) && e.status !== '補講') {
+        seen.add(k);
+        result.unmatched.push({label: e.label, weekday: e.weekday, period: e.period, room: e.room});
+      }
+      continue;
+    }
+    if (e.status !== '補講') {
+      const c = (result.courses[course] ||= {label: e.label});
+      c.weekday = e.weekday;
+      c.period = e.period;
+      if (e.room && e.status !== '授業変更') c.room = e.room;
+    }
+    if (e.status)
+      result.events.push({course, date: e.date, period: e.period, status: e.status, room: e.room, label: e.label});
+  }
+  return result;
+}

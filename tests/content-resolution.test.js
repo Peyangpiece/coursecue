@@ -1,7 +1,95 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {chooseContent} from '../local/content-resolution.js';
-test('imported report resolves to correct board with alternate title',()=>{const entries=[{url:'https://manabo.cnc.chukyo-u.ac.jp/content/10/board/token/',title:'第2回事後課題'},{url:'https://manabo.cnc.chukyo-u.ac.jp/content/11/quiz/token/',title:'第1回課題'}];assert.equal(chooseContent(entries,{title:'第2回課題',round:2}).url,entries[0].url)});
-test('ambiguous same-round assignments are not guessed',()=>assert.equal(chooseContent([{url:'https://example.com/content/1/board/',title:'第2回課題A'},{url:'https://example.com/content/2/board/',title:'第2回課題B'}],{title:'第2回課題',round:2}),null));
-test('題名が一致しなくても、種類（レポート・クイズ）が同じ候補が1つだけならそれに対応づける',()=>{const entries=[{url:'https://example.com/content/1/quiz/t/',title:'第3回 小テスト'},{url:'https://example.com/content/2/report/t/',title:'東芝JSWについて'}];assert.equal(chooseContent(entries,{title:'東芝JSWへの本国支援',round:3,type:'レポート'}).url,'https://example.com/content/2/report/t/');assert.equal(chooseContent(entries,{title:'x',round:3,type:'クイズ'}).url,'https://example.com/content/1/quiz/t/');assert.equal(chooseContent([...entries,{url:'https://example.com/content/3/report/t/',title:'別のレポート'}],{title:'x',round:3,type:'レポート'}),null,'同じ種類が2つなら推測しない')});
-test('「期限後提出用」の別枠を除いて1つに絞れるなら、通常の提出先に対応づける',()=>{const entries=[{url:'https://example.com/content/1/report/t/',title:'第二回課題提出'},{url:'https://example.com/content/2/report/t/',title:'第二回課題（期限後提出用、やむを得ない事情のみ）'}];assert.equal(chooseContent(entries,{title:'東芝JSWへの本国支援',round:2,type:'レポート'}).url,'https://example.com/content/1/report/t/')});
-test('通常の提出先があれば期限後提出用の別枠は候補にせず、別枠に結びついた課題の戻し先を返す',async()=>{const {chooseContent,regularOnly,regularFor}=await import('../local/content-resolution.js');const reg={url:'https://x/content/901/report/tok/',title:'第三回課題提出'},late={url:'https://x/content/902/report/tok/',title:'第三回課題（期限後提出用、やむを得ない事情のみ）'};assert.equal(chooseContent([late,reg],{round:3,title:'第三回課題（期限後提出用、やむを得ない事情のみ）',type:'レポート'}),reg,'題名が別枠と一致しても通常の提出先');assert.equal(chooseContent([late],{round:3,title:'x',type:'レポート'}),late,'別枠しかなければそれ');assert.deepEqual(regularOnly([late,reg]),[reg]);assert.equal(regularFor(late,[late,reg]),reg);assert.equal(regularFor(late,[late,reg,{url:'https://x/content/903/report/tok/',title:'第三回レポート'}]),null,'通常の提出先が複数なら決めない')});
-test('期限後提出用・やむを得ない事情のみの予備の提出先から作った課題は外し、手で追加した課題は残す',async()=>{const {dropSpareTasks,SPARE}=await import('../local/content-resolution.js');const tasks=[{title:'第二回課題（期限後提出用、やむを得ない事情のみ）',url:'https://manabo.cnc.chukyo-u.ac.jp/class/1/content/report/2'},{title:'第二回課題',url:'https://manabo.cnc.chukyo-u.ac.jp/class/1/content/report/1'},{title:'レポート（期限後提出用）',url:''},{title:'遅れてきた近代 レポート',url:'https://manabo.cnc.chukyo-u.ac.jp/class/1/content/report/3'}];const r=dropSpareTasks(tasks);assert.deepEqual(r.tasks.map(t=>t.title),['第二回課題','レポート（期限後提出用）','遅れてきた近代 レポート']);assert.deepEqual(r.archived.map(t=>t.title),['第二回課題（期限後提出用、やむを得ない事情のみ）']);assert(SPARE.test('第3回課題（やむを得ない事情のある者のみ）'));assert(!SPARE.test('第3回課題'))});
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {chooseContent} from '../local/content-resolution.js';
+test('imported report resolves to correct board with alternate title', () => {
+  const entries = [
+    {url: 'https://manabo.cnc.chukyo-u.ac.jp/content/10/board/token/', title: '第2回事後課題'},
+    {url: 'https://manabo.cnc.chukyo-u.ac.jp/content/11/quiz/token/', title: '第1回課題'}
+  ];
+  assert.equal(chooseContent(entries, {title: '第2回課題', round: 2}).url, entries[0].url);
+});
+test('ambiguous same-round assignments are not guessed', () =>
+  assert.equal(
+    chooseContent(
+      [
+        {url: 'https://example.com/content/1/board/', title: '第2回課題A'},
+        {url: 'https://example.com/content/2/board/', title: '第2回課題B'}
+      ],
+      {title: '第2回課題', round: 2}
+    ),
+    null
+  ));
+test('題名が一致しなくても、種類（レポート・クイズ）が同じ候補が1つだけならそれに対応づける', () => {
+  const entries = [
+    {url: 'https://example.com/content/1/quiz/t/', title: '第3回 小テスト'},
+    {url: 'https://example.com/content/2/report/t/', title: '東芝JSWについて'}
+  ];
+  assert.equal(
+    chooseContent(entries, {title: '東芝JSWへの本国支援', round: 3, type: 'レポート'}).url,
+    'https://example.com/content/2/report/t/'
+  );
+  assert.equal(
+    chooseContent(entries, {title: 'x', round: 3, type: 'クイズ'}).url,
+    'https://example.com/content/1/quiz/t/'
+  );
+  assert.equal(
+    chooseContent([...entries, {url: 'https://example.com/content/3/report/t/', title: '別のレポート'}], {
+      title: 'x',
+      round: 3,
+      type: 'レポート'
+    }),
+    null,
+    '同じ種類が2つなら推測しない'
+  );
+});
+test('「期限後提出用」の別枠を除いて1つに絞れるなら、通常の提出先に対応づける', () => {
+  const entries = [
+    {url: 'https://example.com/content/1/report/t/', title: '第二回課題提出'},
+    {url: 'https://example.com/content/2/report/t/', title: '第二回課題（期限後提出用、やむを得ない事情のみ）'}
+  ];
+  assert.equal(
+    chooseContent(entries, {title: '東芝JSWへの本国支援', round: 2, type: 'レポート'}).url,
+    'https://example.com/content/1/report/t/'
+  );
+});
+test('通常の提出先があれば期限後提出用の別枠は候補にせず、別枠に結びついた課題の戻し先を返す', async () => {
+  const {chooseContent, regularOnly, regularFor} = await import('../local/content-resolution.js');
+  const reg = {url: 'https://x/content/901/report/tok/', title: '第三回課題提出'},
+    late = {url: 'https://x/content/902/report/tok/', title: '第三回課題（期限後提出用、やむを得ない事情のみ）'};
+  assert.equal(
+    chooseContent([late, reg], {round: 3, title: '第三回課題（期限後提出用、やむを得ない事情のみ）', type: 'レポート'}),
+    reg,
+    '題名が別枠と一致しても通常の提出先'
+  );
+  assert.equal(chooseContent([late], {round: 3, title: 'x', type: 'レポート'}), late, '別枠しかなければそれ');
+  assert.deepEqual(regularOnly([late, reg]), [reg]);
+  assert.equal(regularFor(late, [late, reg]), reg);
+  assert.equal(
+    regularFor(late, [late, reg, {url: 'https://x/content/903/report/tok/', title: '第三回レポート'}]),
+    null,
+    '通常の提出先が複数なら決めない'
+  );
+});
+test('期限後提出用・やむを得ない事情のみの予備の提出先から作った課題は外し、手で追加した課題は残す', async () => {
+  const {dropSpareTasks, SPARE} = await import('../local/content-resolution.js');
+  const tasks = [
+    {
+      title: '第二回課題（期限後提出用、やむを得ない事情のみ）',
+      url: 'https://manabo.cnc.chukyo-u.ac.jp/class/1/content/report/2'
+    },
+    {title: '第二回課題', url: 'https://manabo.cnc.chukyo-u.ac.jp/class/1/content/report/1'},
+    {title: 'レポート（期限後提出用）', url: ''},
+    {title: '遅れてきた近代 レポート', url: 'https://manabo.cnc.chukyo-u.ac.jp/class/1/content/report/3'}
+  ];
+  const r = dropSpareTasks(tasks);
+  assert.deepEqual(
+    r.tasks.map(t => t.title),
+    ['第二回課題', 'レポート（期限後提出用）', '遅れてきた近代 レポート']
+  );
+  assert.deepEqual(
+    r.archived.map(t => t.title),
+    ['第二回課題（期限後提出用、やむを得ない事情のみ）']
+  );
+  assert(SPARE.test('第3回課題（やむを得ない事情のある者のみ）'));
+  assert(!SPARE.test('第3回課題'));
+});

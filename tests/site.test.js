@@ -1,18 +1,98 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync,readdirSync} from 'node:fs';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync, readdirSync} from 'node:fs';
 // ホームページ（site/）：アプリと切り分けた静的なサイト（サービスの説明・機能・料金・特定商取引法に基づく表記・個人情報保護法で公表が必要な事項）
-const dir='site/public',page=f=>readFileSync(`${dir}/${f}`,'utf8'),pages=readdirSync(dir,{recursive:true}).filter(f=>f.endsWith('.html'));
-test('特定商取引法に基づく表記に、Stripe の案内で必須の 11 項目がある',()=>{const h=page('tokushoho.html');for(const k of ['販売事業者名','運営責任者','所在地','電話番号','メールアドレス','販売価格','商品代金以外の必要料金','支払方法','支払時期','サービスの提供時期','返品・キャンセル（お客様のご都合による場合）','返品・キャンセル（サービスの不具合による場合）'])assert.match(h,new RegExp(`<th>${k.replace(/[()（）]/g,'.')}</th>`),k);assert.match(h,/月額 2,500円（税込）/)});
-test('どのページからも、特定商取引法に基づく表記・プライバシーポリシーへリンクする',()=>{for(const f of pages){const h=page(f);for(const l of ['/tokushoho','/privacy'])assert.ok(h.includes(`href="${l}"`),`${f} → ${l}`)}});
-test('プライバシーポリシーに、個人情報保護法で公表が必要な事項（事業者・利用目的・安全管理措置・開示等の手続・苦情の申出先）がある',()=>{const h=page('privacy.html');for(const k of ['事業者','利用目的','安全管理のための措置','開示等の請求・苦情のお申し出'])assert.match(h,new RegExp(`<h2>${k}</h2>`),k);assert.match(h,/saboro\.manabo@gmail\.com/)});
-test('アプリとは完全に切り分ける：アプリの公開先・API・画面の資源を参照せず、スクリプトも動かさない',()=>{for(const f of [...pages,'site.css']){const h=page(f);assert.doesNotMatch(h,/coursecue|\/api\/|app\.js|saboro\.css|<script/i,f)}assert.match(page('_headers'),/script-src 'none'/);
- const cfg=readFileSync('site/wrangler.jsonc','utf8');assert.match(cfg,/"name": "saboro-site"/);assert.doesNotMatch(cfg,/"main"|d1_databases/,'Worker のコードもデータベースも持たない')});
-test('検索・共有の情報（説明・正規 URL・共有用の画像）があり、画像には代替テキストがあり、参照するファイルがそろっている',()=>{const h=page('index.html');for(const k of ['name="description"','rel="canonical"','property="og:image"','name="twitter:card"'])assert.ok(h.includes(k),k);
- for(const f of pages){const p=page(f);for(const m of p.matchAll(/<img\b[^>]*>/g))assert.match(m[0],/\balt="/,`${f}: ${m[0]}`);for(const [,u] of p.matchAll(/(?:src|srcset|href)="\/([^"#?]+\.(?:webp|png|svg|css))/g))assert.ok(readdirSync(dir).includes(u),`${f} → ${u}`)}
- assert.match(page('robots.txt'),/Sitemap: https:\/\/saboro-site\.hrk-6888\.workers\.dev\/sitemap\.xml/)});
-test('ダウンロード：機種を選ぶページから Mac・Windows の手順のページへ進み、ボタンは常に最新版のインストーラーを指す（配布の処理がその名前の複製を載せる）',()=>{const choose=page('download.html');for(const l of ['/download/mac','/download/windows'])assert.ok(choose.includes(`href="${l}"`),l);
- const rel='https://github.com/Peyangpiece/SaBoRo/releases/latest/download/',files={'download/mac.html':['saboro-mac-arm64.dmg','saboro-mac-x64.dmg'],'download/windows.html':['saboro-win-x64.exe']},wf=readFileSync('.github/workflows/desktop.yml','utf8');
- for(const [f,names] of Object.entries(files)){const h=page(f);assert.match(h,/<ol class="steps">/,f);for(const n of names){assert.ok(h.includes(`href="${rel}${n}"`),`${f} → ${n}`);assert.match(wf,new RegExp(`release/${n.replace(/[.]/g,'\\.')}\\b`),`desktop.yml が ${n} を作る`)}}
- for(const f of pages)assert.doesNotMatch(page(f),/releases\/latest"/,`${f}：GitHub の Release のページへは直接飛ばさない`)});
-test('特定商取引法に基づく表記の料金の条件（60 回・1 ドル＝150 円・1.5 倍・高度な生成 3 回・月額 2,500 円）が、請求に使う値と同じ',async()=>{const {TERMS,ADVANCED_LIMIT}=await import('../server/ai.js'),{MONTHLY_YEN,billingOf}=await import('../server/billing.js');const h=readFileSync('site/public/tokushoho.html','utf8');
- assert.ok(h.includes(`月額 ${MONTHLY_YEN.toLocaleString('ja-JP')}円（税込）`),'月額もコードの固定値と照らす');assert.equal(TERMS.monthlyYen,MONTHLY_YEN);assert.equal(billingOf({account:'a',settings:{}}).price,MONTHLY_YEN,'管理画面で月額を入れていなくても表記の月額を出す');
- assert.ok(h.includes(`毎月 ${TERMS.included} 回まで月額に含みます`));assert.ok(h.includes(`1 ドル＝${TERMS.usdJpy} 円`));assert.ok(h.includes(`${TERMS.markup} 倍を使用料`));assert.ok(h.includes(`毎月 ${ADVANCED_LIMIT} 回まで`));assert.ok(h.includes('月額 2,500円（税込）'));assert.ok(h.includes('回答を作成できなかった回は、回数に数えず'))});
+const dir = 'site/public',
+  page = f => readFileSync(`${dir}/${f}`, 'utf8'),
+  pages = readdirSync(dir, {recursive: true}).filter(f => f.endsWith('.html'));
+test('特定商取引法に基づく表記に、Stripe の案内で必須の 11 項目がある', () => {
+  const h = page('tokushoho.html');
+  for (const k of [
+    '販売事業者名',
+    '運営責任者',
+    '所在地',
+    '電話番号',
+    'メールアドレス',
+    '販売価格',
+    '商品代金以外の必要料金',
+    '支払方法',
+    '支払時期',
+    'サービスの提供時期',
+    '返品・キャンセル（お客様のご都合による場合）',
+    '返品・キャンセル（サービスの不具合による場合）'
+  ])
+    assert.match(h, new RegExp(`<th>${k.replace(/[()（）]/g, '.')}</th>`), k);
+  assert.match(h, /月額 2,500円（税込）/);
+});
+test('どのページからも、特定商取引法に基づく表記・プライバシーポリシーへリンクする', () => {
+  for (const f of pages) {
+    const h = page(f);
+    for (const l of ['/tokushoho', '/privacy']) assert.ok(h.includes(`href="${l}"`), `${f} → ${l}`);
+  }
+});
+test('プライバシーポリシーに、個人情報保護法で公表が必要な事項（事業者・利用目的・安全管理措置・開示等の手続・苦情の申出先）がある', () => {
+  const h = page('privacy.html');
+  for (const k of ['事業者', '利用目的', '安全管理のための措置', '開示等の請求・苦情のお申し出'])
+    assert.match(h, new RegExp(`<h2>${k}</h2>`), k);
+  assert.match(h, /saboro\.manabo@gmail\.com/);
+});
+test('アプリとは完全に切り分ける：アプリの公開先・API・画面の資源を参照せず、スクリプトも動かさない', () => {
+  for (const f of [...pages, 'site.css']) {
+    const h = page(f);
+    assert.doesNotMatch(h, /coursecue|\/api\/|app\.js|saboro\.css|<script/i, f);
+  }
+  assert.match(page('_headers'), /script-src 'none'/);
+  const cfg = readFileSync('site/wrangler.jsonc', 'utf8');
+  assert.match(cfg, /"name": "saboro-site"/);
+  assert.doesNotMatch(cfg, /"main"|d1_databases/, 'Worker のコードもデータベースも持たない');
+});
+test('検索・共有の情報（説明・正規 URL・共有用の画像）があり、画像には代替テキストがあり、参照するファイルがそろっている', () => {
+  const h = page('index.html');
+  for (const k of ['name="description"', 'rel="canonical"', 'property="og:image"', 'name="twitter:card"'])
+    assert.ok(h.includes(k), k);
+  for (const f of pages) {
+    const p = page(f);
+    for (const m of p.matchAll(/<img\b[^>]*>/g)) assert.match(m[0], /\balt="/, `${f}: ${m[0]}`);
+    for (const [, u] of p.matchAll(/(?:src|srcset|href)="\/([^"#?]+\.(?:webp|png|svg|css))/g))
+      assert.ok(readdirSync(dir).includes(u), `${f} → ${u}`);
+  }
+  assert.match(page('robots.txt'), /Sitemap: https:\/\/saboro-site\.hrk-6888\.workers\.dev\/sitemap\.xml/);
+});
+test('ダウンロード：機種を選ぶページから Mac・Windows の手順のページへ進み、ボタンは常に最新版のインストーラーを指す（配布の処理がその名前の複製を載せる）', () => {
+  const choose = page('download.html');
+  for (const l of ['/download/mac', '/download/windows']) assert.ok(choose.includes(`href="${l}"`), l);
+  const rel = 'https://github.com/Peyangpiece/SaBoRo/releases/latest/download/',
+    files = {
+      'download/mac.html': ['saboro-mac-arm64.dmg', 'saboro-mac-x64.dmg'],
+      'download/windows.html': ['saboro-win-x64.exe']
+    },
+    wf = readFileSync('.github/workflows/desktop.yml', 'utf8');
+  for (const [f, names] of Object.entries(files)) {
+    const h = page(f);
+    assert.match(h, /<ol class="steps">/, f);
+    for (const n of names) {
+      assert.ok(h.includes(`href="${rel}${n}"`), `${f} → ${n}`);
+      assert.match(wf, new RegExp(`release/${n.replace(/[.]/g, '\\.')}\\b`), `desktop.yml が ${n} を作る`);
+    }
+  }
+  for (const f of pages)
+    assert.doesNotMatch(page(f), /releases\/latest"/, `${f}：GitHub の Release のページへは直接飛ばさない`);
+});
+test('特定商取引法に基づく表記の料金の条件（60 回・1 ドル＝150 円・1.5 倍・高度な生成 3 回・月額 2,500 円）が、請求に使う値と同じ', async () => {
+  const {TERMS, ADVANCED_LIMIT} = await import('../server/ai.js'),
+    {MONTHLY_YEN, billingOf} = await import('../server/billing.js');
+  const h = readFileSync('site/public/tokushoho.html', 'utf8');
+  assert.ok(h.includes(`月額 ${MONTHLY_YEN.toLocaleString('ja-JP')}円（税込）`), '月額もコードの固定値と照らす');
+  assert.equal(TERMS.monthlyYen, MONTHLY_YEN);
+  assert.equal(
+    billingOf({account: 'a', settings: {}}).price,
+    MONTHLY_YEN,
+    '管理画面で月額を入れていなくても表記の月額を出す'
+  );
+  assert.ok(h.includes(`毎月 ${TERMS.included} 回まで月額に含みます`));
+  assert.ok(h.includes(`1 ドル＝${TERMS.usdJpy} 円`));
+  assert.ok(h.includes(`${TERMS.markup} 倍を使用料`));
+  assert.ok(h.includes(`毎月 ${ADVANCED_LIMIT} 回まで`));
+  assert.ok(h.includes('月額 2,500円（税込）'));
+  assert.ok(h.includes('回答を作成できなかった回は、回数に数えず'));
+});

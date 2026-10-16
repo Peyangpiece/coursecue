@@ -1,35 +1,367 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,rm,readdir,readFile,unlink,writeFile,mkdir} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {chromium} from 'playwright';import {Manabo} from '../local/manabo.js';import {checkDownloadDir,pickFolder} from '../local/download-dir.js';
-test('ダウンロード先はホームフォルダ内の通常のフォルダだけ指定できる',()=>{const home='/Users/u';assert.equal(checkDownloadDir('',home),'');assert.equal(checkDownloadDir('~/Documents/授業資料',home),'/Users/u/Documents/授業資料');assert.equal(checkDownloadDir('/Users/u/Desktop/2026秋学期/',home),'/Users/u/Desktop/2026秋学期');for(const bad of ['/etc','~/../other','/Users/u/.ssh','~/Library/LaunchAgents','Documents','~/Desktop/../../x'])assert.throws(()=>checkDownloadDir(bad,home),undefined,bad)});
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp, rm, readdir, readFile, unlink, writeFile, mkdir} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {chromium} from 'playwright';
+import {Manabo} from '../local/manabo.js';
+import {checkDownloadDir, pickFolder} from '../local/download-dir.js';
+test('ダウンロード先はホームフォルダ内の通常のフォルダだけ指定できる', () => {
+  const home = '/Users/u';
+  assert.equal(checkDownloadDir('', home), '');
+  assert.equal(checkDownloadDir('~/Documents/授業資料', home), '/Users/u/Documents/授業資料');
+  assert.equal(checkDownloadDir('/Users/u/Desktop/2026秋学期/', home), '/Users/u/Desktop/2026秋学期');
+  for (const bad of ['/etc', '~/../other', '/Users/u/.ssh', '~/Library/LaunchAgents', 'Documents', '~/Desktop/../../x'])
+    assert.throws(() => checkDownloadDir(bad, home), undefined, bad);
+});
 // manabo のファイル取得を模擬する（URLごとに中身が変わる）
-function fakeManabo(root,state){let gets=0;const m=new Manabo({root,work:root,state,save:async()=>{},credentials:async()=>null,ai:async()=>{}});m.page=async()=>null;m.ctx={request:{get:async url=>{gets++;const n=url.match(/file\/(\d+)/)[1];return {ok:()=>true,headers:()=>({'content-type':'application/pdf','content-disposition':`attachment; filename*=UTF-8''${encodeURIComponent(`第${n}回_資料.pdf`)}`}),body:async()=>Buffer.from('pdf '+n)}}}};return {m,gets:()=>gets}}
-const entry=n=>({url:`https://manabo.cnc.chukyo-u.ac.jp/file/${n}/`,text:`第${n}回 資料`});
-test('まだダウンロードしていない資料だけを授業ごとのフォルダに保存し、フォルダを変えたら新しいフォルダに保存する',async t=>{const base=await mkdtemp(join(tmpdir(),'coursecue-dl-'));t.after(()=>rm(base,{recursive:true,force:true}));const state={tasks:[],materials:[],settings:{}};const {m,gets}=fakeManabo(join(base,'既定'),state);await m.download(entry(1),'管理会計Ⅱ');assert.deepEqual(await readdir(join(base,'既定','管理会計Ⅱ')),['第1回_資料.pdf'],'授業フォルダがなければ作る');await m.download(entry(1),'管理会計Ⅱ');assert.equal(gets(),1,'ダウンロード済みは取りに行かない');await unlink(join(base,'既定','管理会計Ⅱ','第1回_資料.pdf'));await m.download(entry(1),'管理会計Ⅱ');assert.equal(gets(),1,'自分で消した資料はダウンロードし直さない');await m.download(entry(2),'管理会計Ⅱ');assert.deepEqual(await readdir(join(base,'既定','管理会計Ⅱ')),['第2回_資料.pdf']);state.settings.downloadDir=join(base,'新しい場所');await m.download(entry(2),'管理会計Ⅱ');assert.equal(await readFile(join(base,'新しい場所','管理会計Ⅱ','第2回_資料.pdf'),'utf8'),'pdf 2');assert.equal(state.materials.filter(x=>x.url===entry(2).url).length,1,'記録は新しい場所の1件だけ');await m.download(entry(2),'管理会計Ⅱ');assert.equal(gets(),3)});
+function fakeManabo(root, state) {
+  let gets = 0;
+  const m = new Manabo({
+    root,
+    work: root,
+    state,
+    save: async () => {},
+    credentials: async () => null,
+    ai: async () => {}
+  });
+  m.page = async () => null;
+  m.ctx = {
+    request: {
+      get: async url => {
+        gets++;
+        const n = url.match(/file\/(\d+)/)[1];
+        return {
+          ok: () => true,
+          headers: () => ({
+            'content-type': 'application/pdf',
+            'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`第${n}回_資料.pdf`)}`
+          }),
+          body: async () => Buffer.from('pdf ' + n)
+        };
+      }
+    }
+  };
+  return {m, gets: () => gets};
+}
+const entry = n => ({url: `https://manabo.cnc.chukyo-u.ac.jp/file/${n}/`, text: `第${n}回 資料`});
+test('まだダウンロードしていない資料だけを授業ごとのフォルダに保存し、フォルダを変えたら新しいフォルダに保存する', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'coursecue-dl-'));
+  t.after(() => rm(base, {recursive: true, force: true}));
+  const state = {tasks: [], materials: [], settings: {}};
+  const {m, gets} = fakeManabo(join(base, '既定'), state);
+  await m.download(entry(1), '管理会計Ⅱ');
+  assert.deepEqual(await readdir(join(base, '既定', '管理会計Ⅱ')), ['第1回_資料.pdf'], '授業フォルダがなければ作る');
+  await m.download(entry(1), '管理会計Ⅱ');
+  assert.equal(gets(), 1, 'ダウンロード済みは取りに行かない');
+  await unlink(join(base, '既定', '管理会計Ⅱ', '第1回_資料.pdf'));
+  await m.download(entry(1), '管理会計Ⅱ');
+  assert.equal(gets(), 1, '自分で消した資料はダウンロードし直さない');
+  await m.download(entry(2), '管理会計Ⅱ');
+  assert.deepEqual(await readdir(join(base, '既定', '管理会計Ⅱ')), ['第2回_資料.pdf']);
+  state.settings.downloadDir = join(base, '新しい場所');
+  await m.download(entry(2), '管理会計Ⅱ');
+  assert.equal(await readFile(join(base, '新しい場所', '管理会計Ⅱ', '第2回_資料.pdf'), 'utf8'), 'pdf 2');
+  assert.equal(state.materials.filter(x => x.url === entry(2).url).length, 1, '記録は新しい場所の1件だけ');
+  await m.download(entry(2), '管理会計Ⅱ');
+  assert.equal(gets(), 3);
+});
 // 授業ページの模擬：第1回（期間外）と第2回にファイルがある
-const page=`<a id="button-logout">ログアウト</a><div class="breadcrumb">管理会計Ⅱ</div><div id="div-class-directories"><table><tr><td>第1回 イントロダクション</td></tr><tr><td><a class="a-open-contents" directory_id="d1" href="#">開く</a></td></tr><tr><td>第2回 原価企画</td></tr><tr><td><a class="a-open-contents" directory_id="d2" href="#">開く</a></td></tr></table></div><div id="div-class-contents"></div><script>for(const n of [1,2])document.querySelector('[directory_id=d'+n+']').onclick=e=>{e.preventDefault();document.getElementById('div-class-contents').innerHTML='<h3>第'+n+'回</h3><table><tr><td><a href="/file/'+n+'/">第'+n+'回 資料</a></td></tr></table>'}</script>`;
-test('期間外の回の資料も、そのフォルダで初めての同期のときに一度だけ確認してダウンロードする',async t=>{const browser=await chromium.launch({headless:true});t.after(()=>browser.close());const ctx=await browser.newContext();await ctx.route('**/*',r=>r.fulfill({contentType:'text/html; charset=utf-8',body:page}));const p=await ctx.newPage();const state={tasks:[],materials:[],settings:{autoGenerate:false},schedules:{},courses:[{name:'管理会計Ⅱ',id:'103904'}]};const m=new Manabo({root:'/nonexistent',work:'/tmp',state,save:async()=>{},credentials:async()=>null,ai:async()=>{}});m.ctx=ctx;m.page=async()=>(m.p=p);m.cubics=async()=>{};const got=[];m.download=async(e,course)=>{got.push(course+':'+e.url.match(/file\/(\d+)/)[1])};await m.sync();assert(got.includes('管理会計Ⅱ:1')&&got.includes('管理会計Ⅱ:2'),'初回は全回のファイルを確認');got.length=0;await m.sync();assert.deepEqual(got,[],'2回目以降は期間外の回を開かない');state.settings.downloadDir='/nonexistent2';await m.sync();assert(got.includes('管理会計Ⅱ:1'),'フォルダを変えたらもう一度全回を確認')});
-test('Mac の「フォルダを選択」画面：選んだパスを返し、取り消しなら null。パスはスクリプトに埋め込まず引数で渡す',async()=>{let args;const ok=(f,a,o,cb)=>{args=a;cb(null,'/Users/u/Documents/授業資料/\n')};assert.equal(await pickFolder('/nonexistent"; do shell script "x',{run:ok,home:'/Users/u'}),'/Users/u/Documents/授業資料');assert.equal(args.at(-1),'/Users/u','存在しないフォルダならホームから開く');assert(!args.slice(0,-1).some(a=>a.includes('/Users/u')),'パスはスクリプトに含めない');const cancel=(f,a,o,cb)=>{const e=Error('execution error: User canceled. (-128)');cb(e,'')};assert.equal(await pickFolder('',{run:cancel,home:'/Users/u'}),null)});
-test('Finder に選択画面を出させ、許可されなければ osascript 自身で出す',async()=>{const calls=[];const run=(f,a,o,cb)=>{calls.push(a.join('\n'));if(calls.length===1){const e=Error('Not authorized to send Apple events to Finder. (-1743)');return cb(e,'')}cb(null,'/Users/u/x/\n')};assert.equal(await pickFolder('',{run,home:'/Users/u'}),'/Users/u/x');assert(calls[0].includes('tell application "Finder"'));assert(!calls[1].includes('Finder'));assert.equal(calls.length,2)});
-test('取り消したときは、もう一度画面を出さない',async()=>{let n=0;const run=(f,a,o,cb)=>{n++;cb(Error('User canceled. (-128)'),'')};assert.equal(await pickFolder('',{run,home:'/Users/u'}),null);assert.equal(n,1)});
-test('画面から開ける資料は、記録済みでダウンロード先の中にあるファイルだけ',async t=>{const base=await mkdtemp(join(tmpdir(),'coursecue-open-'));t.after(()=>rm(base,{recursive:true,force:true}));const {openableMaterial}=await import('../local/download-dir.js');const state={tasks:[],materials:[],settings:{}};const {m}=fakeManabo(join(base,'既定'),state);await m.download(entry(1),'管理会計Ⅱ');const id=state.materials[0].sha256;assert.equal(openableMaterial(state.materials,id,join(base,'既定')),state.materials[0].path);assert.equal(openableMaterial(state.materials,id,join(base,'別')),null,'ダウンロード先の外は開かない');assert.equal(openableMaterial(state.materials,'x'.repeat(64),join(base,'既定')),null);assert.equal(openableMaterial(state.materials,'../etc/passwd',join(base,'既定')),null);await unlink(state.materials[0].path);assert.equal(openableMaterial(state.materials,id,join(base,'既定')),null,'消したファイルは開かない')});
-test('保存した資料を本人が編集しても、同期で同じファイルをダウンロードし直さない',async t=>{const base=await mkdtemp(join(tmpdir(),'coursecue-edit-'));t.after(()=>rm(base,{recursive:true,force:true}));const state={tasks:[],materials:[],settings:{}};const {m,gets}=fakeManabo(join(base,'既定'),state);await m.download(entry(1),'管理会計Ⅱ');const file=join(base,'既定','管理会計Ⅱ','第1回_資料.pdf');await writeFile(file,'pdf 1 本人のメモ');await m.download(entry(1),'管理会計Ⅱ');await m.download({...entry(1),text:'第1回 資料（改訂）'},'管理会計Ⅱ');assert.equal(gets(),1,'編集後も manabo の表記が変わっても取りに行かない');assert.deepEqual(await readdir(join(base,'既定','管理会計Ⅱ')),['第1回_資料.pdf'],'「(2)」の複製を作らない');assert.equal(await readFile(file,'utf8'),'pdf 1 本人のメモ','編集した内容を上書きしない');
-// seed で取り込んだ記録（textHash なし）でも同じ
-state.materials=[{course:'管理会計Ⅱ',url:entry(2).url,name:'第2回_資料.pdf',path:join(base,'既定','管理会計Ⅱ','第2回_資料.pdf'),sha256:'0'.repeat(64)}];await writeFile(state.materials[0].path,'編集済み');await m.download(entry(2),'管理会計Ⅱ');assert.equal(gets(),1,'取り込んだ記録でも取りに行かない');assert.equal(await readFile(state.materials[0].path,'utf8'),'編集済み')});
-test('以前に作ってしまった「(2)」の複製はゴミ箱へ移し、本人が編集した元のファイルや編集した複製には触れない',async t=>{const base=await mkdtemp(join(tmpdir(),'coursecue-dup-'));t.after(()=>rm(base,{recursive:true,force:true}));const root=join(base,'既定'),state={tasks:[],materials:[],settings:{}},trashed=[];const {m}=fakeManabo(root,state);m.trash=async f=>{trashed.push(f);await unlink(f)};
-// 1：元を編集した後、旧ロジックが「(2)」を作った状態を再現
-await m.download(entry(1),'管理会計Ⅱ');const dir=join(root,'管理会計Ⅱ'),orig=join(dir,'第1回_資料.pdf'),dup=join(dir,'第1回_資料 (2).pdf');await writeFile(orig,'pdf 1 本人のメモ');await writeFile(dup,'pdf 1');state.materials.push({course:'管理会計Ⅱ',url:entry(1).url,name:'第1回_資料 (2).pdf',path:dup,sha256:state.materials[0].sha256});
-// 2：複製の方を本人が編集した（中身が記録と違う）→ 触れない
-await writeFile(join(dir,'第2回_資料.pdf'),'pdf 2');await writeFile(join(dir,'第2回_資料 (2).pdf'),'編集した複製');state.materials.push({course:'管理会計Ⅱ',url:entry(2).url,name:'第2回_資料 (2).pdf',path:join(dir,'第2回_資料 (2).pdf'),sha256:'0'.repeat(64)});
-// 3：元のファイルがない「(2)」→ 触れない
-await writeFile(join(dir,'第3回_資料 (2).pdf'),'pdf 3');state.materials.push({course:'管理会計Ⅱ',url:entry(3).url,name:'第3回_資料 (2).pdf',path:join(dir,'第3回_資料 (2).pdf'),sha256:(await import('../local/core.js')).hash(Buffer.from('pdf 3'))});
-const moved=await m.trashDuplicates();assert.deepEqual(moved,['第1回_資料 (2).pdf']);assert.deepEqual(trashed,[dup]);assert.equal(await readFile(orig,'utf8'),'pdf 1 本人のメモ','元のファイルは残す');assert.deepEqual((await readdir(dir)).sort(),['第1回_資料.pdf','第2回_資料 (2).pdf','第2回_資料.pdf','第3回_資料 (2).pdf']);assert.equal(state.materials.filter(x=>x.url===entry(1).url).length,1,'記録は元の1件だけ');assert.equal(state.materials.find(x=>x.url===entry(1).url).path,orig);assert.equal(state.trashed.length,1);assert.deepEqual(await m.trashDuplicates(),[],'2回目は何もしない')});
-test('ゴミ箱へ移すときは同名があっても上書きしない',async t=>{const base=await mkdtemp(join(tmpdir(),'coursecue-trash-'));t.after(()=>rm(base,{recursive:true,force:true}));const {trashFile}=await import('../local/download-dir.js');await writeFile(join(base,'a.pdf'),'1');const t1=await trashFile(join(base,'a.pdf'),{home:base});await writeFile(join(base,'a.pdf'),'2');const t2=await trashFile(join(base,'a.pdf'),{home:base});assert.equal(t1,join(base,'.Trash','a.pdf'));assert.equal(t2,join(base,'.Trash','a 2.pdf'));assert.equal(await readFile(t1,'utf8'),'1');assert.equal(await readFile(t2,'utf8'),'2')});
-test('同じ資料の 4up・2up があれば 1up（印なし）だけをダウンロードし、1up がない組はそのまま',async()=>{const {layoutOf,layoutBase,preferLayout}=await import('../local/download-dir.js');assert.equal(layoutOf('第3回ケース 対面（4up）.pdf'),4);assert.equal(layoutOf('第3回 4in1.pdf'),4);assert.equal(layoutOf('第12回 ４アップ.pdf'),4);assert.equal(layoutOf('第3回ケース 対面.pptx'),1);assert.equal(layoutOf('第3回 1up.pdf'),1);assert.equal(layoutOf('第4回 upload.pdf'),1,'up で始まる語は印ではない');assert.equal(layoutBase('第3回ケース 対面（4up）.pdf'),layoutBase('第3回ケース 対面.pptx'));const es=[{name:'第3回 4up.pdf'},{name:'第3回 2up.pdf'},{name:'第3回.pdf'},{name:'第4回 4up.pdf'},{name:'第5回 2up.pdf'},{name:'第5回 1up.pdf'}];assert.deepEqual(preferLayout(es).map(e=>e.name),['第3回.pdf','第4回 4up.pdf','第5回 1up.pdf'])});
-test('同期では 1up だけを保存し、以前に保存した未編集の 4up はゴミ箱へ移す',async t=>{const base=await mkdtemp(join(tmpdir(),'coursecue-layout-'));t.after(()=>rm(base,{recursive:true,force:true}));const root=join(base,'既定'),state={tasks:[],materials:[],settings:{}},trashed=[];const {m,gets}=fakeManabo(root,state);m.trash=async f=>{trashed.push(f);await unlink(f)};
-const files=[{url:'https://manabo.cnc.chukyo-u.ac.jp/file/1/',name:'第1回 資料（4up）',text:''},{url:'https://manabo.cnc.chukyo-u.ac.jp/file/2/',name:'第1回 資料',text:''},{url:'https://manabo.cnc.chukyo-u.ac.jp/content/9/report/x/',name:'第1回 課題',text:''}];assert.deepEqual(m.wantedFiles(files).map(e=>e.url),[files[1].url],'課題は含めず、4up は飛ばす');
-// 以前の同期で 4up と 1up の両方を保存していた状態：未編集の 4up だけゴミ箱へ
-const dir=join(root,'管理会計Ⅱ');await mkdir(dir,{recursive:true});const {hash}=await import('../local/core.js');const four=join(dir,'第1回_資料 (4up).pdf'),one=join(dir,'第1回_資料.pdf'),edited=join(dir,'第2回_資料 2up.pdf'),only=join(dir,'第3回_資料 4up.pdf');await writeFile(four,'4up');await writeFile(one,'1up');await writeFile(edited,'編集した');await writeFile(only,'4up only');state.materials.push({course:'管理会計Ⅱ',url:'u1',name:'第1回_資料 (4up).pdf',path:four,sha256:hash(Buffer.from('4up'))},{course:'管理会計Ⅱ',url:'u2',name:'第1回_資料.pdf',path:one,sha256:hash(Buffer.from('1up'))},{course:'管理会計Ⅱ',url:'u3',name:'第2回_資料 2up.pdf',path:edited,sha256:hash(Buffer.from('元の2up'))},{course:'管理会計Ⅱ',url:'u4',name:'第2回_資料.pdf',path:join(dir,'第2回_資料.pdf'),sha256:'0'.repeat(64)},{course:'管理会計Ⅱ',url:'u5',name:'第3回_資料 4up.pdf',path:only,sha256:hash(Buffer.from('4up only'))});
-assert.deepEqual(await m.trashDuplicates(),['第1回_資料 (4up).pdf']);assert.deepEqual(trashed,[four]);assert.deepEqual((await readdir(dir)).sort(),['第1回_資料.pdf','第2回_資料 2up.pdf','第3回_資料 4up.pdf']);assert(!state.materials.some(x=>x.url==='u1'),'記録も消す');assert.equal(gets(),0)});
+const page = `<a id="button-logout">ログアウト</a><div class="breadcrumb">管理会計Ⅱ</div><div id="div-class-directories"><table><tr><td>第1回 イントロダクション</td></tr><tr><td><a class="a-open-contents" directory_id="d1" href="#">開く</a></td></tr><tr><td>第2回 原価企画</td></tr><tr><td><a class="a-open-contents" directory_id="d2" href="#">開く</a></td></tr></table></div><div id="div-class-contents"></div><script>for(const n of [1,2])document.querySelector('[directory_id=d'+n+']').onclick=e=>{e.preventDefault();document.getElementById('div-class-contents').innerHTML='<h3>第'+n+'回</h3><table><tr><td><a href="/file/'+n+'/">第'+n+'回 資料</a></td></tr></table>'}</script>`;
+test('期間外の回の資料も、そのフォルダで初めての同期のときに一度だけ確認してダウンロードする', async t => {
+  const browser = await chromium.launch({headless: true});
+  t.after(() => browser.close());
+  const ctx = await browser.newContext();
+  await ctx.route('**/*', r => r.fulfill({contentType: 'text/html; charset=utf-8', body: page}));
+  const p = await ctx.newPage();
+  const state = {
+    tasks: [],
+    materials: [],
+    settings: {autoGenerate: false},
+    schedules: {},
+    courses: [{name: '管理会計Ⅱ', id: '103904'}]
+  };
+  const m = new Manabo({
+    root: '/nonexistent',
+    work: '/tmp',
+    state,
+    save: async () => {},
+    credentials: async () => null,
+    ai: async () => {}
+  });
+  m.ctx = ctx;
+  m.page = async () => (m.p = p);
+  m.cubics = async () => {};
+  const got = [];
+  m.download = async (e, course) => {
+    got.push(course + ':' + e.url.match(/file\/(\d+)/)[1]);
+  };
+  await m.sync();
+  assert(got.includes('管理会計Ⅱ:1') && got.includes('管理会計Ⅱ:2'), '初回は全回のファイルを確認');
+  got.length = 0;
+  await m.sync();
+  assert.deepEqual(got, [], '2回目以降は期間外の回を開かない');
+  state.settings.downloadDir = '/nonexistent2';
+  await m.sync();
+  assert(got.includes('管理会計Ⅱ:1'), 'フォルダを変えたらもう一度全回を確認');
+});
+test('Mac の「フォルダを選択」画面：選んだパスを返し、取り消しなら null。パスはスクリプトに埋め込まず引数で渡す', async () => {
+  let args;
+  const ok = (f, a, o, cb) => {
+    args = a;
+    cb(null, '/Users/u/Documents/授業資料/\n');
+  };
+  assert.equal(
+    await pickFolder('/nonexistent"; do shell script "x', {run: ok, home: '/Users/u'}),
+    '/Users/u/Documents/授業資料'
+  );
+  assert.equal(args.at(-1), '/Users/u', '存在しないフォルダならホームから開く');
+  assert(!args.slice(0, -1).some(a => a.includes('/Users/u')), 'パスはスクリプトに含めない');
+  const cancel = (f, a, o, cb) => {
+    const e = Error('execution error: User canceled. (-128)');
+    cb(e, '');
+  };
+  assert.equal(await pickFolder('', {run: cancel, home: '/Users/u'}), null);
+});
+test('Finder に選択画面を出させ、許可されなければ osascript 自身で出す', async () => {
+  const calls = [];
+  const run = (f, a, o, cb) => {
+    calls.push(a.join('\n'));
+    if (calls.length === 1) {
+      const e = Error('Not authorized to send Apple events to Finder. (-1743)');
+      return cb(e, '');
+    }
+    cb(null, '/Users/u/x/\n');
+  };
+  assert.equal(await pickFolder('', {run, home: '/Users/u'}), '/Users/u/x');
+  assert(calls[0].includes('tell application "Finder"'));
+  assert(!calls[1].includes('Finder'));
+  assert.equal(calls.length, 2);
+});
+test('取り消したときは、もう一度画面を出さない', async () => {
+  let n = 0;
+  const run = (f, a, o, cb) => {
+    n++;
+    cb(Error('User canceled. (-128)'), '');
+  };
+  assert.equal(await pickFolder('', {run, home: '/Users/u'}), null);
+  assert.equal(n, 1);
+});
+test('画面から開ける資料は、記録済みでダウンロード先の中にあるファイルだけ', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'coursecue-open-'));
+  t.after(() => rm(base, {recursive: true, force: true}));
+  const {openableMaterial} = await import('../local/download-dir.js');
+  const state = {tasks: [], materials: [], settings: {}};
+  const {m} = fakeManabo(join(base, '既定'), state);
+  await m.download(entry(1), '管理会計Ⅱ');
+  const id = state.materials[0].sha256;
+  assert.equal(openableMaterial(state.materials, id, join(base, '既定')), state.materials[0].path);
+  assert.equal(openableMaterial(state.materials, id, join(base, '別')), null, 'ダウンロード先の外は開かない');
+  assert.equal(openableMaterial(state.materials, 'x'.repeat(64), join(base, '既定')), null);
+  assert.equal(openableMaterial(state.materials, '../etc/passwd', join(base, '既定')), null);
+  await unlink(state.materials[0].path);
+  assert.equal(openableMaterial(state.materials, id, join(base, '既定')), null, '消したファイルは開かない');
+});
+test('保存した資料を本人が編集しても、同期で同じファイルをダウンロードし直さない', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'coursecue-edit-'));
+  t.after(() => rm(base, {recursive: true, force: true}));
+  const state = {tasks: [], materials: [], settings: {}};
+  const {m, gets} = fakeManabo(join(base, '既定'), state);
+  await m.download(entry(1), '管理会計Ⅱ');
+  const file = join(base, '既定', '管理会計Ⅱ', '第1回_資料.pdf');
+  await writeFile(file, 'pdf 1 本人のメモ');
+  await m.download(entry(1), '管理会計Ⅱ');
+  await m.download({...entry(1), text: '第1回 資料（改訂）'}, '管理会計Ⅱ');
+  assert.equal(gets(), 1, '編集後も manabo の表記が変わっても取りに行かない');
+  assert.deepEqual(await readdir(join(base, '既定', '管理会計Ⅱ')), ['第1回_資料.pdf'], '「(2)」の複製を作らない');
+  assert.equal(await readFile(file, 'utf8'), 'pdf 1 本人のメモ', '編集した内容を上書きしない');
+  // seed で取り込んだ記録（textHash なし）でも同じ
+  state.materials = [
+    {
+      course: '管理会計Ⅱ',
+      url: entry(2).url,
+      name: '第2回_資料.pdf',
+      path: join(base, '既定', '管理会計Ⅱ', '第2回_資料.pdf'),
+      sha256: '0'.repeat(64)
+    }
+  ];
+  await writeFile(state.materials[0].path, '編集済み');
+  await m.download(entry(2), '管理会計Ⅱ');
+  assert.equal(gets(), 1, '取り込んだ記録でも取りに行かない');
+  assert.equal(await readFile(state.materials[0].path, 'utf8'), '編集済み');
+});
+test('以前に作ってしまった「(2)」の複製はゴミ箱へ移し、本人が編集した元のファイルや編集した複製には触れない', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'coursecue-dup-'));
+  t.after(() => rm(base, {recursive: true, force: true}));
+  const root = join(base, '既定'),
+    state = {tasks: [], materials: [], settings: {}},
+    trashed = [];
+  const {m} = fakeManabo(root, state);
+  m.trash = async f => {
+    trashed.push(f);
+    await unlink(f);
+  };
+  // 1：元を編集した後、旧ロジックが「(2)」を作った状態を再現
+  await m.download(entry(1), '管理会計Ⅱ');
+  const dir = join(root, '管理会計Ⅱ'),
+    orig = join(dir, '第1回_資料.pdf'),
+    dup = join(dir, '第1回_資料 (2).pdf');
+  await writeFile(orig, 'pdf 1 本人のメモ');
+  await writeFile(dup, 'pdf 1');
+  state.materials.push({
+    course: '管理会計Ⅱ',
+    url: entry(1).url,
+    name: '第1回_資料 (2).pdf',
+    path: dup,
+    sha256: state.materials[0].sha256
+  });
+  // 2：複製の方を本人が編集した（中身が記録と違う）→ 触れない
+  await writeFile(join(dir, '第2回_資料.pdf'), 'pdf 2');
+  await writeFile(join(dir, '第2回_資料 (2).pdf'), '編集した複製');
+  state.materials.push({
+    course: '管理会計Ⅱ',
+    url: entry(2).url,
+    name: '第2回_資料 (2).pdf',
+    path: join(dir, '第2回_資料 (2).pdf'),
+    sha256: '0'.repeat(64)
+  });
+  // 3：元のファイルがない「(2)」→ 触れない
+  await writeFile(join(dir, '第3回_資料 (2).pdf'), 'pdf 3');
+  state.materials.push({
+    course: '管理会計Ⅱ',
+    url: entry(3).url,
+    name: '第3回_資料 (2).pdf',
+    path: join(dir, '第3回_資料 (2).pdf'),
+    sha256: (await import('../local/core.js')).hash(Buffer.from('pdf 3'))
+  });
+  const moved = await m.trashDuplicates();
+  assert.deepEqual(moved, ['第1回_資料 (2).pdf']);
+  assert.deepEqual(trashed, [dup]);
+  assert.equal(await readFile(orig, 'utf8'), 'pdf 1 本人のメモ', '元のファイルは残す');
+  assert.deepEqual((await readdir(dir)).sort(), [
+    '第1回_資料.pdf',
+    '第2回_資料 (2).pdf',
+    '第2回_資料.pdf',
+    '第3回_資料 (2).pdf'
+  ]);
+  assert.equal(state.materials.filter(x => x.url === entry(1).url).length, 1, '記録は元の1件だけ');
+  assert.equal(state.materials.find(x => x.url === entry(1).url).path, orig);
+  assert.equal(state.trashed.length, 1);
+  assert.deepEqual(await m.trashDuplicates(), [], '2回目は何もしない');
+});
+test('ゴミ箱へ移すときは同名があっても上書きしない', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'coursecue-trash-'));
+  t.after(() => rm(base, {recursive: true, force: true}));
+  const {trashFile} = await import('../local/download-dir.js');
+  await writeFile(join(base, 'a.pdf'), '1');
+  const t1 = await trashFile(join(base, 'a.pdf'), {home: base});
+  await writeFile(join(base, 'a.pdf'), '2');
+  const t2 = await trashFile(join(base, 'a.pdf'), {home: base});
+  assert.equal(t1, join(base, '.Trash', 'a.pdf'));
+  assert.equal(t2, join(base, '.Trash', 'a 2.pdf'));
+  assert.equal(await readFile(t1, 'utf8'), '1');
+  assert.equal(await readFile(t2, 'utf8'), '2');
+});
+test('同じ資料の 4up・2up があれば 1up（印なし）だけをダウンロードし、1up がない組はそのまま', async () => {
+  const {layoutOf, layoutBase, preferLayout} = await import('../local/download-dir.js');
+  assert.equal(layoutOf('第3回ケース 対面（4up）.pdf'), 4);
+  assert.equal(layoutOf('第3回 4in1.pdf'), 4);
+  assert.equal(layoutOf('第12回 ４アップ.pdf'), 4);
+  assert.equal(layoutOf('第3回ケース 対面.pptx'), 1);
+  assert.equal(layoutOf('第3回 1up.pdf'), 1);
+  assert.equal(layoutOf('第4回 upload.pdf'), 1, 'up で始まる語は印ではない');
+  assert.equal(layoutBase('第3回ケース 対面（4up）.pdf'), layoutBase('第3回ケース 対面.pptx'));
+  const es = [
+    {name: '第3回 4up.pdf'},
+    {name: '第3回 2up.pdf'},
+    {name: '第3回.pdf'},
+    {name: '第4回 4up.pdf'},
+    {name: '第5回 2up.pdf'},
+    {name: '第5回 1up.pdf'}
+  ];
+  assert.deepEqual(
+    preferLayout(es).map(e => e.name),
+    ['第3回.pdf', '第4回 4up.pdf', '第5回 1up.pdf']
+  );
+});
+test('同期では 1up だけを保存し、以前に保存した未編集の 4up はゴミ箱へ移す', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'coursecue-layout-'));
+  t.after(() => rm(base, {recursive: true, force: true}));
+  const root = join(base, '既定'),
+    state = {tasks: [], materials: [], settings: {}},
+    trashed = [];
+  const {m, gets} = fakeManabo(root, state);
+  m.trash = async f => {
+    trashed.push(f);
+    await unlink(f);
+  };
+  const files = [
+    {url: 'https://manabo.cnc.chukyo-u.ac.jp/file/1/', name: '第1回 資料（4up）', text: ''},
+    {url: 'https://manabo.cnc.chukyo-u.ac.jp/file/2/', name: '第1回 資料', text: ''},
+    {url: 'https://manabo.cnc.chukyo-u.ac.jp/content/9/report/x/', name: '第1回 課題', text: ''}
+  ];
+  assert.deepEqual(
+    m.wantedFiles(files).map(e => e.url),
+    [files[1].url],
+    '課題は含めず、4up は飛ばす'
+  );
+  // 以前の同期で 4up と 1up の両方を保存していた状態：未編集の 4up だけゴミ箱へ
+  const dir = join(root, '管理会計Ⅱ');
+  await mkdir(dir, {recursive: true});
+  const {hash} = await import('../local/core.js');
+  const four = join(dir, '第1回_資料 (4up).pdf'),
+    one = join(dir, '第1回_資料.pdf'),
+    edited = join(dir, '第2回_資料 2up.pdf'),
+    only = join(dir, '第3回_資料 4up.pdf');
+  await writeFile(four, '4up');
+  await writeFile(one, '1up');
+  await writeFile(edited, '編集した');
+  await writeFile(only, '4up only');
+  state.materials.push(
+    {course: '管理会計Ⅱ', url: 'u1', name: '第1回_資料 (4up).pdf', path: four, sha256: hash(Buffer.from('4up'))},
+    {course: '管理会計Ⅱ', url: 'u2', name: '第1回_資料.pdf', path: one, sha256: hash(Buffer.from('1up'))},
+    {course: '管理会計Ⅱ', url: 'u3', name: '第2回_資料 2up.pdf', path: edited, sha256: hash(Buffer.from('元の2up'))},
+    {course: '管理会計Ⅱ', url: 'u4', name: '第2回_資料.pdf', path: join(dir, '第2回_資料.pdf'), sha256: '0'.repeat(64)},
+    {course: '管理会計Ⅱ', url: 'u5', name: '第3回_資料 4up.pdf', path: only, sha256: hash(Buffer.from('4up only'))}
+  );
+  assert.deepEqual(await m.trashDuplicates(), ['第1回_資料 (4up).pdf']);
+  assert.deepEqual(trashed, [four]);
+  assert.deepEqual((await readdir(dir)).sort(), ['第1回_資料.pdf', '第2回_資料 2up.pdf', '第3回_資料 4up.pdf']);
+  assert(!state.materials.some(x => x.url === 'u1'), '記録も消す');
+  assert.equal(gets(), 0);
+});
 
 // 画面の「資料」で開くのは書類・画像・音声・動画だけ。実行できるもの・書庫は開かない（manabo のリンクから開く）
-test('「資料」で開けるのは書類・画像・音声・動画だけ。.command・.app・.exe・.sh・.zip などは開かない',async()=>{const {openableMaterial,OPENABLE}=await import('../local/download-dir.js');const {mkdtemp,writeFile,rm}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const dir=await mkdtemp(join(tmpdir(),'saboro-open-'));try{const id=c=>c.repeat(64),materials=[];for(const [n,c] of [['資料.pdf','a'],['資料.pptx','b'],['配布.command','c'],['ツール.exe','d'],['run.sh','e'],['資料.zip','f'],['memo','0'],['写真.JPG','1']]){const path=join(dir,n);await writeFile(path,'x');materials.push({sha256:id(c),path})}
- assert.equal(openableMaterial(materials,id('a'),dir),join(dir,'資料.pdf'));assert.equal(openableMaterial(materials,id('b'),dir),join(dir,'資料.pptx'));assert.equal(openableMaterial(materials,id('1'),dir),join(dir,'写真.JPG'),'大文字の拡張子も');for(const c of ['c','d','e','f','0'])assert.equal(openableMaterial(materials,id(c),dir),null,materials.find(m=>m.sha256===id(c)).path);assert.doesNotMatch('x.app',OPENABLE)}finally{await rm(dir,{recursive:true,force:true})}});
+test('「資料」で開けるのは書類・画像・音声・動画だけ。.command・.app・.exe・.sh・.zip などは開かない', async () => {
+  const {openableMaterial, OPENABLE} = await import('../local/download-dir.js');
+  const {mkdtemp, writeFile, rm} = await import('node:fs/promises');
+  const {tmpdir} = await import('node:os');
+  const {join} = await import('node:path');
+  const dir = await mkdtemp(join(tmpdir(), 'saboro-open-'));
+  try {
+    const id = c => c.repeat(64),
+      materials = [];
+    for (const [n, c] of [
+      ['資料.pdf', 'a'],
+      ['資料.pptx', 'b'],
+      ['配布.command', 'c'],
+      ['ツール.exe', 'd'],
+      ['run.sh', 'e'],
+      ['資料.zip', 'f'],
+      ['memo', '0'],
+      ['写真.JPG', '1']
+    ]) {
+      const path = join(dir, n);
+      await writeFile(path, 'x');
+      materials.push({sha256: id(c), path});
+    }
+    assert.equal(openableMaterial(materials, id('a'), dir), join(dir, '資料.pdf'));
+    assert.equal(openableMaterial(materials, id('b'), dir), join(dir, '資料.pptx'));
+    assert.equal(openableMaterial(materials, id('1'), dir), join(dir, '写真.JPG'), '大文字の拡張子も');
+    for (const c of ['c', 'd', 'e', 'f', '0'])
+      assert.equal(openableMaterial(materials, id(c), dir), null, materials.find(m => m.sha256 === id(c)).path);
+    assert.doesNotMatch('x.app', OPENABLE);
+  } finally {
+    await rm(dir, {recursive: true, force: true});
+  }
+});

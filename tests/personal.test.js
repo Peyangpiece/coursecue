@@ -1,2 +1,71 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import vm from 'node:vm';import {webcrypto} from 'node:crypto';
-test('未接続でも授業・課題を登録し再読み込み後に復元できる',()=>{const stored=new Map();const boot=()=>{const nodes=new Map();const el=id=>{if(!nodes.has(id))nodes.set(id,{innerHTML:'',textContent:'',value:'',style:{},classList:{add(){},remove(){},contains(){return false}},focus(){}});return nodes.get(id)};const context={location:{hostname:'example.com',port:'',hash:''},localStorage:{getItem:k=>stored.get(k)||null,setItem:(k,v)=>stored.set(k,v),removeItem:k=>stored.delete(k)},document:{getElementById:el,querySelector:el,querySelectorAll:()=>[],addEventListener(){},body:{style:{}},activeElement:null},crypto:webcrypto,setInterval(){},setTimeout(){},clearTimeout(){},window:{},URLSearchParams,console};vm.createContext(context);vm.runInContext(readFileSync('dist/app.js','utf8'),context);return {nodes,context,el}};let b=boot();assert(b.el('app').innerHTML.includes('manabo と接続'));assert(b.el('app').innerHTML.includes('http://127.0.0.1:8766/setup'));assert(b.el('app').innerHTML.includes('id="newcourse"'));b.el('newcourse').value='検証用授業';b.el('addcourse').onclick();b.el('addtask').onclick();b.el('tasktitle').value='検証課題';b.el('taskcourse').value='0';b.el('taskdue').value='2026-10-20T15:00';b.el('createtask').onclick();assert(b.el('app').innerHTML.includes('検証課題'));b=boot();assert(b.el('app').innerHTML.includes('検証課題'));assert(b.el('app').innerHTML.includes('検証用授業'));assert(!b.el('app').innerHTML.includes('Macを接続'));});
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+import {webcrypto} from 'node:crypto';
+test('未接続でも授業・課題を登録し再読み込み後に復元できる', () => {
+  const stored = new Map();
+  const boot = () => {
+    const nodes = new Map();
+    const el = id => {
+      if (!nodes.has(id))
+        nodes.set(id, {
+          innerHTML: '',
+          textContent: '',
+          value: '',
+          style: {},
+          classList: {
+            add() {},
+            remove() {},
+            contains() {
+              return false;
+            }
+          },
+          focus() {}
+        });
+      return nodes.get(id);
+    };
+    const context = {
+      location: {hostname: 'example.com', port: '', hash: ''},
+      localStorage: {
+        getItem: k => stored.get(k) || null,
+        setItem: (k, v) => stored.set(k, v),
+        removeItem: k => stored.delete(k)
+      },
+      document: {
+        getElementById: el,
+        querySelector: el,
+        querySelectorAll: () => [],
+        addEventListener() {},
+        body: {style: {}},
+        activeElement: null
+      },
+      crypto: webcrypto,
+      setInterval() {},
+      setTimeout() {},
+      clearTimeout() {},
+      window: {},
+      URLSearchParams,
+      console
+    };
+    vm.createContext(context);
+    vm.runInContext(readFileSync('dist/app.js', 'utf8'), context);
+    return {nodes, context, el};
+  };
+  let b = boot();
+  assert(b.el('app').innerHTML.includes('manabo と接続'));
+  assert(b.el('app').innerHTML.includes('http://127.0.0.1:8766/setup'));
+  assert(b.el('app').innerHTML.includes('id="newcourse"'));
+  b.el('newcourse').value = '検証用授業';
+  b.el('addcourse').onclick();
+  b.el('addtask').onclick();
+  b.el('tasktitle').value = '検証課題';
+  b.el('taskcourse').value = '0';
+  b.el('taskdue').value = '2026-10-20T15:00';
+  b.el('createtask').onclick();
+  assert(b.el('app').innerHTML.includes('検証課題'));
+  b = boot();
+  assert(b.el('app').innerHTML.includes('検証課題'));
+  assert(b.el('app').innerHTML.includes('検証用授業'));
+  assert(!b.el('app').innerHTML.includes('Macを接続'));
+});

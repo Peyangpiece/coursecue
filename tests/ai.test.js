@@ -1,100 +1,702 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {handle,memoryStore} from '../server/worker.js';import {setAiTestHooks,runAiDaily,costUsd,chargeMicro} from '../server/ai.js';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {handle, memoryStore} from '../server/worker.js';
+import {setAiTestHooks, runAiDaily, costUsd, chargeMicro} from '../server/ai.js';
 // SaBoRo の AI：使える人の判定・すぐの依頼・Batch・月の無料分と超過分の記録・毎日の請求
-const base='https://coursecue.hrk-6888.workers.dev',ADMIN='a'.repeat(40),env={OWNER_TOKEN:'o',DEVICE_TOKEN:'d',ADMIN_TOKEN:ADMIN,SABORO_ANTHROPIC_API_KEY:'sk-ant-test'};
-const tok=c=>c.repeat(64),OWNER=tok('a'),DEVICE=tok('b');
-const req=(path,{method='GET',token,body}={})=>new Request(base+path,{method,headers:{...(token?{Authorization:'Bearer '+token}:{}),'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
-const call=(store,path,o,e=env)=>handle(req(path,o),e,store,{waitUntil(){}});
-const admin=(store,path,body)=>call(store,'/api/admin'+path,{method:'POST',token:ADMIN,body});
-const schema={type:'object',properties:{draft:{type:'string'}}};
+const base = 'https://coursecue.hrk-6888.workers.dev',
+  ADMIN = 'a'.repeat(40),
+  env = {OWNER_TOKEN: 'o', DEVICE_TOKEN: 'd', ADMIN_TOKEN: ADMIN, SABORO_ANTHROPIC_API_KEY: 'sk-ant-test'};
+const tok = c => c.repeat(64),
+  OWNER = tok('a'),
+  DEVICE = tok('b');
+const req = (path, {method = 'GET', token, body} = {}) =>
+  new Request(base + path, {
+    method,
+    headers: {...(token ? {Authorization: 'Bearer ' + token} : {}), 'Content-Type': 'application/json'},
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+const call = (store, path, o, e = env) => handle(req(path, o), e, store, {waitUntil() {}});
+const admin = (store, path, body) => call(store, '/api/admin' + path, {method: 'POST', token: ADMIN, body});
+const schema = {type: 'object', properties: {draft: {type: 'string'}}};
 // 偽の Anthropic：すぐの依頼は usage つきの結果、Batch は ended になるまで待たせる
-function fake({usage={input_tokens:100000,output_tokens:20000},text='{"draft":"ok"}',stop='end_turn'}={}){const calls={stream:0,create:0,results:0,cancel:0},batch={status:'in_progress'};
- const message={model:'claude-sonnet-5-5',stop_reason:stop,content:[{type:'text',text}],usage};
- setAiTestHooks({client:()=>({messages:{stream:()=>{calls.stream++;return {finalMessage:async()=>message}},batches:{create:async()=>{calls.create++;return {id:'msgbatch_1'}},retrieve:async()=>({processing_status:batch.status}),results:async()=>{calls.results++;return (async function*(){yield batch.fail?{custom_id:'saboro',result:{type:'expired'}}:{custom_id:'saboro',result:{type:'succeeded',message}}})()},cancel:async()=>{calls.cancel++}}}})});return {calls,batch}}
-async function setup({plan='api',settings={}}={}){const store=memoryStore();const r=await call(store,'/api/register',{method:'POST',body:{owner:OWNER,device:DEVICE}});const {id}=await r.json();await admin(store,'/user',{account:id,label:'A',plan,price:2500,status:'active',started:'',note:''});await admin(store,'/settings',{feeRate:0.036,taxable:false,usdJpy:150,...settings});return {store,id}}
-const ask=(store,body,e)=>call(store,'/api/agent/ai',{method:'POST',token:DEVICE,body:{label:'課題生成',schema,text:'設問',...body}},e);
-const now=async(store,e)=>JSON.parse((await (await ask(store,{mode:'now'},e)).text()).trim());
-const status=async(store,e)=>(await call(store,'/api/agent/ai',{token:DEVICE},e)).json();
-test('料金：Sonnet 5.5 の通常料金（入力 $2・出力 $10／100 万トークン）、Batch は半額、請求は実費×為替×1.5',()=>{assert.equal(costUsd({input_tokens:1e6,output_tokens:1e6}),12);assert.equal(costUsd({cache_read_input_tokens:1e6,cache_creation_input_tokens:1e6}),2.7);assert.equal(costUsd({input_tokens:1e6,output_tokens:1e6},{batch:true}),6);assert.equal(costUsd({input_tokens:1e6},{model:'unknown'}),4,'知らないモデルは高めに見積もる');assert.equal(chargeMicro(0.4,{usdJpy:150,markup:1.5}),90e6)});
-test('プランで分けず誰でも使える。キー未設定・支払いが必要なのに未払いなら使えない',async()=>{fake();let {store}=await setup({plan:'byo'});assert.equal((await status(store)).available,true,'プランに関係なく使える');assert.equal((await now(store)).status,'done');
- ({store}=await setup());assert.equal((await status(store,{...env,SABORO_ANTHROPIC_API_KEY:undefined})).reason,'not_configured');assert.deepEqual(await status(store).then(s=>[s.available,s.included,s.used]),[true,60,0]);
- await admin(store,'/settings',{feeRate:0.036,taxable:false,usdJpy:150,requirePayment:true});assert.equal((await status(store)).reason,'payment_required');
- const web=await (await call(store,'/api/state',{token:OWNER})).json();assert.equal(web.ai.reason,'payment_required','Web の画面にも状態を出す')});
-test('すぐの依頼：結果を返し、使用量を記録する。無料分の 60 回までは請求なし',async()=>{const f=fake();const {store,id}=await setup();const r=await now(store);assert.deepEqual(r,{status:'done',text:'{"draft":"ok"}'});assert.equal(f.calls.stream,1);
- const [u]=store.aiUsage;assert.deepEqual({label:u.label,mode:u.mode,input:u.input,output:u.output,billable:u.billable,charge:u.charge_micro},{label:'課題生成',mode:'now',input:100000,output:20000,billable:0,charge:0});assert.equal(u.cost_usd,0.4);assert.equal(u.account,id);
- assert.equal((await status(store)).used,1);fake({stop:'refusal'});assert.deepEqual(await now(store),{status:'failed',reason:'回答を拒否されました'})});
-test('61 回目からは超過分。定期支払いと Stripe のキーがなければ止め、あれば実費×1.5 を記録して使える',async t=>{fake();setAiTestHooks({terms:{included:2}});t.after(()=>setAiTestHooks({terms:{included:60}}));const {store,id}=await setup();await now(store);await now(store);
- assert.equal((await status(store)).reason,'limit');assert.equal((await ask(store,{mode:'now'})).status,403);
- await store.linkStripeCustomer('cus_1',id);await store.upsertSubscription({subscription:'sub_1',customer:'cus_1',status:'active',periodEnd:null,cancelAtPeriodEnd:false,eventAt:1});const e={...env,STRIPE_API_KEY:'rk_test'};
- assert.equal((await status(store,e)).available,true);assert.equal((await now(store,e)).status,'done');const last=store.aiUsage.at(-1);assert.equal(last.billable,1);assert.equal(last.charge_micro,90e6,'$0.4×150 円×1.5＝90 円');assert.equal((await status(store,e)).overageYen,90)});
-test('Batch：同じ依頼は 1 件にまとめ、終わるまで pending。終わったら結果を渡し、使用量は半額で 1 回だけ記録する',async()=>{const f=fake();const {store}=await setup();
- assert.deepEqual(await (await ask(store,{mode:'batch',key:'key-00001'})).json(),{status:'pending'});assert.deepEqual(await (await ask(store,{mode:'batch',key:'key-00001'})).json(),{status:'pending'});assert.equal(f.calls.create,1,'同じキーは 1 件');
- let ready=await (await call(store,'/api/agent/ai/ready',{method:'POST',token:DEVICE,body:{keys:['key-00001','other-key-1']}})).json();assert.deepEqual(ready.ready,[]);
- f.batch.status='ended';ready=await (await call(store,'/api/agent/ai/ready',{method:'POST',token:DEVICE,body:{keys:['key-00001']}})).json();assert.deepEqual(ready.ready,['key-00001']);
- for(let i=0;i<2;i++)assert.deepEqual(await (await ask(store,{mode:'batch',key:'key-00001'})).json(),{status:'done',text:'{"draft":"ok"}'},'受け取り直しても同じ結果');
- assert.equal(store.aiUsage.length,1,'記録は 1 回');assert.equal(store.aiUsage[0].cost_usd,0.2,'Batch は半額');assert.equal(store.aiUsage[0].mode,'batch');assert.equal(f.calls.results,1)});
-test('すぐの依頼に同じ key の Batch があれば二重に作らない：出来上がっていればその結果、まだなら Batch を取り消してからすぐ作る',async()=>{const f=fake();const {store}=await setup();const nowKey=async key=>JSON.parse((await (await ask(store,{mode:'now',key})).text()).trim());
- await ask(store,{mode:'batch',key:'key-00002'});f.batch.status='ended';assert.deepEqual(await nowKey('key-00002'),{status:'done',text:'{"draft":"ok"}'});assert.equal(f.calls.stream,0,'出来上がった Batch があればすぐの依頼でも作らない');assert.equal(store.aiUsage.length,1);
- f.batch.status='in_progress';await ask(store,{mode:'batch',key:'key-00003'});assert.deepEqual(await nowKey('key-00003'),{status:'done',text:'{"draft":"ok"}'});assert.equal(f.calls.cancel,1,'まだの Batch は取り消す');assert.equal(f.calls.stream,1);
- await nowKey('key-00004');assert.equal(f.calls.cancel,1,'Batch がなければそのまま作る');assert.equal(f.calls.stream,2)});
-test('使えるのは定期支払いが有効な人と管理画面で登録した人（停止中を除く）だけ。登録しただけのアカウントは使えない',async()=>{fake();const store=memoryStore();const {id}=await (await call(store,'/api/register',{method:'POST',body:{owner:OWNER,device:DEVICE}})).json();
- assert.equal((await status(store)).reason,'payment_required','誰でも作れるアカウントでは使えない');assert.equal((await ask(store,{mode:'now'})).status,403);
- await store.linkStripeCustomer('cus_9',id);await store.upsertSubscription({subscription:'sub_9',customer:'cus_9',status:'active',periodEnd:null,cancelAtPeriodEnd:false,eventAt:1});assert.equal((await status(store)).available,true,'定期支払いが有効なら使える');
- const other=memoryStore();const r=await (await call(other,'/api/register',{method:'POST',body:{owner:OWNER,device:DEVICE}})).json();for(const [st,ok] of [['trial',true],['active',true],['stopped',false]]){await admin(other,'/user',{account:r.id,label:'B',plan:'byo',price:0,status:st,started:'',note:''});assert.equal((await status(other)).available,ok,st)}});
-test('無料分の実費には上限がある（授業情報の読み取りも数える）。0 なら上限なし',async()=>{fake();const {store}=await setup({settings:{aiFreeCapUsd:0.5}});const info=()=>ask(store,{mode:'now',label:'授業情報の読み取り'}).then(r=>r.text());
- await info();assert.equal((await status(store)).available,true);await info();const st=await status(store);assert.equal(st.used,0,'回数は課題生成だけ');assert.equal(st.reason,'limit','$0.4×2＝$0.8 で上限 $0.5 を超えた');
- await admin(store,'/settings',{feeRate:0.036,taxable:false,usdJpy:150,aiFreeCapUsd:0});assert.equal((await status(store)).available,true,'0 なら上限なし')});
-test('1 回の費用の上限：依頼は 30 万文字まで、出力は 32000 トークンまで',async()=>{let seen;setAiTestHooks({client:()=>({messages:{stream:p=>{seen=p;return {finalMessage:async()=>({model:'claude-sonnet-5-5',stop_reason:'end_turn',content:[{type:'text',text:'{}'}],usage:{input_tokens:1,output_tokens:1}})}}}})});const {store}=await setup();
- assert.equal((await ask(store,{mode:'now',text:'あ'.repeat(300001)})).status,413);await (await ask(store,{mode:'now'})).text();assert.equal(seen.max_tokens,32000)});
-test('同時に送られても、同時に作るのは 5 件まで（作り終えれば次を受け付ける）',async()=>{let open=0,release;const gate=new Promise(r=>{release=r});setAiTestHooks({client:()=>({messages:{stream:()=>{open++;return {finalMessage:async()=>{await gate;return {model:'claude-sonnet-5-5',stop_reason:'end_turn',content:[{type:'text',text:'{}'}],usage:{input_tokens:1,output_tokens:1}}}}}}})});const {store}=await setup();
- const rs=await Promise.all(Array.from({length:8},()=>ask(store,{mode:'now'})));assert.equal(rs.filter(r=>r.status===429).length,3);assert.deepEqual(await rs.find(r=>r.status===429).json(),{error:'busy'});assert.equal(open,5);
- release();await Promise.all(rs.filter(r=>r.status===200).map(r=>r.text()));assert.equal((await ask(store,{mode:'now'})).status,200,'作り終えたら受け付ける')});
-test('出力が上限で途切れたら知らせ、高度な生成（出力 64000 トークン）は月 3 回まで。Batch で途切れた場合も知らせる',async()=>{let seen=[];const msg=stop=>({model:'claude-sonnet-5-5',stop_reason:stop,content:[{type:'text',text:'{}'}],usage:{input_tokens:1,output_tokens:1}});let stop='max_tokens';
- setAiTestHooks({client:()=>({messages:{stream:p=>{seen.push(p.max_tokens);return {finalMessage:async()=>msg(stop)}}}})});const {store}=await setup();const go=async b=>JSON.parse((await (await ask(store,{mode:'now',...b})).text()).trim());
- assert.deepEqual(await go({}),{status:'failed',reason:'出力が上限で途切れました',truncated:true,advanced:{used:0,limit:3}});assert.equal(seen.at(-1),32000);
- assert.deepEqual((await go({advanced:true})).advanced,{used:1,limit:3},'高度な生成でも途切れたら回数は使う');assert.equal(seen.at(-1),64000);assert.equal(store.aiUsage.at(-1).mode,'advanced');
- stop='end_turn';assert.equal((await go({advanced:true})).status,'done');await go({advanced:true});assert.deepEqual((await status(store)).advanced,{used:3,limit:3});
- const over=await ask(store,{mode:'now',advanced:true});assert.equal(over.status,403);assert.deepEqual(await over.json(),{error:'advanced_limit'});
- assert.equal((await ask(store,{mode:'batch',key:'key-00009',advanced:true})).status,400,'高度な生成は Batch にしない');assert.equal((await ask(store,{mode:'now',label:'授業情報の読み取り',advanced:true})).status,400,'課題生成だけ');
- const f=fake({stop:'max_tokens'});await ask(store,{mode:'batch',key:'key-00010'});f.batch.status='ended';assert.deepEqual(await (await ask(store,{mode:'batch',key:'key-00010'})).json(),{status:'failed',reason:'出力が上限で途切れました',truncated:true,advanced:{used:3,limit:3}})});
-test('Batch が期限切れなどで失敗したら理由を返して依頼を消す（次はやり直せる）。記録はしない',async()=>{const f=fake();const {store}=await setup();await ask(store,{mode:'batch',key:'key-00002'});f.batch.status='ended';f.batch.fail=true;
- assert.deepEqual(await (await ask(store,{mode:'batch',key:'key-00002'})).json(),{status:'failed',reason:'24時間以内に作成できませんでした'});assert.equal(store.aiRequests.size,0);assert.equal(store.aiUsage.length,0);
- f.batch.fail=false;f.batch.status='in_progress';assert.deepEqual(await (await ask(store,{mode:'batch',key:'key-00002'})).json(),{status:'pending'});assert.equal(f.calls.create,2)});
-test('入力の確認：知らない種類・キーのない Batch・Mac 以外の鍵は受け付けない',async()=>{fake();const {store}=await setup();assert.equal((await ask(store,{mode:'now',label:'雑談'})).status,400);assert.equal((await ask(store,{mode:'batch'})).status,400);assert.equal((await ask(store,{mode:'now',text:''})).status,400);
- assert.equal((await call(store,'/api/agent/ai',{method:'POST',token:OWNER,body:{mode:'now',label:'課題生成',schema,text:'x'}})).status,404,'接続キー（Web）からは使えない')});
-test('毎日の定期実行：終わった Batch を受け取り、超過分を Stripe の請求項目にする（1 日 1 回・同じ分は二重にしない）',async t=>{const f=fake();setAiTestHooks({terms:{included:0}});t.after(()=>setAiTestHooks({terms:{included:60}}));const {store,id}=await setup();await store.linkStripeCustomer('cus_1',id);await store.upsertSubscription({subscription:'sub_1',customer:'cus_1',status:'active',periodEnd:null,cancelAtPeriodEnd:false,eventAt:1});const e={...env,STRIPE_API_KEY:'rk_test'};
- await ask(store,{mode:'batch',key:'key-00003'},e);await now(store,e);f.batch.status='ended';const posts=[];setAiTestHooks({fetch:async(url,o)=>{posts.push({url,body:Object.fromEntries(new URLSearchParams(o.body)),key:o.headers['Idempotency-Key']});return new Response('{}')}});
- const at=new Date(Date.now()+3600e3);assert.deepEqual(await runAiDaily(e,store,at),[]);assert.equal(store.aiUsage.length,2,'Batch の使用量も記録');
- assert.equal(posts.length,1);assert.equal(posts[0].url,'https://api.stripe.com/v1/invoiceitems');assert.deepEqual({customer:posts[0].body.customer,amount:posts[0].body.amount,currency:posts[0].body.currency,subscription:posts[0].body.subscription},{customer:'cus_1',amount:'135',currency:'jpy',subscription:'sub_1'},'（$0.4＋$0.2）×150×1.5＝135 円');
- await runAiDaily(e,store,at);assert.equal(posts.length,1,'請求済みの分は二度と出さない');
- await store.upsertSubscription({subscription:'sub_1',customer:'cus_1',status:'canceled',periodEnd:null,cancelAtPeriodEnd:false,eventAt:2});store.aiUsage.push({...store.aiUsage[0],id:'x',billed:null,created:at.toISOString()});await runAiDaily(e,store,new Date(at.getTime()+86400e3));
- assert.deepEqual(posts.slice(1).map(p=>p.url.split('/').pop()),['invoiceitems','invoices'],'定期支払いが終わっていれば、その場で請求書を作る');assert.equal(posts[1].body.subscription,undefined)});
-test('作成できなかった回（出力が上限で途切れた・拒否された）は月の回数に数えず、無料分を超えた後でも請求しない。実費は無料分の上限に数える',async t=>{const msg=stop=>({model:'claude-sonnet-5-5',stop_reason:stop,content:[{type:'text',text:'{}'}],usage:{input_tokens:100000,output_tokens:20000}});let stop='max_tokens';setAiTestHooks({client:()=>({messages:{stream:()=>({finalMessage:async()=>msg(stop)})}}),terms:{included:1}});t.after(()=>setAiTestHooks({terms:{included:60}}));
- const {store,id}=await setup();const e={...env,STRIPE_API_KEY:'rk_test'};await store.linkStripeCustomer('cus_8',id);await store.upsertSubscription({subscription:'sub_8',customer:'cus_8',status:'active',periodEnd:null,cancelAtPeriodEnd:false,eventAt:1});const go=async()=>JSON.parse((await (await ask(store,{mode:'now'},e)).text()).trim());
- await go();assert.equal((await status(store,e)).used,0,'途切れた回は数えない');assert.equal(store.aiUsage[0].ok,0);
- stop='end_turn';await go();assert.equal((await status(store,e)).used,1);stop='refusal';await go();const last=store.aiUsage.at(-1);assert.deepEqual([last.ok,last.billable,last.charge_micro],[0,0,0],'無料分を超えた後でも、作成できなかった回は請求しない');
- stop='end_turn';await go();assert.equal(store.aiUsage.at(-1).billable,1,'作成できた回は請求する')});
-test('毎日の定期実行：期間の終わりで解約する人の超過分はその場で請求し、請求書の作成に失敗しても翌日に同じ分を二重に請求しない',async t=>{fake();setAiTestHooks({terms:{included:0}});t.after(()=>setAiTestHooks({terms:{included:60}}));const {store,id}=await setup();await store.linkStripeCustomer('cus_2',id);await store.upsertSubscription({subscription:'sub_2',customer:'cus_2',status:'active',periodEnd:null,cancelAtPeriodEnd:true,eventAt:1});const e={...env,STRIPE_API_KEY:'rk_test'};
- await now(store,e);const posts=[];let failInvoice=true;setAiTestHooks({fetch:async(url,o)=>{posts.push({url,body:Object.fromEntries(new URLSearchParams(o.body))});return url.endsWith('/invoices')&&failInvoice?new Response('{}',{status:500}):new Response('{}')}});
- const at=new Date(Date.now()+3600e3),log=await runAiDaily(e,store,at);assert.deepEqual(posts.map(p=>p.url.split('/').pop()),['invoiceitems','invoices'],'解約予定なら次の月額の請求を待たずに請求する');assert.equal(posts[0].body.subscription,undefined,'終わる定期支払いには付けない');
- assert.match(log.join(),/請求書を作れません.*Stripe の画面で請求してください/);assert.ok(store.aiUsage.every(x=>x.billed),'請求項目ができたら請求済み');
- failInvoice=false;await runAiDaily(e,store,new Date(at.getTime()+86400e3));assert.equal(posts.length,2,'翌日に同じ分の請求項目を作り直さない')});
-test('「質問の作成」は受け付け、月の回数に数えず、無料分を超えた後でも請求しない',async t=>{fake();setAiTestHooks({terms:{included:1}});t.after(()=>setAiTestHooks({terms:{included:60}}));const {store,id}=await setup();await store.linkStripeCustomer('cus_1',id);await store.upsertSubscription({subscription:'sub_1',customer:'cus_1',status:'active',periodEnd:null,cancelAtPeriodEnd:false,eventAt:1});const e={...env,STRIPE_API_KEY:'rk_test'};await now(store,e);
- const r=JSON.parse((await (await ask(store,{mode:'now',label:'質問の作成'},e)).text()).trim());assert.equal(r.status,'done');const last=store.aiUsage.at(-1);assert.equal(last.label,'質問の作成');assert.equal(last.billable,0,'超過後でも請求しない');assert.equal((await status(store,e)).used,1,'回数は課題生成の 1 回だけ')});
-test('「文体の読み取り」も受け付け、月の回数に数えず、無料分を超えた後でも請求しない',async t=>{fake();setAiTestHooks({terms:{included:1}});t.after(()=>setAiTestHooks({terms:{included:60}}));const {store,id}=await setup();await store.linkStripeCustomer('cus_1',id);await store.upsertSubscription({subscription:'sub_1',customer:'cus_1',status:'active',periodEnd:null,cancelAtPeriodEnd:false,eventAt:1});const e={...env,STRIPE_API_KEY:'rk_test'};await now(store,e);
- const r=JSON.parse((await (await ask(store,{mode:'now',label:'文体の読み取り'},e)).text()).trim());assert.equal(r.status,'done');const last=store.aiUsage.at(-1);assert.equal(last.label,'文体の読み取り');assert.equal(last.billable,0);assert.equal((await status(store,e)).used,1)});
-test('月の回数に数えず請求しない処理は、質問の作成・文体の読み取り・会話の読み取りの 3 つ',async()=>{const {FREE_LABELS,LABELS}=await import('../server/ai.js');assert.deepEqual(FREE_LABELS,['質問の作成','文体の読み取り','会話の読み取り']);assert(FREE_LABELS.every(l=>LABELS.includes(l)))});
+function fake({usage = {input_tokens: 100000, output_tokens: 20000}, text = '{"draft":"ok"}', stop = 'end_turn'} = {}) {
+  const calls = {stream: 0, create: 0, results: 0, cancel: 0},
+    batch = {status: 'in_progress'};
+  const message = {model: 'claude-sonnet-5-5', stop_reason: stop, content: [{type: 'text', text}], usage};
+  setAiTestHooks({
+    client: () => ({
+      messages: {
+        stream: () => {
+          calls.stream++;
+          return {finalMessage: async () => message};
+        },
+        batches: {
+          create: async () => {
+            calls.create++;
+            return {id: 'msgbatch_1'};
+          },
+          retrieve: async () => ({processing_status: batch.status}),
+          results: async () => {
+            calls.results++;
+            return (async function* () {
+              yield batch.fail
+                ? {custom_id: 'saboro', result: {type: 'expired'}}
+                : {custom_id: 'saboro', result: {type: 'succeeded', message}};
+            })();
+          },
+          cancel: async () => {
+            calls.cancel++;
+          }
+        }
+      }
+    })
+  });
+  return {calls, batch};
+}
+async function setup({plan = 'api', settings = {}} = {}) {
+  const store = memoryStore();
+  const r = await call(store, '/api/register', {method: 'POST', body: {owner: OWNER, device: DEVICE}});
+  const {id} = await r.json();
+  await admin(store, '/user', {account: id, label: 'A', plan, price: 2500, status: 'active', started: '', note: ''});
+  await admin(store, '/settings', {feeRate: 0.036, taxable: false, usdJpy: 150, ...settings});
+  return {store, id};
+}
+const ask = (store, body, e) =>
+  call(
+    store,
+    '/api/agent/ai',
+    {method: 'POST', token: DEVICE, body: {label: '課題生成', schema, text: '設問', ...body}},
+    e
+  );
+const now = async (store, e) => JSON.parse((await (await ask(store, {mode: 'now'}, e)).text()).trim());
+const status = async (store, e) => (await call(store, '/api/agent/ai', {token: DEVICE}, e)).json();
+test('料金：Sonnet 5.5 の通常料金（入力 $2・出力 $10／100 万トークン）、Batch は半額、請求は実費×為替×1.5', () => {
+  assert.equal(costUsd({input_tokens: 1e6, output_tokens: 1e6}), 12);
+  assert.equal(costUsd({cache_read_input_tokens: 1e6, cache_creation_input_tokens: 1e6}), 2.7);
+  assert.equal(costUsd({input_tokens: 1e6, output_tokens: 1e6}, {batch: true}), 6);
+  assert.equal(costUsd({input_tokens: 1e6}, {model: 'unknown'}), 4, '知らないモデルは高めに見積もる');
+  assert.equal(chargeMicro(0.4, {usdJpy: 150, markup: 1.5}), 90e6);
+});
+test('プランで分けず誰でも使える。キー未設定・支払いが必要なのに未払いなら使えない', async () => {
+  fake();
+  let {store} = await setup({plan: 'byo'});
+  assert.equal((await status(store)).available, true, 'プランに関係なく使える');
+  assert.equal((await now(store)).status, 'done');
+  ({store} = await setup());
+  assert.equal((await status(store, {...env, SABORO_ANTHROPIC_API_KEY: undefined})).reason, 'not_configured');
+  assert.deepEqual(await status(store).then(s => [s.available, s.included, s.used]), [true, 60, 0]);
+  await admin(store, '/settings', {feeRate: 0.036, taxable: false, usdJpy: 150, requirePayment: true});
+  assert.equal((await status(store)).reason, 'payment_required');
+  const web = await (await call(store, '/api/state', {token: OWNER})).json();
+  assert.equal(web.ai.reason, 'payment_required', 'Web の画面にも状態を出す');
+});
+test('すぐの依頼：結果を返し、使用量を記録する。無料分の 60 回までは請求なし', async () => {
+  const f = fake();
+  const {store, id} = await setup();
+  const r = await now(store);
+  assert.deepEqual(r, {status: 'done', text: '{"draft":"ok"}'});
+  assert.equal(f.calls.stream, 1);
+  const [u] = store.aiUsage;
+  assert.deepEqual(
+    {label: u.label, mode: u.mode, input: u.input, output: u.output, billable: u.billable, charge: u.charge_micro},
+    {label: '課題生成', mode: 'now', input: 100000, output: 20000, billable: 0, charge: 0}
+  );
+  assert.equal(u.cost_usd, 0.4);
+  assert.equal(u.account, id);
+  assert.equal((await status(store)).used, 1);
+  fake({stop: 'refusal'});
+  assert.deepEqual(await now(store), {status: 'failed', reason: '回答を拒否されました'});
+});
+test('61 回目からは超過分。定期支払いと Stripe のキーがなければ止め、あれば実費×1.5 を記録して使える', async t => {
+  fake();
+  setAiTestHooks({terms: {included: 2}});
+  t.after(() => setAiTestHooks({terms: {included: 60}}));
+  const {store, id} = await setup();
+  await now(store);
+  await now(store);
+  assert.equal((await status(store)).reason, 'limit');
+  assert.equal((await ask(store, {mode: 'now'})).status, 403);
+  await store.linkStripeCustomer('cus_1', id);
+  await store.upsertSubscription({
+    subscription: 'sub_1',
+    customer: 'cus_1',
+    status: 'active',
+    periodEnd: null,
+    cancelAtPeriodEnd: false,
+    eventAt: 1
+  });
+  const e = {...env, STRIPE_API_KEY: 'rk_test'};
+  assert.equal((await status(store, e)).available, true);
+  assert.equal((await now(store, e)).status, 'done');
+  const last = store.aiUsage.at(-1);
+  assert.equal(last.billable, 1);
+  assert.equal(last.charge_micro, 90e6, '$0.4×150 円×1.5＝90 円');
+  assert.equal((await status(store, e)).overageYen, 90);
+});
+test('Batch：同じ依頼は 1 件にまとめ、終わるまで pending。終わったら結果を渡し、使用量は半額で 1 回だけ記録する', async () => {
+  const f = fake();
+  const {store} = await setup();
+  assert.deepEqual(await (await ask(store, {mode: 'batch', key: 'key-00001'})).json(), {status: 'pending'});
+  assert.deepEqual(await (await ask(store, {mode: 'batch', key: 'key-00001'})).json(), {status: 'pending'});
+  assert.equal(f.calls.create, 1, '同じキーは 1 件');
+  let ready = await (
+    await call(store, '/api/agent/ai/ready', {
+      method: 'POST',
+      token: DEVICE,
+      body: {keys: ['key-00001', 'other-key-1']}
+    })
+  ).json();
+  assert.deepEqual(ready.ready, []);
+  f.batch.status = 'ended';
+  ready = await (
+    await call(store, '/api/agent/ai/ready', {method: 'POST', token: DEVICE, body: {keys: ['key-00001']}})
+  ).json();
+  assert.deepEqual(ready.ready, ['key-00001']);
+  for (let i = 0; i < 2; i++)
+    assert.deepEqual(
+      await (await ask(store, {mode: 'batch', key: 'key-00001'})).json(),
+      {status: 'done', text: '{"draft":"ok"}'},
+      '受け取り直しても同じ結果'
+    );
+  assert.equal(store.aiUsage.length, 1, '記録は 1 回');
+  assert.equal(store.aiUsage[0].cost_usd, 0.2, 'Batch は半額');
+  assert.equal(store.aiUsage[0].mode, 'batch');
+  assert.equal(f.calls.results, 1);
+});
+test('すぐの依頼に同じ key の Batch があれば二重に作らない：出来上がっていればその結果、まだなら Batch を取り消してからすぐ作る', async () => {
+  const f = fake();
+  const {store} = await setup();
+  const nowKey = async key => JSON.parse((await (await ask(store, {mode: 'now', key})).text()).trim());
+  await ask(store, {mode: 'batch', key: 'key-00002'});
+  f.batch.status = 'ended';
+  assert.deepEqual(await nowKey('key-00002'), {status: 'done', text: '{"draft":"ok"}'});
+  assert.equal(f.calls.stream, 0, '出来上がった Batch があればすぐの依頼でも作らない');
+  assert.equal(store.aiUsage.length, 1);
+  f.batch.status = 'in_progress';
+  await ask(store, {mode: 'batch', key: 'key-00003'});
+  assert.deepEqual(await nowKey('key-00003'), {status: 'done', text: '{"draft":"ok"}'});
+  assert.equal(f.calls.cancel, 1, 'まだの Batch は取り消す');
+  assert.equal(f.calls.stream, 1);
+  await nowKey('key-00004');
+  assert.equal(f.calls.cancel, 1, 'Batch がなければそのまま作る');
+  assert.equal(f.calls.stream, 2);
+});
+test('使えるのは定期支払いが有効な人と管理画面で登録した人（停止中を除く）だけ。登録しただけのアカウントは使えない', async () => {
+  fake();
+  const store = memoryStore();
+  const {id} = await (
+    await call(store, '/api/register', {method: 'POST', body: {owner: OWNER, device: DEVICE}})
+  ).json();
+  assert.equal((await status(store)).reason, 'payment_required', '誰でも作れるアカウントでは使えない');
+  assert.equal((await ask(store, {mode: 'now'})).status, 403);
+  await store.linkStripeCustomer('cus_9', id);
+  await store.upsertSubscription({
+    subscription: 'sub_9',
+    customer: 'cus_9',
+    status: 'active',
+    periodEnd: null,
+    cancelAtPeriodEnd: false,
+    eventAt: 1
+  });
+  assert.equal((await status(store)).available, true, '定期支払いが有効なら使える');
+  const other = memoryStore();
+  const r = await (await call(other, '/api/register', {method: 'POST', body: {owner: OWNER, device: DEVICE}})).json();
+  for (const [st, ok] of [
+    ['trial', true],
+    ['active', true],
+    ['stopped', false]
+  ]) {
+    await admin(other, '/user', {account: r.id, label: 'B', plan: 'byo', price: 0, status: st, started: '', note: ''});
+    assert.equal((await status(other)).available, ok, st);
+  }
+});
+test('無料分の実費には上限がある（授業情報の読み取りも数える）。0 なら上限なし', async () => {
+  fake();
+  const {store} = await setup({settings: {aiFreeCapUsd: 0.5}});
+  const info = () => ask(store, {mode: 'now', label: '授業情報の読み取り'}).then(r => r.text());
+  await info();
+  assert.equal((await status(store)).available, true);
+  await info();
+  const st = await status(store);
+  assert.equal(st.used, 0, '回数は課題生成だけ');
+  assert.equal(st.reason, 'limit', '$0.4×2＝$0.8 で上限 $0.5 を超えた');
+  await admin(store, '/settings', {feeRate: 0.036, taxable: false, usdJpy: 150, aiFreeCapUsd: 0});
+  assert.equal((await status(store)).available, true, '0 なら上限なし');
+});
+test('1 回の費用の上限：依頼は 30 万文字まで、出力は 32000 トークンまで', async () => {
+  let seen;
+  setAiTestHooks({
+    client: () => ({
+      messages: {
+        stream: p => {
+          seen = p;
+          return {
+            finalMessage: async () => ({
+              model: 'claude-sonnet-5-5',
+              stop_reason: 'end_turn',
+              content: [{type: 'text', text: '{}'}],
+              usage: {input_tokens: 1, output_tokens: 1}
+            })
+          };
+        }
+      }
+    })
+  });
+  const {store} = await setup();
+  assert.equal((await ask(store, {mode: 'now', text: 'あ'.repeat(300001)})).status, 413);
+  await (await ask(store, {mode: 'now'})).text();
+  assert.equal(seen.max_tokens, 32000);
+});
+test('同時に送られても、同時に作るのは 5 件まで（作り終えれば次を受け付ける）', async () => {
+  let open = 0,
+    release;
+  const gate = new Promise(r => {
+    release = r;
+  });
+  setAiTestHooks({
+    client: () => ({
+      messages: {
+        stream: () => {
+          open++;
+          return {
+            finalMessage: async () => {
+              await gate;
+              return {
+                model: 'claude-sonnet-5-5',
+                stop_reason: 'end_turn',
+                content: [{type: 'text', text: '{}'}],
+                usage: {input_tokens: 1, output_tokens: 1}
+              };
+            }
+          };
+        }
+      }
+    })
+  });
+  const {store} = await setup();
+  const rs = await Promise.all(Array.from({length: 8}, () => ask(store, {mode: 'now'})));
+  assert.equal(rs.filter(r => r.status === 429).length, 3);
+  assert.deepEqual(await rs.find(r => r.status === 429).json(), {error: 'busy'});
+  assert.equal(open, 5);
+  release();
+  await Promise.all(rs.filter(r => r.status === 200).map(r => r.text()));
+  assert.equal((await ask(store, {mode: 'now'})).status, 200, '作り終えたら受け付ける');
+});
+test('出力が上限で途切れたら知らせ、高度な生成（出力 64000 トークン）は月 3 回まで。Batch で途切れた場合も知らせる', async () => {
+  let seen = [];
+  const msg = stop => ({
+    model: 'claude-sonnet-5-5',
+    stop_reason: stop,
+    content: [{type: 'text', text: '{}'}],
+    usage: {input_tokens: 1, output_tokens: 1}
+  });
+  let stop = 'max_tokens';
+  setAiTestHooks({
+    client: () => ({
+      messages: {
+        stream: p => {
+          seen.push(p.max_tokens);
+          return {finalMessage: async () => msg(stop)};
+        }
+      }
+    })
+  });
+  const {store} = await setup();
+  const go = async b => JSON.parse((await (await ask(store, {mode: 'now', ...b})).text()).trim());
+  assert.deepEqual(await go({}), {
+    status: 'failed',
+    reason: '出力が上限で途切れました',
+    truncated: true,
+    advanced: {used: 0, limit: 3}
+  });
+  assert.equal(seen.at(-1), 32000);
+  assert.deepEqual((await go({advanced: true})).advanced, {used: 1, limit: 3}, '高度な生成でも途切れたら回数は使う');
+  assert.equal(seen.at(-1), 64000);
+  assert.equal(store.aiUsage.at(-1).mode, 'advanced');
+  stop = 'end_turn';
+  assert.equal((await go({advanced: true})).status, 'done');
+  await go({advanced: true});
+  assert.deepEqual((await status(store)).advanced, {used: 3, limit: 3});
+  const over = await ask(store, {mode: 'now', advanced: true});
+  assert.equal(over.status, 403);
+  assert.deepEqual(await over.json(), {error: 'advanced_limit'});
+  assert.equal(
+    (await ask(store, {mode: 'batch', key: 'key-00009', advanced: true})).status,
+    400,
+    '高度な生成は Batch にしない'
+  );
+  assert.equal(
+    (await ask(store, {mode: 'now', label: '授業情報の読み取り', advanced: true})).status,
+    400,
+    '課題生成だけ'
+  );
+  const f = fake({stop: 'max_tokens'});
+  await ask(store, {mode: 'batch', key: 'key-00010'});
+  f.batch.status = 'ended';
+  assert.deepEqual(await (await ask(store, {mode: 'batch', key: 'key-00010'})).json(), {
+    status: 'failed',
+    reason: '出力が上限で途切れました',
+    truncated: true,
+    advanced: {used: 3, limit: 3}
+  });
+});
+test('Batch が期限切れなどで失敗したら理由を返して依頼を消す（次はやり直せる）。記録はしない', async () => {
+  const f = fake();
+  const {store} = await setup();
+  await ask(store, {mode: 'batch', key: 'key-00002'});
+  f.batch.status = 'ended';
+  f.batch.fail = true;
+  assert.deepEqual(await (await ask(store, {mode: 'batch', key: 'key-00002'})).json(), {
+    status: 'failed',
+    reason: '24時間以内に作成できませんでした'
+  });
+  assert.equal(store.aiRequests.size, 0);
+  assert.equal(store.aiUsage.length, 0);
+  f.batch.fail = false;
+  f.batch.status = 'in_progress';
+  assert.deepEqual(await (await ask(store, {mode: 'batch', key: 'key-00002'})).json(), {status: 'pending'});
+  assert.equal(f.calls.create, 2);
+});
+test('入力の確認：知らない種類・キーのない Batch・Mac 以外の鍵は受け付けない', async () => {
+  fake();
+  const {store} = await setup();
+  assert.equal((await ask(store, {mode: 'now', label: '雑談'})).status, 400);
+  assert.equal((await ask(store, {mode: 'batch'})).status, 400);
+  assert.equal((await ask(store, {mode: 'now', text: ''})).status, 400);
+  assert.equal(
+    (
+      await call(store, '/api/agent/ai', {
+        method: 'POST',
+        token: OWNER,
+        body: {mode: 'now', label: '課題生成', schema, text: 'x'}
+      })
+    ).status,
+    404,
+    '接続キー（Web）からは使えない'
+  );
+});
+test('毎日の定期実行：終わった Batch を受け取り、超過分を Stripe の請求項目にする（1 日 1 回・同じ分は二重にしない）', async t => {
+  const f = fake();
+  setAiTestHooks({terms: {included: 0}});
+  t.after(() => setAiTestHooks({terms: {included: 60}}));
+  const {store, id} = await setup();
+  await store.linkStripeCustomer('cus_1', id);
+  await store.upsertSubscription({
+    subscription: 'sub_1',
+    customer: 'cus_1',
+    status: 'active',
+    periodEnd: null,
+    cancelAtPeriodEnd: false,
+    eventAt: 1
+  });
+  const e = {...env, STRIPE_API_KEY: 'rk_test'};
+  await ask(store, {mode: 'batch', key: 'key-00003'}, e);
+  await now(store, e);
+  f.batch.status = 'ended';
+  const posts = [];
+  setAiTestHooks({
+    fetch: async (url, o) => {
+      posts.push({url, body: Object.fromEntries(new URLSearchParams(o.body)), key: o.headers['Idempotency-Key']});
+      return new Response('{}');
+    }
+  });
+  const at = new Date(Date.now() + 3600e3);
+  assert.deepEqual(await runAiDaily(e, store, at), []);
+  assert.equal(store.aiUsage.length, 2, 'Batch の使用量も記録');
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, 'https://api.stripe.com/v1/invoiceitems');
+  assert.deepEqual(
+    {
+      customer: posts[0].body.customer,
+      amount: posts[0].body.amount,
+      currency: posts[0].body.currency,
+      subscription: posts[0].body.subscription
+    },
+    {customer: 'cus_1', amount: '135', currency: 'jpy', subscription: 'sub_1'},
+    '（$0.4＋$0.2）×150×1.5＝135 円'
+  );
+  await runAiDaily(e, store, at);
+  assert.equal(posts.length, 1, '請求済みの分は二度と出さない');
+  await store.upsertSubscription({
+    subscription: 'sub_1',
+    customer: 'cus_1',
+    status: 'canceled',
+    periodEnd: null,
+    cancelAtPeriodEnd: false,
+    eventAt: 2
+  });
+  store.aiUsage.push({...store.aiUsage[0], id: 'x', billed: null, created: at.toISOString()});
+  await runAiDaily(e, store, new Date(at.getTime() + 86400e3));
+  assert.deepEqual(
+    posts.slice(1).map(p => p.url.split('/').pop()),
+    ['invoiceitems', 'invoices'],
+    '定期支払いが終わっていれば、その場で請求書を作る'
+  );
+  assert.equal(posts[1].body.subscription, undefined);
+});
+test('作成できなかった回（出力が上限で途切れた・拒否された）は月の回数に数えず、無料分を超えた後でも請求しない。実費は無料分の上限に数える', async t => {
+  const msg = stop => ({
+    model: 'claude-sonnet-5-5',
+    stop_reason: stop,
+    content: [{type: 'text', text: '{}'}],
+    usage: {input_tokens: 100000, output_tokens: 20000}
+  });
+  let stop = 'max_tokens';
+  setAiTestHooks({
+    client: () => ({messages: {stream: () => ({finalMessage: async () => msg(stop)})}}),
+    terms: {included: 1}
+  });
+  t.after(() => setAiTestHooks({terms: {included: 60}}));
+  const {store, id} = await setup();
+  const e = {...env, STRIPE_API_KEY: 'rk_test'};
+  await store.linkStripeCustomer('cus_8', id);
+  await store.upsertSubscription({
+    subscription: 'sub_8',
+    customer: 'cus_8',
+    status: 'active',
+    periodEnd: null,
+    cancelAtPeriodEnd: false,
+    eventAt: 1
+  });
+  const go = async () => JSON.parse((await (await ask(store, {mode: 'now'}, e)).text()).trim());
+  await go();
+  assert.equal((await status(store, e)).used, 0, '途切れた回は数えない');
+  assert.equal(store.aiUsage[0].ok, 0);
+  stop = 'end_turn';
+  await go();
+  assert.equal((await status(store, e)).used, 1);
+  stop = 'refusal';
+  await go();
+  const last = store.aiUsage.at(-1);
+  assert.deepEqual(
+    [last.ok, last.billable, last.charge_micro],
+    [0, 0, 0],
+    '無料分を超えた後でも、作成できなかった回は請求しない'
+  );
+  stop = 'end_turn';
+  await go();
+  assert.equal(store.aiUsage.at(-1).billable, 1, '作成できた回は請求する');
+});
+test('毎日の定期実行：期間の終わりで解約する人の超過分はその場で請求し、請求書の作成に失敗しても翌日に同じ分を二重に請求しない', async t => {
+  fake();
+  setAiTestHooks({terms: {included: 0}});
+  t.after(() => setAiTestHooks({terms: {included: 60}}));
+  const {store, id} = await setup();
+  await store.linkStripeCustomer('cus_2', id);
+  await store.upsertSubscription({
+    subscription: 'sub_2',
+    customer: 'cus_2',
+    status: 'active',
+    periodEnd: null,
+    cancelAtPeriodEnd: true,
+    eventAt: 1
+  });
+  const e = {...env, STRIPE_API_KEY: 'rk_test'};
+  await now(store, e);
+  const posts = [];
+  let failInvoice = true;
+  setAiTestHooks({
+    fetch: async (url, o) => {
+      posts.push({url, body: Object.fromEntries(new URLSearchParams(o.body))});
+      return url.endsWith('/invoices') && failInvoice ? new Response('{}', {status: 500}) : new Response('{}');
+    }
+  });
+  const at = new Date(Date.now() + 3600e3),
+    log = await runAiDaily(e, store, at);
+  assert.deepEqual(
+    posts.map(p => p.url.split('/').pop()),
+    ['invoiceitems', 'invoices'],
+    '解約予定なら次の月額の請求を待たずに請求する'
+  );
+  assert.equal(posts[0].body.subscription, undefined, '終わる定期支払いには付けない');
+  assert.match(log.join(), /請求書を作れません.*Stripe の画面で請求してください/);
+  assert.ok(
+    store.aiUsage.every(x => x.billed),
+    '請求項目ができたら請求済み'
+  );
+  failInvoice = false;
+  await runAiDaily(e, store, new Date(at.getTime() + 86400e3));
+  assert.equal(posts.length, 2, '翌日に同じ分の請求項目を作り直さない');
+});
+test('「質問の作成」は受け付け、月の回数に数えず、無料分を超えた後でも請求しない', async t => {
+  fake();
+  setAiTestHooks({terms: {included: 1}});
+  t.after(() => setAiTestHooks({terms: {included: 60}}));
+  const {store, id} = await setup();
+  await store.linkStripeCustomer('cus_1', id);
+  await store.upsertSubscription({
+    subscription: 'sub_1',
+    customer: 'cus_1',
+    status: 'active',
+    periodEnd: null,
+    cancelAtPeriodEnd: false,
+    eventAt: 1
+  });
+  const e = {...env, STRIPE_API_KEY: 'rk_test'};
+  await now(store, e);
+  const r = JSON.parse((await (await ask(store, {mode: 'now', label: '質問の作成'}, e)).text()).trim());
+  assert.equal(r.status, 'done');
+  const last = store.aiUsage.at(-1);
+  assert.equal(last.label, '質問の作成');
+  assert.equal(last.billable, 0, '超過後でも請求しない');
+  assert.equal((await status(store, e)).used, 1, '回数は課題生成の 1 回だけ');
+});
+test('「文体の読み取り」も受け付け、月の回数に数えず、無料分を超えた後でも請求しない', async t => {
+  fake();
+  setAiTestHooks({terms: {included: 1}});
+  t.after(() => setAiTestHooks({terms: {included: 60}}));
+  const {store, id} = await setup();
+  await store.linkStripeCustomer('cus_1', id);
+  await store.upsertSubscription({
+    subscription: 'sub_1',
+    customer: 'cus_1',
+    status: 'active',
+    periodEnd: null,
+    cancelAtPeriodEnd: false,
+    eventAt: 1
+  });
+  const e = {...env, STRIPE_API_KEY: 'rk_test'};
+  await now(store, e);
+  const r = JSON.parse((await (await ask(store, {mode: 'now', label: '文体の読み取り'}, e)).text()).trim());
+  assert.equal(r.status, 'done');
+  const last = store.aiUsage.at(-1);
+  assert.equal(last.label, '文体の読み取り');
+  assert.equal(last.billable, 0);
+  assert.equal((await status(store, e)).used, 1);
+});
+test('月の回数に数えず請求しない処理は、質問の作成・文体の読み取り・会話の読み取りの 3 つ', async () => {
+  const {FREE_LABELS, LABELS} = await import('../server/ai.js');
+  assert.deepEqual(FREE_LABELS, ['質問の作成', '文体の読み取り', '会話の読み取り']);
+  assert(FREE_LABELS.every(l => LABELS.includes(l)));
+});
 // 無料分の実費の上限は、無料分を超えて請求できる人にも、請求しない処理（質問の作成など）に対しては効く（運営者の負担が無制限にならないように）。課題生成は請求できるので続けられる
-test('無料分を超えて請求できる人でも、請求しない処理は無料分の実費の上限で止まる。課題生成（請求する）は続けられる',async t=>{fake();setAiTestHooks({terms:{included:1}});t.after(()=>setAiTestHooks({terms:{included:60}}));const {store,id}=await setup({settings:{aiFreeCapUsd:0.5}});await store.linkStripeCustomer('cus_1',id);await store.upsertSubscription({subscription:'sub_1',customer:'cus_1',status:'active',periodEnd:null,cancelAtPeriodEnd:false,eventAt:1});const e={...env,STRIPE_API_KEY:'rk_test'};
- await now(store,e);const q=()=>ask(store,{mode:'now',label:'質問の作成'},e);await (await q()).text();assert.equal((await status(store,e)).freeOver,true,'$0.4×2＝$0.8（どちらも請求しない）で上限 $0.5 を超えた');
- assert.equal((await q()).status,403);assert.deepEqual(await (await q()).json(),{error:'limit'});assert.equal((await ask(store,{mode:'now',label:'文体の読み取り'},e)).status,403);
- assert.equal((await status(store,e)).available,true,'課題生成は請求できるので使える');assert.equal((await now(store,e)).status,'done');assert.equal(store.aiUsage.at(-1).billable,1)});
-test('毎日の請求：集計のあとに記録された分（集計の前に始まった生成など）は請求済みにせず、次の日に請求する',async t=>{const f=fake();setAiTestHooks({terms:{included:0}});t.after(()=>setAiTestHooks({terms:{included:60}}));const {store,id}=await setup();await store.linkStripeCustomer('cus_1',id);await store.upsertSubscription({subscription:'sub_1',customer:'cus_1',status:'active',periodEnd:null,cancelAtPeriodEnd:false,eventAt:1});const e={...env,STRIPE_API_KEY:'rk_test'};
- await now(store,e);const at=new Date(Date.now()+3600e3),posts=[];setAiTestHooks({fetch:async(url,o)=>{posts.push(Object.fromEntries(new URLSearchParams(o.body)));return new Response('{}')}});
- const unbilled=store.unbilledAiCharges.bind(store);store.unbilledAiCharges=async cutoff=>{const r=await unbilled(cutoff);store.aiUsage.push({...store.aiUsage[0],id:'late',billed:null,created:new Date(at.getTime()-1000).toISOString()});return r};
- await runAiDaily(e,store,at);assert.equal(posts.length,1);assert.equal(posts[0].amount,'90');assert.equal(store.aiUsage.find(x=>x.id==='late').billed,null,'集計に入っていない分は請求済みにしない');
- await runAiDaily(e,store,new Date(at.getTime()+86400e3));assert.equal(posts.length,2);assert.equal(posts[1].amount,'90','翌日に請求する');assert.ok(store.aiUsage.every(x=>x.billed))});
-test('同時に送られても、月の無料分の回数（請求できない人）と高度な生成の回数は予約で原子的に数え、超えない',async t=>{let release;const gate=new Promise(r=>{release=r});setAiTestHooks({terms:{included:2},client:()=>({messages:{stream:()=>({finalMessage:async()=>{await gate;return {model:'claude-sonnet-5-5',stop_reason:'end_turn',content:[{type:'text',text:'{}'}],usage:{input_tokens:1,output_tokens:1}}}})}})});t.after(()=>setAiTestHooks({terms:{included:60}}));const {store}=await setup();
- const rs=await Promise.all(Array.from({length:4},()=>ask(store,{mode:'now'})));assert.equal(rs.filter(r=>r.status===200).length,2,'無料分 2 回を超える分は同時でも受け付けない');assert.equal(rs.filter(r=>r.status===429).length,2);
- release();await Promise.all(rs.filter(r=>r.status===200).map(r=>r.text()));assert.equal((await status(store)).used,2);
- const {store:st}=await setup();let open2;const gate2=new Promise(r=>{open2=r});setAiTestHooks({terms:{included:60},client:()=>({messages:{stream:()=>({finalMessage:async()=>{await gate2;return {model:'claude-sonnet-5-5',stop_reason:'end_turn',content:[{type:'text',text:'{}'}],usage:{input_tokens:1,output_tokens:1}}}})}})});
- const adv=await Promise.all(Array.from({length:5},()=>ask(st,{mode:'now',advanced:true})));assert.equal(adv.filter(r=>r.status===200).length,3,'高度な生成は同時でも月 3 回まで');open2();await Promise.all(adv.filter(r=>r.status===200).map(r=>r.text()));assert.deepEqual((await status(st)).advanced,{used:3,limit:3})});
+test('無料分を超えて請求できる人でも、請求しない処理は無料分の実費の上限で止まる。課題生成（請求する）は続けられる', async t => {
+  fake();
+  setAiTestHooks({terms: {included: 1}});
+  t.after(() => setAiTestHooks({terms: {included: 60}}));
+  const {store, id} = await setup({settings: {aiFreeCapUsd: 0.5}});
+  await store.linkStripeCustomer('cus_1', id);
+  await store.upsertSubscription({
+    subscription: 'sub_1',
+    customer: 'cus_1',
+    status: 'active',
+    periodEnd: null,
+    cancelAtPeriodEnd: false,
+    eventAt: 1
+  });
+  const e = {...env, STRIPE_API_KEY: 'rk_test'};
+  await now(store, e);
+  const q = () => ask(store, {mode: 'now', label: '質問の作成'}, e);
+  await (await q()).text();
+  assert.equal((await status(store, e)).freeOver, true, '$0.4×2＝$0.8（どちらも請求しない）で上限 $0.5 を超えた');
+  assert.equal((await q()).status, 403);
+  assert.deepEqual(await (await q()).json(), {error: 'limit'});
+  assert.equal((await ask(store, {mode: 'now', label: '文体の読み取り'}, e)).status, 403);
+  assert.equal((await status(store, e)).available, true, '課題生成は請求できるので使える');
+  assert.equal((await now(store, e)).status, 'done');
+  assert.equal(store.aiUsage.at(-1).billable, 1);
+});
+test('毎日の請求：集計のあとに記録された分（集計の前に始まった生成など）は請求済みにせず、次の日に請求する', async t => {
+  const f = fake();
+  setAiTestHooks({terms: {included: 0}});
+  t.after(() => setAiTestHooks({terms: {included: 60}}));
+  const {store, id} = await setup();
+  await store.linkStripeCustomer('cus_1', id);
+  await store.upsertSubscription({
+    subscription: 'sub_1',
+    customer: 'cus_1',
+    status: 'active',
+    periodEnd: null,
+    cancelAtPeriodEnd: false,
+    eventAt: 1
+  });
+  const e = {...env, STRIPE_API_KEY: 'rk_test'};
+  await now(store, e);
+  const at = new Date(Date.now() + 3600e3),
+    posts = [];
+  setAiTestHooks({
+    fetch: async (url, o) => {
+      posts.push(Object.fromEntries(new URLSearchParams(o.body)));
+      return new Response('{}');
+    }
+  });
+  const unbilled = store.unbilledAiCharges.bind(store);
+  store.unbilledAiCharges = async cutoff => {
+    const r = await unbilled(cutoff);
+    store.aiUsage.push({
+      ...store.aiUsage[0],
+      id: 'late',
+      billed: null,
+      created: new Date(at.getTime() - 1000).toISOString()
+    });
+    return r;
+  };
+  await runAiDaily(e, store, at);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].amount, '90');
+  assert.equal(store.aiUsage.find(x => x.id === 'late').billed, null, '集計に入っていない分は請求済みにしない');
+  await runAiDaily(e, store, new Date(at.getTime() + 86400e3));
+  assert.equal(posts.length, 2);
+  assert.equal(posts[1].amount, '90', '翌日に請求する');
+  assert.ok(store.aiUsage.every(x => x.billed));
+});
+test('同時に送られても、月の無料分の回数（請求できない人）と高度な生成の回数は予約で原子的に数え、超えない', async t => {
+  let release;
+  const gate = new Promise(r => {
+    release = r;
+  });
+  setAiTestHooks({
+    terms: {included: 2},
+    client: () => ({
+      messages: {
+        stream: () => ({
+          finalMessage: async () => {
+            await gate;
+            return {
+              model: 'claude-sonnet-5-5',
+              stop_reason: 'end_turn',
+              content: [{type: 'text', text: '{}'}],
+              usage: {input_tokens: 1, output_tokens: 1}
+            };
+          }
+        })
+      }
+    })
+  });
+  t.after(() => setAiTestHooks({terms: {included: 60}}));
+  const {store} = await setup();
+  const rs = await Promise.all(Array.from({length: 4}, () => ask(store, {mode: 'now'})));
+  assert.equal(rs.filter(r => r.status === 200).length, 2, '無料分 2 回を超える分は同時でも受け付けない');
+  assert.equal(rs.filter(r => r.status === 429).length, 2);
+  release();
+  await Promise.all(rs.filter(r => r.status === 200).map(r => r.text()));
+  assert.equal((await status(store)).used, 2);
+  const {store: st} = await setup();
+  let open2;
+  const gate2 = new Promise(r => {
+    open2 = r;
+  });
+  setAiTestHooks({
+    terms: {included: 60},
+    client: () => ({
+      messages: {
+        stream: () => ({
+          finalMessage: async () => {
+            await gate2;
+            return {
+              model: 'claude-sonnet-5-5',
+              stop_reason: 'end_turn',
+              content: [{type: 'text', text: '{}'}],
+              usage: {input_tokens: 1, output_tokens: 1}
+            };
+          }
+        })
+      }
+    })
+  });
+  const adv = await Promise.all(Array.from({length: 5}, () => ask(st, {mode: 'now', advanced: true})));
+  assert.equal(adv.filter(r => r.status === 200).length, 3, '高度な生成は同時でも月 3 回まで');
+  open2();
+  await Promise.all(adv.filter(r => r.status === 200).map(r => r.text()));
+  assert.deepEqual((await status(st)).advanced, {used: 3, limit: 3});
+});
