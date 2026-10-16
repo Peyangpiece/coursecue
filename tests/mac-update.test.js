@@ -16,6 +16,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {usedInstaller} from '../desktop/installer-cleanup.js';
+import {rx} from './source.js';
 // Mac：「ダウンロード」を押したらアプリ自身が新しい版の .dmg を落とす。名前は配布物と同じにして、入れ替えたあとの片付けの対象にする
 // 落としたものは Release の版の情報（latest-mac.yml）の sha512 で確かめる。確かめられない .dmg は使わない
 const sha = s => createHash('sha512').update(s).digest('base64');
@@ -243,19 +244,24 @@ test('失敗（見つからない・途中で切れた・sha512 が合わない�
 });
 test('アプリ：新しい版の案内とメニューバーの「更新」は、その場でダウンロードし、書き込める場所なら終了して自動で入れ替える（できなければ .dmg を開いて案内）。版の情報の sha512 を落とすときと入れ替えのスクリプトに渡す', () => {
   const main = readFileSync('desktop/main.js', 'utf8');
-  assert.match(main, /buttons:\['今すぐ更新','あとで'\][^\n]*if\(r\.response===0\)downloadMacUpdate\(version\)/);
-  assert.match(main, /label:`新しい版 \$\{newer\} に更新`,click:\(\)=>downloadMacUpdate\(newer\)/);
-  assert.match(main, /updateFiles\[v\]=r\.updateInfo\.files/, '確認した版の配布物の情報を覚える');
   assert.match(
     main,
-    /const sha512=installerDigest\(updateFiles\[version\],macInstallerName\(version,process\.arch\)\)/
+    rx("buttons:['今すぐ更新','あとで']", /[\s\S]{0,800}?/, 'if(r.response===0)downloadMacUpdate(version)'),
+    '同じ確認の中で「今すぐ更新」を押したらダウンロードする'
   );
-  assert.match(main, /downloadInstaller\(\{version,arch:process\.arch,downloads:app\.getPath\('downloads'\),sha512,/);
-  assert.match(main, /hash:async f=>\{const h=createHash\('sha512'\)/, '落としたファイルの sha512 を出す');
+  assert.match(main, rx('label:`新しい版 ${newer} に更新`,click:()=>downloadMacUpdate(newer)'));
+  assert.match(main, rx('updateFiles[v]=r.updateInfo.files'), '確認した版の配布物の情報を覚える');
+  assert.match(main, rx('const sha512=installerDigest(updateFiles[version],macInstallerName(version,process.arch))'));
+  assert.match(main, rx("downloadInstaller({version,arch:process.arch,downloads:app.getPath('downloads'),sha512,"));
+  assert.match(main, rx("hash:async f=>{const h=createHash('sha512')"), '落としたファイルの sha512 を出す');
   assert.match(main, /ダウンロード中…/, 'ダウンロード中はメニューバーに進み具合を出す');
   assert.match(
     main,
-    /if\(canReplace\(bundle,writable\)\)\{expectUpdate\(version\);[^\n]*spawn\('\/bin\/sh',\['-c',replaceScript,'sh',String\(process\.pid\),file,bundle,version,updateLogFile,sha512\],\{detached:true,stdio:'ignore'\}\)\.unref\(\);app\.quit\(\)/
+    rx(
+      'if(canReplace(bundle,writable)){expectUpdate(version);',
+      /[\s\S]{0,40}?/,
+      "spawn('/bin/sh',['-c',replaceScript,'sh',String(process.pid),file,bundle,version,updateLogFile,sha512],{detached:true,stdio:'ignore'}).unref();app.quit()"
+    )
   );
   assert.match(main, /shell\.openPath\(file\)/, '自動で入れ替えられなければ .dmg を開く');
   assert.match(main, /macDownloadPage/, '落とせなければダウンロードのページを案内する');
@@ -417,11 +423,11 @@ test('入れ替えのスクリプト：いまの saboro が証明書で署名さ
 test('Mac の新しい版の案内：版ごとに 1 回出す（前の版の案内から 24 時間待たない）。saboro を前面に出してから出す（ほかのアプリの裏に隠れないように）', () => {
   const main = readFileSync('desktop/main.js', 'utf8'),
     fn = main.slice(main.indexOf('async function announce('));
-  assert.match(fn, /if\(!manual&&seen\.version===version\)return;/);
+  assert.match(fn, rx('if(!manual&&seen.version===version)return;'));
   assert.doesNotMatch(
-    fn.slice(0, fn.indexOf('\n')),
-    /24\*3600/,
+    fn.slice(0, fn.indexOf('\n}\n')),
+    rx('24*3600'),
     '別の版の案内のあと 24 時間は出さない、という制限はしない'
   );
-  assert.match(fn, /app\.focus\(\{steal:true\}\);const r=await dialog\.showMessageBox/);
+  assert.match(fn, rx('app.focus({steal:true});const r=await dialog.showMessageBox'));
 });

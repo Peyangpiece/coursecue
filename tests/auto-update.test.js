@@ -8,6 +8,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {updateToDeployed, verifyDeployed, readDeployKeys, shouldUpdate} from '../local/auto-update.js';
 import {makeDeployKey, signDeployed, keysOf} from '../local/deploy-key.js';
+import {rx} from './source.js';
 const git = (cwd, ...a) =>
   execFileSync('git', a, {cwd, stdio: ['ignore', 'pipe', 'pipe']})
     .toString()
@@ -188,12 +189,12 @@ test('公開の署名の処理（node local/deploy-key.js sign）：秘密鍵は
   assert.match(bridge, /r\.headers\.get\('x-coursecue-deployed-sig'\)/);
   assert.match(
     bridge,
-    /updateToDeployed\(\{repo,target:deployedSha,signature:deployedSig\}\)/,
+    rx('updateToDeployed({repo,target:deployedSha,signature:deployedSig})'),
     'Mac は知らされたコミットと署名で更新する'
   );
   assert.match(
     readFileSync('server/worker.js', 'utf8'),
-    /if\(env\.DEPLOYED_SIG\)res\.headers\.set\('X-Coursecue-Deployed-Sig',env\.DEPLOYED_SIG\);/
+    rx("if(env.DEPLOYED_SIG)res.headers.set('X-Coursecue-Deployed-Sig',env.DEPLOYED_SIG);")
   );
 });
 test('クラウドが知らせる公開版が手元と違うときだけ、30秒おきに更新を試す', () => {

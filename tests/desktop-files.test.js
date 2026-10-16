@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync, readdirSync} from 'node:fs';
+import {rx, find, findLast} from './source.js';
 // デスクトップアプリの配布物に、local/ が実行時に読む dist/ のファイルがすべて入っていること（抜けると起動時に ENOENT で止まる）
 test('デスクトップアプリの配布物に、実行時に読む dist のファイルが入っている', () => {
   const files = JSON.parse(readFileSync('package.json', 'utf8')).build.files;
@@ -16,17 +17,17 @@ test('デスクトップアプリの配布物に、実行時に読む dist の�
 // Windows の新しい版は終了するときに入れ替わる（electron-updater は app の quit で終了コード 0 のときだけ入れ替える）。メニューの「終了」は app.quit() で終えること
 test('メニューの「終了」は app.quit() で終え、ダウンロード済みの新しい版を入れ替えられる', () => {
   const src = readFileSync('desktop/main.js', 'utf8');
-  assert.match(src, /label:'終了',click:\(\)=>app\.quit\(\)/);
-  assert.match(src, /u\.on\('update-downloaded'/);
-  assert.match(src, /quitAndInstall\(false,true\)/);
-  assert.match(src, /checkExpectedUpdate\(\)/);
-  assert.doesNotMatch(src, /u\.logger=null/);
+  assert.match(src, rx("label:'終了',click:()=>app.quit()"));
+  assert.match(src, rx("u.on('update-downloaded'"));
+  assert.match(src, rx('quitAndInstall(false,true)'));
+  assert.match(src, rx('checkExpectedUpdate()'));
+  assert.doesNotMatch(src, rx('u.logger=null'));
 });
 // 処理の途中で終了すると state.json に「処理中」が残る。起動時に消さないと、画面が「同期中…」のまま同期ボタンも押せなくなる
 test('サービスの起動時に、前回から残った「処理中」を消してから状態を送る', () => {
   const src = readFileSync('local/bridge.js', 'utf8');
-  const reset = src.indexOf('if(state.running)state.running=null'),
-    firstSave = src.lastIndexOf('await save().catch(()=>{});setInterval(tick');
+  const reset = find(src, 'if(state.running)state.running=null'),
+    firstSave = findLast(src, 'await save().catch(()=>{});setInterval(tick');
   assert(reset > 0, '起動時に state.running を消す');
   assert(reset < firstSave, '最初に状態を送る前に消す');
 });
@@ -39,10 +40,10 @@ test('Mac のアプリのメニューは saboro の名前で出す（内部の�
     "role:'quit',label:'saboro を終了'",
     "applicationName:'saboro'"
   ])
-    assert.ok(fn.includes(l), l);
+    assert.match(fn, rx(l), l);
   for (const r of ['cut', 'copy', 'paste', 'selectAll', 'undo'])
-    assert.ok(fn.includes(`role:'${r}'`), `編集の操作 ${r} を残す`);
-  assert.match(src, /async function start\(\)\{macAppMenu\(\);/);
+    assert.match(fn, rx(`role:'${r}'`), `編集の操作 ${r} を残す`);
+  assert.match(src, rx('async function start(){macAppMenu();'));
   assert.doesNotMatch(
     src,
     /app\.setName\(|app\.name\s*=|"productName"\s*:\s*"saboro",\s*"version"/,
@@ -59,10 +60,10 @@ test('Mac の署名：electron-builder の署名は止め、afterPack で自分�
   assert.ok(b.files.includes('!desktop/after-pack.cjs'), '署名の処理はアプリに入れない');
   assert.match(
     hook,
-    /identity=process\.env\.MAC_SIGN_IDENTITY\|\|'-'/,
+    rx("identity=process.env.MAC_SIGN_IDENTITY||'-'"),
     '証明書がなければ ad-hoc（Apple シリコンは署名がないと開けない）'
   );
-  assert.match(hook, /'--verify','--deep','--strict'/, '署名を確かめる');
+  assert.match(hook, rx("'--verify','--deep','--strict'"), '署名を確かめる');
   assert.match(hook, /Signature=adhoc/, '証明書で署名したはずが ad-hoc なら止める');
   const step = wf.slice(
     wf.indexOf('- name: Prepare the Mac signing certificate'),
@@ -88,8 +89,8 @@ test('Mac の署名：electron-builder の署名は止め、afterPack で自分�
 test('manabo 用のブラウザの準備済みの印には Playwright の版を書き、版が変われば取り込み直す（アプリの更新後に同期が止まらないように）', () => {
   const src = readFileSync('desktop/main.js', 'utf8');
   assert.match(src, /node_modules\/playwright-core\/package\.json/);
-  assert.match(src, /readFileSync\(marker,'utf8'\)\.trim\(\)===version/);
-  assert.match(src, /writeFileSync\(marker,version\|\|/);
+  assert.match(src, rx("readFileSync(marker,'utf8').trim()===version"));
+  assert.match(src, rx('writeFileSync(marker,version||'));
 });
 // 配布用リポジトリに書き込めるトークンは gh を使うステップだけに渡す（ジョブ全体の env にあると、npm ci の依存パッケージのスクリプトや electron-builder からも読める。流出すると偽の版を配れる）
 // 取り込む @napi-rs のパッケージは package-lock.json の integrity と照らす（curl | tar でそのまま展開しない）
@@ -143,14 +144,18 @@ test('デスクトップの画面：saboro 本体と PC 内のサービス以外
   const src = readFileSync('desktop/main.js', 'utf8');
   assert.match(
     src,
-    /win\.webContents\.on\('will-navigate',guardNavigation\);win\.webContents\.on\('will-redirect',guardNavigation\);/
+    rx("win.webContents.on('will-navigate',guardNavigation);win.webContents.on('will-redirect',guardNavigation);")
   );
   assert.match(
     src,
-    /function guardNavigation\(e,url\)\{if\(ownPage\(url\)\)return;e\.preventDefault\(\);if\(\/\^https\?:\\\/\\\/\/\.test\(url\)\)shell\.openExternal\(url\)\}/
+    rx(
+      'function guardNavigation(e,url){if(ownPage(url))return;e.preventDefault();if(/^https?:\\/\\//.test(url))shell.openExternal(url);}'
+    )
   );
   assert.match(
     src,
-    /const ownPage=url=>url\.startsWith\(apiBase\+'\/'\)\|\|url===apiBase\|\|url\.startsWith\('http:\/\/127\.0\.0\.1:8766\/'\)\|\|url\.startsWith\('data:'\)/
+    rx(
+      "const ownPage=url=>url.startsWith(apiBase+'/')||url===apiBase||url.startsWith('http://127.0.0.1:8766/')||url.startsWith('data:')"
+    )
   );
 });

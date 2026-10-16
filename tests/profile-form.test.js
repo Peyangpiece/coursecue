@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import '../dist/profile-form.js';
+import {rx} from './source.js';
 // 「自分について」のアンケート：選ぶだけで答えられ、答えを文にまとめて回答の作成に使う
 const P = globalThis.ProfileForm;
 test('答えを「学部：経営学部」のような文にまとめ、知らない選択肢は捨てる', () => {
@@ -32,12 +33,12 @@ test('アプリ：回答の作成にはアンケートをまとめた文と自�
   assert(m.startsWith("import '../dist/profile-form.js';"));
   assert.match(
     m,
-    /let profile=\[globalThis\.ProfileForm\.composeProfile\(this\.state\.settings\?\.profileForm\),profileNote\(\)\]/
+    rx('let profile=[globalThis.ProfileForm.composeProfile(this.state.settings?.profileForm),profileNote()]')
   );
   const b = readFileSync('local/bridge.js', 'utf8');
-  assert.match(b, /profileForm:globalThis\.ProfileForm\.cleanProfileForm\(profileForm\)/);
-  assert.match(b, /profileForm:globalThis\.ProfileForm\.cleanProfileForm\(d\.profileForm\)/);
-  assert.match(b, /req\.url==='\/profile-form\.js'/);
+  assert.match(b, rx('profileForm:globalThis.ProfileForm.cleanProfileForm(profileForm)'));
+  assert.match(b, rx('profileForm:globalThis.ProfileForm.cleanProfileForm(d.profileForm)'));
+  assert.match(b, rx("req.url==='/profile-form.js'"));
   assert(JSON.parse(readFileSync('package.json', 'utf8')).build.files.includes('dist/profile-form.js'));
   assert.match(
     readFileSync('dist/index.html', 'utf8'),

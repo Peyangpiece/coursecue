@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {readFileSync} from 'node:fs';
 import {findExportZip, readExport, selectStudy} from '../local/chat-import.js';
+import {rx} from './source.js';
 // ChatGPT・Claude の書き出しの zip：ダウンロードフォルダから見つけ、本人のメッセージのうち学業に関係するものだけを選ぶ
 const chatgpt = [
   {
@@ -111,10 +112,10 @@ test('選ぶ量に上限があり（全体 3 万字・1 件 500 字）、新し�
 });
 test('アプリ：取り込みは本人が押してから 3 時間だけ待ち、失敗したら同じ zip で繰り返さない。候補は本人が確かめて足す', () => {
   const src = readFileSync('local/bridge.js', 'utf8');
-  assert.match(src, /CHAT_WAIT=3\*3600e3/);
-  assert.match(src, /job\.status==='failed'\)return/);
-  assert.match(src, /state\.profileSuggestion=\{source,text:r\.profile/);
-  assert.match(src, /setInterval\(\(\)=>checkChatImport\(\)\.catch\(\(\)=>\{\}\),15000\)/);
+  assert.match(src, rx('CHAT_WAIT=3*3600e3'));
+  assert.match(src, rx("job.status==='failed')return"));
+  assert.match(src, rx('state.profileSuggestion={source,text:r.profile'));
+  assert.match(src, rx('setInterval(()=>checkChatImport().catch(()=>{}),15000)'));
   assert.match(src, /https:\/\/chatgpt\.com\//);
   assert.match(src, /https:\/\/claude\.ai\//);
 });

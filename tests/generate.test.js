@@ -333,34 +333,37 @@ test('SaBoRo の AI：未設定なら試していない扱い（使用量に残�
   assert.equal(usage.length, 1);
 });
 test('アプリ：Batch を待つ課題は 10 分ごとに出来上がりを確かめて入力し直し、本人が頼んだ処理は急ぎにする', async () => {
-  const {readFileSync} = await import('node:fs');
-  const bridge = readFileSync('local/bridge.js', 'utf8'),
-    manabo = readFileSync('local/manabo.js', 'utf8');
-  assert.match(bridge, /api\('\/api\/agent\/ai\/ready','POST'/);
-  assert.match(bridge, /run\(\{kind:'generate',task:t\.id,auto:true\}\)/);
+  const {src, rx} = await import('./source.js');
+  const bridge = src('local/bridge.js'),
+    manabo = src('local/manabo.js');
+  assert.match(bridge, rx("api('/api/agent/ai/ready','POST'"));
+  assert.match(bridge, rx("run({kind:'generate',task:t.id,auto:true})"));
   assert.match(
     bridge,
-    /lms\.process\(t,false,\{urgent:!job\.auto,advanced:job\.payload\?\.advanced===true,\.\.\.personalOptions\(job\.payload\)\}\)/
+    rx('lms.process(t,false,{urgent:!job.auto,advanced:job.payload?.advanced===true,...personalOptions(job.payload)})')
   );
-  assert.match(bridge, /createGenerator\(\{[^}]*saboro\}\)/);
+  assert.match(bridge, rx('createGenerator({', /[^}]*/, 'saboro})'));
+  assert.match(manabo, rx('if(!(e instanceof AiPending))throw e;t.aiPending=generationKey;t.action=AI_PENDING_ACTION'));
   assert.match(
     manabo,
-    /if\(!\(e instanceof AiPending\)\)throw e;t\.aiPending=generationKey;t\.action=AI_PENDING_ACTION/
-  );
-  assert.match(
-    manabo,
-    /if\(e instanceof AiTruncated\)\{delete t\.aiPending;this\.offerAdvanced\(t,generationKey,e\.advanced\)/,
+    rx('if(e instanceof AiTruncated){delete t.aiPending;this.offerAdvanced(t,generationKey,e.advanced)'),
     '途切れたら自動で作り直さず、高度な生成を選べるようにする'
   );
-  assert.match(manabo, /urgent:urgent\|\|manualSubmit\|\|soon/);
+  assert.match(manabo, rx('urgent:urgent||manualSubmit||soon'));
   assert.match(
     bridge,
-    /req\.url\.startsWith\('\/owned\?'\).*createHash\('sha256'\)\.update\(owner\).*timingSafeEqual/,
+    rx(
+      "req.url.startsWith('/owned?')",
+      /[\s\S]{0,400}?/,
+      "createHash('sha256').update(owner)",
+      /[\s\S]{0,200}?/,
+      'timingSafeEqual'
+    ),
     '接続用リンクの鍵は、鍵のハッシュを照らすだけ（鍵は返さない）'
   );
-  assert.match(bridge, /lms\.resumeCourseInfo\(id\.course\)/, 'Batch を待つ授業情報も出来上がったら受け取る');
-  assert.match(manabo, /this\.firstSync=!this\.state\.lastSync/);
-  assert.match(manabo, /this\.process\(t,false,\{urgent:this\.firstSync\}\)/, '初回の同期の回答はすぐ作る');
+  assert.match(bridge, rx('lms.resumeCourseInfo(id.course)'), 'Batch を待つ授業情報も出来上がったら受け取る');
+  assert.match(manabo, rx('this.firstSync=!this.state.lastSync'));
+  assert.match(manabo, rx('this.process(t,false,{urgent:this.firstSync})'), '初回の同期の回答はすぐ作る');
 });
 test('自分について聞かれる設問は、本人の立場で作り、プロフィールを使い、経験がなければ設問に合う経験を組み立てて完成させる', async () => {
   const {prompt} = await import('../local/generate.js');
@@ -377,7 +380,7 @@ test('自分について聞かれる設問は、本人の立場で作り、プ�
 });
 test('経験・体験を問う課題を言葉で拾い、画面と同じ判定にする', async () => {
   const {personalCandidate, PERSONAL} = await import('../local/generate.js');
-  const {readFileSync} = await import('node:fs');
+  const {src, esc} = await import('./source.js');
   for (const s of [
     'あなたのアルバイト経験を踏まえて述べよ',
     '自分が取り組んだ活動を一つ挙げよ',
@@ -393,8 +396,9 @@ test('経験・体験を問う課題を言葉で拾い、画面と同じ判定�
   ])
     assert(!personalCandidate({title: s}), s);
   assert(personalCandidate({title: '課題'}, [{text: 'これまでの体験を書いてください'}]), '設問文も見る');
-  assert(
-    readFileSync('dist/app.js', 'utf8').includes(`const PERSONAL=${PERSONAL.source.replace(/^/, '/')}/;`),
+  assert.match(
+    src('dist/app.js'),
+    new RegExp(`const PERSONAL\\s*=\\s*${esc(`/${PERSONAL.source}/;`)}`),
     '画面の判定と同じ'
   );
 });

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {requestAllowed} from '../local/local-server.js';
+import {rx} from './source.js';
 // このパソコンの中だけのサービス（127.0.0.1:8766）：Host が違う要求・別のオリジンからの POST・別のサイトのページからの GET（<img> や fetch での CSRF）は断る
 const req = (url, {method = 'GET', host = '127.0.0.1:8766', origin, site, dest} = {}) => ({
   method,
@@ -39,6 +40,8 @@ test('サービスはすべての要求を requestAllowed で確かめてから�
   const src = readFileSync('local/bridge.js', 'utf8');
   assert.match(
     src,
-    /http\.createServer\(async\(req,res\)=>\{try\{const deny=requestAllowed\(req\);if\(deny\)\{res\.writeHead\(deny\)\.end\(\);return\}/
+    rx(
+      'http.createServer(async(req,res)=>{try{const deny=requestAllowed(req);if(deny){res.writeHead(deny).end();return;}'
+    )
   );
 });

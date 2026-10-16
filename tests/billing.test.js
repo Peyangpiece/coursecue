@@ -167,8 +167,8 @@ test('管理者画面：必須の設定・解約ページ・月額を保存し�
   assert.equal((await admin(store, '/settings', {...settings, requirePayment: 'yes'})).status, 400);
 });
 test('アプリは「支払いが必要」の知らせを覚え、その間は自動の同期をしない', async () => {
-  const {readFileSync} = await import('node:fs');
-  const src = readFileSync('local/bridge.js', 'utf8');
-  assert.match(src, /r\.headers\.get\('x-coursecue-billing'\);if\(b\)state\.billingBlocked=b==='required'/);
-  assert.match(src, /state\.lastScheduledDay!==day&&!state\.billingBlocked\)/);
+  const {src, rx} = await import('./source.js');
+  const bridge = src('local/bridge.js');
+  assert.match(bridge, rx("r.headers.get('x-coursecue-billing');if(b)state.billingBlocked=b==='required'"));
+  assert.match(bridge, rx('state.lastScheduledDay!==day&&!state.billingBlocked)'));
 });

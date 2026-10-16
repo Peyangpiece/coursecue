@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {addUsage, estimateUsd, usageLog, monthOf} from '../local/usage.js';
 import {createGenerator, createCourseInfoExtractor, providers, claudeCodeUsage} from '../local/generate.js';
+import {rx} from './source.js';
 // AI の使用量の記録：手段ごとに 1 件、トークン数（分かるもの）・時間・文字数を残し、月ごとに集計する。料金を決めるための実測用
 const answer = {grounded: true, draft: '下書きだ。', needsUser: [], notes: [], answers: []};
 const fake = (name, result, usage) => ({
@@ -184,8 +185,8 @@ test('記録は usage.jsonl に 1 件 1 行で追記する', async t => {
 });
 test('サービスは生成と授業情報の読み取りの両方で使用量を記録し、状態にも集計を持つ', async () => {
   const src = await readFile('local/bridge.js', 'utf8');
-  assert.match(src, /createGenerator\(\{[^}]*onUsage:recordUsage,saboro\}\)/);
-  assert.match(src, /createCourseInfoExtractor\(\{[^}]*onUsage:recordUsage,saboro\}\)/);
-  assert.match(src, /state\.usage=addUsage\(state\.usage,e\)/);
+  assert.match(src, rx('createGenerator({', /[^}]*/, 'onUsage:recordUsage,saboro})'));
+  assert.match(src, rx('createCourseInfoExtractor({', /[^}]*/, 'onUsage:recordUsage,saboro})'));
+  assert.match(src, rx('state.usage=addUsage(state.usage,e)'));
   assert.match(await readFile('desktop/main.js', 'utf8'), /AI の使用量の記録を開く/);
 });

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {usedInstaller, mountedImages, cleanupInstallers} from '../desktop/installer-cleanup.js';
+import {rx} from './source.js';
 // Mac：入れ終わった saboro の .dmg（いまの版以下）だけを取り出してゴミ箱に入れる。新しい版・ほかのファイル・いま動いているイメージには触れない
 const info = [
   'framework       : 671.100.2',
@@ -90,8 +91,8 @@ test('ダウンロードのフォルダを読めない（許可されていな�
 });
 test('Mac の起動時に片付けを呼び、Windows では呼ばない。配布物に入っている', () => {
   const src = readFileSync('desktop/main.js', 'utf8');
-  assert.match(src, /if\(process\.platform==='darwin'\)setTimeout\(cleanupMacInstallers,5000\)/);
-  assert.match(src, /trash:f=>shell\.trashItem\(f\)/);
+  assert.match(src, rx("if(process.platform==='darwin')setTimeout(cleanupMacInstallers,5000)"));
+  assert.match(src, rx('trash:f=>shell.trashItem(f)'));
   const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
   assert.ok(pkg.build.files.includes('desktop/**'));
   assert.ok(pkg.build.mac.extendInfo.NSDownloadsFolderUsageDescription);

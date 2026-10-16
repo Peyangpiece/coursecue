@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {Manabo} from '../local/manabo.js';
+import {rx} from './source.js';
 // 同期は画面に出さないブラウザ（headless）で動かし、「manabo ブラウザを開く」のときだけ画面に出す
 const tab = url => ({
   url: () => url,
@@ -79,11 +80,11 @@ test('アプリ：裏で動くブラウザは画面を出さない設定で起�
   const src = readFileSync('local/manabo.js', 'utf8');
   assert.match(
     src,
-    /this\.visible\?\{headless:false,viewport:\{width:1100,height:850\}\}:\{headless:true,channel:'chromium'/
+    rx("this.visible?{headless:false,viewport:{width:1100,height:850}}:{headless:true,channel:'chromium'")
   );
-  assert.match(src, /async sync\(\{course\}=\{\}\)\{await this\.hideBrowserIfIdle\(\);/);
+  assert.match(src, rx('async sync({course}={}){await this.hideBrowserIfIdle();'));
   const bridge = readFileSync('local/bridge.js', 'utf8');
-  assert.match(bridge, /req\.url==='\/browser'\)\{[^]*?if\(running\)\{res\.writeHead\(409/);
+  assert.match(bridge, rx("req.url==='/browser'){", /[^]*?/, 'if(running){res.writeHead(409'));
 });
 test('全問に答えて「回答が完了」と出ても、回答欄が残っている（提出前の）クイズのページは提出済みにせず閉じない。提出後の画面なら提出済みにする', async t => {
   const {chromium} = await import('playwright');
