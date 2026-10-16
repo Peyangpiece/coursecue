@@ -63,26 +63,49 @@ const markDone = t => {
   t.submissionIntent = null;
   t.submittedAt = t.submittedAt || new Date().toISOString();
 };
-// 授業ページ内で実行：お知らせ欄の折りたたまれた項目（[+] の見出し）を開く。クリックした数を返す
-// 見出しの作り（画像・リンク・onclick）は決め打ちせず、お知らせ欄の中の「押すと開く」要素だけを一度ずつ押す
-// （本物のリンク（ファイル・ページ）は押さない。入れ子の要素は内側だけ押す：外側の見出しの処理にも伝わる）
+// 授業ページ内で実行：お知らせ欄（manabo は #div-class-news に AJAX で入る）の折りたたまれた項目（[+] の見出し）を開く。クリックした数を返す
+// 見出しの作りは決め打ちせず、お知らせ欄の中で「押すと何かが起きる」要素だけを一度ずつ押す：jQuery のクリック処理が付いた要素
+// （要素に直接付いたもの・document などに委譲されたもの（selector）の両方。manabo は jQuery で画面を組み立てる）、onclick、# や javascript: のリンク、[+] の画像・toggle などの class。
+// 本物のリンク（ファイル・ページ）は押さない。入れ子の要素は内側だけ押す（外側の見出しの処理にも伝わる）
 export function openNotices() {
   const vis = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
   const own = e => (e.textContent || '').replace(/\s+/g, '');
   const head = [...document.querySelectorAll('h1,h2,h3,h4,h5,div,span,p')].find(
     e => own(e) === 'お知らせ' && vis(e) && ![...e.children].some(c => own(c) === 'お知らせ')
   );
-  const box = head && (head.closest('.panel,.card,section') || head.parentElement?.parentElement);
+  const box =
+    document.querySelector('#div-class-news') ||
+    (head && (head.closest('.panel,.card,section') || head.parentElement?.parentElement));
   if (!box || box.querySelector('#div-class-directories')) return 0;
   const realLink = e => {
     const a = e.closest('a[href]');
     return !!a && !/^(#|javascript:)/i.test(a.getAttribute('href') || '');
   };
-  const all = [
-    ...box.querySelectorAll(
+  const found = new Set(
+    box.querySelectorAll(
       '[onclick],a[href^="#"],a[href^="javascript:"],a:not([href]),img[src*="plus" i],img[src*="open" i],img[src*="expand" i],[class*="plus" i],[class*="toggle" i],[class*="collapse" i],[class*="expand" i],[class*="accordion" i],[class*="open" i]'
     )
-  ].filter(e => e !== head && !head.contains(e) && !realLink(e) && vis(e));
+  );
+  const jq = window.jQuery;
+  if (jq && typeof jq._data === 'function') {
+    const events = n => {
+      try {
+        return jq._data(n, 'events')?.click || [];
+      } catch {
+        return [];
+      }
+    };
+    const owners = [document, document.documentElement, document.body];
+    for (let n = box; n; n = n.parentElement) owners.push(n);
+    for (const n of owners)
+      for (const h of events(n))
+        if (h.selector)
+          try {
+            for (const e of box.querySelectorAll(h.selector)) found.add(e);
+          } catch {}
+    for (const e of box.querySelectorAll('*')) if (events(e).length) found.add(e);
+  }
+  const all = [...found].filter(e => !(head && (e === head || head.contains(e))) && !realLink(e) && vis(e));
   const leaves = all.filter(e => !all.some(o => o !== e && e.contains(o)));
   const clicked = [];
   for (const e of leaves) {
@@ -120,7 +143,9 @@ export function classInfo() {
   const head = [...document.querySelectorAll('h1,h2,h3,h4,h5,div,span,p')].find(
     e => own(e) === 'お知らせ' && vis(e) && ![...e.children].some(c => own(c) === 'お知らせ')
   );
-  const box = head && (head.closest('.panel,.card,section') || head.parentElement?.parentElement);
+  const box =
+    document.querySelector('#div-class-news') ||
+    (head && (head.closest('.panel,.card,section') || head.parentElement?.parentElement));
   const notice = box && !box.querySelector('#div-class-directories') ? box.innerText : '';
   // お知らせに付いているファイル（授業のフォルダに保存する）
   const noticeFiles = box
@@ -725,6 +750,17 @@ export class Manabo {
   }
   // お知らせ欄の折りたたまれた項目を開く（manabo のお知らせは [+] の見出しだけが出ていて、本文と付いているファイルは開くと出る）。開いたあと読み込みが落ち着くのを待つ
   async expandNotices(p) {
+    // お知らせ欄は AJAX で後から入る：中身が入るまで少し待つ（欄がないページはすぐ進む）
+    await p
+      .waitForFunction(
+        () => {
+          const b = document.querySelector('#div-class-news');
+          return !b || b.children.length > 0;
+        },
+        null,
+        {timeout: 8000}
+      )
+      .catch(() => {});
     const n = await p.evaluate(openNotices).catch(() => 0);
     if (!n) return 0;
     await p.waitForLoadState('networkidle', {timeout: 5000}).catch(() => {});

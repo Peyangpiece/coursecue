@@ -514,3 +514,38 @@ test('お知らせ欄の折りたたまれた項目を開いてから読み、�
     ['コーポレート・ファイナンスⅡ:/file/11/', 'コーポレート・ファイナンスⅡ:/file/12/']
   );
 });
+// manabo の本物の作り：お知らせ欄は #div-class-news に AJAX で入り、見出しのクリック処理は jQuery で document に委譲されている（class・onclick・href では見分けられない）。
+// 見出しを押すと本文が AJAX で入り、そこにファイルのリンクがある
+const jqPage = `<a id="button-logout">ログアウト</a><div id="div-class-directories"><table><tr><td>第1回 オリエンテーション</td></tr></table></div><div id="div-class-news"><div class="panel-heading"><span class="icon"></span>お知らせ</div><div class="news"><div class="news-head" news_id="1"><img src="/common/images/icons/plus.png">【第01回，09/25】配布資料 &amp; 復習用動画</div><div class="news-body" id="news-1"></div></div><div class="news"><div class="news-head" news_id="2"><img src="/common/images/icons/plus.png">【第02回，10/02】配布資料 &amp; 復習用動画</div><div class="news-body" id="news-2"></div></div></div><script>window.jQuery={_data:(n,k)=>n===document&&k==='events'?{click:[{selector:'.news-head'}]}:undefined};document.addEventListener('click',e=>{const t=e.target.closest('.news-head');if(!t)return;const b=document.getElementById('news-'+t.getAttribute('news_id'));if(b.innerHTML){b.style.display=b.style.display==='none'?'':'none';return}fetch('/news/'+t.getAttribute('news_id')).then(r=>r.text()).then(h=>{b.innerHTML=h})})</script>`;
+const newsBody = n =>
+  `<p>配布資料・講義で使用します</p><a href="https://chukyo-u-ac-jp.zoom.us/rec/share/x">Zoom</a> <a href="/file/${n}1/">第${n}回 配布用（分割なしバージョン）.pdf</a> <a href="/file/${n}2/">第${n}回 配布用（2分割バージョン）.pdf</a>`;
+test('manabo の作り（お知らせ欄は AJAX で入り、見出しの処理は jQuery で委譲）でも、見出しを押して本文を読み込んでからファイルを集める', async t => {
+  const browser = await chromium.launch({headless: true});
+  t.after(() => browser.close());
+  const ctx = await browser.newContext();
+  await ctx.route('**/*', r => {
+    const u = r.request().url(),
+      m = u.match(/\/news\/(\d+)$/);
+    return r.fulfill({contentType: 'text/html; charset=utf-8', body: m ? newsBody(m[1]) : jqPage});
+  });
+  const p = await ctx.newPage();
+  await p.goto('https://manabo.cnc.chukyo-u.ac.jp/class/103901/');
+  const m = new Manabo({
+    root: '/nonexistent',
+    work: '/tmp',
+    state: {tasks: [], materials: [], settings: {}, courses: [{name: 'コーポレート・ファイナンスⅡ', id: '103901'}]},
+    save: async () => {},
+    credentials: async () => null
+  });
+  m.ctx = ctx;
+  assert.equal(await m.expandNotices(p), 2, 'jQuery に委譲された処理の要素を押す');
+  const {classInfo} = await import('../local/manabo.js');
+  const info = await p.evaluate(classInfo);
+  assert.match(info.notice, /配布資料・講義で使用します/, '読み込まれた本文を読む');
+  assert.deepEqual(
+    m.wantedFiles(info.noticeFiles).map(f => f.url.replace('https://manabo.cnc.chukyo-u.ac.jp', '')),
+    ['/file/11/', '/file/21/']
+  );
+  assert.equal(await m.expandNotices(p), 2, '二度目も押せる（開いた項目を閉じるが、本文は残るのでファイルは集まる）');
+  assert.deepEqual((await p.evaluate(classInfo)).noticeFiles.length, 4);
+});
