@@ -35,3 +35,5 @@ CREATE INDEX IF NOT EXISTS ai_requests_status ON ai_requests(status, updated);
 -- 作っている最中の依頼（同時に作る数と 1 日の回数の上限を守るための予約）。作り終えたら消す。残ったもの（Worker が途中で止まったなど）は 30 分たてば数えず、定期実行で消す
 CREATE TABLE IF NOT EXISTS ai_inflight (id TEXT PRIMARY KEY, account TEXT NOT NULL, created TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ai_inflight_account ON ai_inflight(account, created);
+-- 出席コードの共有：同じ授業（manabo の授業 ID。なければ授業名）の利用者がその日に入れた出席コード。1 人 1 授業 1 日 1 件（入れ直せば上書き）。画面の入力に「他ユーザーの入力コード」として出す
+CREATE TABLE IF NOT EXISTS attendance_codes (course TEXT NOT NULL, day TEXT NOT NULL, account TEXT NOT NULL, code TEXT NOT NULL, created TEXT NOT NULL, PRIMARY KEY(course, day, account));

@@ -93,3 +93,45 @@ test('資料のボタンはスマホの幅でも名前を折り返し、画面�
 test('qrcode は依存に入っている', () => {
   assert.match(JSON.parse(src('package.json')).dependencies.qrcode, /^\^1\./);
 });
+// manabo への直接リンク：スマホでは saboro が manabo を自動操作できないので、本人が manabo を開いて操作する入口を出す
+test('manabo への直接リンクは、授業 ID が分かる授業はその授業ページ、分からなければ manabo のトップ', () => {
+  const app = src('dist/app.js');
+  assert.match(app, rx("const LMS='https://manabo.cnc.chukyo-u.ac.jp';"));
+  assert.match(
+    app,
+    rx("const manaboCourseUrl=i=>(courseIdOf(i)?`${LMS}/class/${encodeURIComponent(courseIdOf(i))}/`:LMS+'/');")
+  );
+  assert.match(
+    app,
+    rx('`<a class="${cls}" href="${esc(manaboCourseUrl(i))}" target="_blank" rel="noopener">${esc(label)}</a>`')
+  );
+});
+test('授業ページ・状態の欄・出席コードの案内と入力の画面に manabo へのリンクを出す', () => {
+  const app = src('dist/app.js');
+  assert.match(app, rx("出席確認</button>`:''}${key?manaboLink(i):''}"));
+  assert.match(app, rx('`<a href="${LMS}/" target="_blank" rel="noopener">manabo を開く</a>`,`自動確認'));
+  assert.match(
+    app,
+    rx(
+      "入力する</button>${courses.indexOf(p.name)>=0?`<span style=\"margin-left:8px\">${manaboLink(courses.indexOf(p.name),'manabo で自分で入れる','btn')}</span>`:''}</div>`"
+    )
+  );
+  assert.match(
+    app,
+    rx(
+      '<div class="modal-footer">${courses.indexOf(name)>=0?manaboLink(courses.indexOf(name),\'manabo で自分で入れる\',\'btn\'):\'\'}<button class="btn" id="dialog-cancel">あとで</button>'
+    )
+  );
+  assert.match(src('dist/saboro.css'), /\.nav2 a\{color:#fff;text-decoration:underline\}/);
+});
+test('今日の授業と時間割の回の画面にも manabo へのリンクを出す', () => {
+  const tt = src('dist/timetable.js');
+  assert.match(tt, rx("typeof manaboLink==='function'?manaboLink(s.i,'manabo'):''].filter(Boolean);"));
+  assert.match(
+    tt,
+    rx(
+      "<button class=\"btn\" id=\"ss-course\">授業の設定を変更</button>${typeof manaboLink==='function'?manaboLink(i,'manabo で開く','btn'):''}</div>`"
+    )
+  );
+  assert.match(src('eslint.config.js'), /manaboLink: 'readonly'/);
+});

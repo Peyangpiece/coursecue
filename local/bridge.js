@@ -26,7 +26,7 @@ import {mkdir, readFile, writeFile, rm} from 'node:fs/promises';
 import {createHash, timingSafeEqual} from 'node:crypto';
 import {Manabo} from './manabo.js';
 import QRCode from 'qrcode';
-import {LEGACY_COURSES, courseNames, contentType, removeCourse, restoreCourse} from './core.js';
+import {LEGACY_COURSES, courseNames, courseIdOf, contentType, removeCourse, restoreCourse} from './core.js';
 import {requestAllowed} from './local-server.js';
 import {
   createGenerator,
@@ -151,7 +151,7 @@ if (!state.settings?.downloadDir && !state.rootAdopted) {
   state.rootAdopted = true;
 }
 state.defaultDownloadDir = materialsRoot();
-state.features = ['pickfolder', 'attendance', 'removecourse', 'aipolicy']; // AI の使用量：1 回ごとに usage.jsonl に追記し、月ごとの集計を状態に持つ（画面に出す。料金を決めるための実測用）
+state.features = ['pickfolder', 'attendance', 'removecourse', 'aipolicy', 'attcheck']; // AI の使用量：1 回ごとに usage.jsonl に追記し、月ごとの集計を状態に持つ（画面に出す。料金を決めるための実測用）
 const usageFile = usageLog(join(work, 'usage.jsonl'));
 async function recordUsage(e) {
   state.usage = addUsage(state.usage, e);
@@ -392,6 +392,11 @@ async function run(job) {
       if (i < 0) throw Error('その授業は見つかりません');
       await lms.answerPrompt(name, job.payload?.code);
       await save();
+      // 入れたコードを同じ授業の利用者と共有する（画面の入力の「他ユーザーの入力コード」）。共有に失敗しても出席の処理は続ける
+      await api('/api/attendance-codes', 'POST', {
+        course: courseIdOf(i, state) || name,
+        code: String(job.payload?.code ?? '').trim()
+      }).catch(() => {});
       try {
         await lms.sync({course: i});
       } catch (e) {
@@ -402,6 +407,18 @@ async function run(job) {
       }
       await save();
       return {ok: true, message: `${name} の出席コードを入れました`};
+    } else if (job.kind === 'attcheck') {
+      // 「出席確認」：授業ページを開き、出席コードの入力が出ているかだけ確かめる（出ていれば画面に入力が出る）
+      const name = String(job.payload?.course || ''),
+        i = courseNames(state).indexOf(name);
+      if (i < 0) throw Error('その授業は見つかりません');
+      const open = await lms.checkAttendance(i);
+      await save();
+      return {
+        ok: true,
+        open,
+        message: open ? `${name}：出席コードの入力が出ています` : '現在、出席は受け付けておりません'
+      };
     } else if (job.kind === 'seen') {
       // 新着のお知らせを「確認した」：見た印に加え、新着から消す（keys で選んだものだけ、または all で全部）
       const keys = Array.isArray(job.payload?.keys) ? job.payload.keys.map(String) : [],
