@@ -12,6 +12,23 @@ export const termFolder = term => {
 // デスクトップの場所：アプリ（Electron）は app.getPath('desktop') を COURSECUE_DESKTOP で渡す（OneDrive などで移動している場合に対応）
 export const desktopDir = (home = homedir()) => process.env.COURSECUE_DESKTOP || join(home, 'Desktop');
 export const defaultDownloadRoot = ({desktop = desktopDir(), term} = {}) => join(desktop, termFolder(term));
+// 既定の保存先が変わっても（1.0.40 でデスクトップの「<西暦>_<学期名>」に）、以前の場所に保存した資料はそのまま使う。
+// 保存先を選んでいない人の記録（資料フォルダ「<保存先>/<授業名>/<ファイル>」の path）から保存先を数え、いちばん多い場所が残っていればそれを返す（なければ ''）
+export function adoptMaterialsRoot(materials, {defaultRoot, exists = existsSync, home = homedir()} = {}) {
+  const counts = new Map();
+  for (const m of materials || []) {
+    if (!m?.path) continue;
+    const root = dirname(dirname(m.path));
+    counts.set(root, (counts.get(root) || 0) + 1);
+  }
+  const [root] = [...counts].sort((a, b) => b[1] - a[1])[0] || [];
+  if (!root || root === defaultRoot || !exists(root)) return '';
+  try {
+    return checkDownloadDir(root, home);
+  } catch {
+    return '';
+  }
+}
 export function checkDownloadDir(input, home = homedir()) {
   const raw = String(input ?? '').trim();
   if (!raw) return '';

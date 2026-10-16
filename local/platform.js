@@ -151,6 +151,26 @@ async function pickFolderWin(current) {
   );
   return out || null;
 }
+// OS の通知（授業開始の同期で資料を保存したとき・出席コードの入力が出たとき）。Mac は osascript の display notification。文言は引数で渡し、スクリプトに埋め込まない
+export function notifyMac(title, body, run = execFile) {
+  return new Promise(resolve => {
+    run(
+      'osascript',
+      [
+        '-e',
+        'on run argv',
+        '-e',
+        'display notification (item 2 of argv) with title (item 1 of argv)',
+        '-e',
+        'end run',
+        String(title).slice(0, 100),
+        String(body).slice(0, 200)
+      ],
+      {timeout: 10000},
+      () => resolve()
+    );
+  });
+}
 export function defaultPlatform() {
   return {
     name: process.platform,
@@ -159,6 +179,7 @@ export function defaultPlatform() {
     trash,
     quarantine,
     pickFolder: win ? pickFolderWin : null,
+    notify: process.platform === 'darwin' ? notifyMac : null,
     restart: null,
     version: process.env.COURSECUE_VERSION || ''
   };

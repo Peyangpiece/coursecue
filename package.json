@@ -16,8 +16,7 @@
     "seed": "node local/seed.js",
     "deploy-key": "node local/deploy-key.js new",
     "desktop": "electron .",
-    "desktop:build": "electron-builder --publish never",
-    "desktop:release": "electron-builder --publish always"
+    "desktop:build": "electron-builder --publish never"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -36,7 +35,7 @@
     "pdf-parse": "^2.4.5",
     "playwright": "^1.64.0"
   },
-  "version": "1.0.43",
+  "version": "1.0.44",
   "description": "saboro デスクトップ：授業・課題・提出状況・出席を管理する",
   "main": "desktop/main.js",
   "build": {

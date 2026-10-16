@@ -38,5 +38,5 @@ test('画面：入力待ちがあれば manabo と同じ入力画面（文言そ
     app,
     rx("document.querySelectorAll('[data-prompt]').forEach(e=>(e.onclick=()=>showPrompts(e.dataset.prompt)));")
   );
-  assert.match(app, rx('html+=promptPanel();html+=attentionPanel();'), 'ホームの上に出す');
+  assert.match(app, rx('html+=promptPanel();html+=noticePanel();html+=attentionPanel();'), 'ホームの上に出す');
 });

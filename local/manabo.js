@@ -7,6 +7,7 @@ const SYNC_PARALLEL = Math.max(1, Math.min(5, Number(process.env.COURSECUE_SYNC_
 import {taskIdentity, mergeTasks} from './task-identity.js';
 import {weekdayOf, periodOf, scheduleFor, calendar, calendarEnd} from './calendar.js';
 import {courseInfoPlan, mergeCourseInfo, quoteSource, fileRound, modeExcerpt} from './timetable.js';
+import {parseNotice, noticeKey, noticeEvents} from './notices.js';
 import {CUBICS_URL, extractGrid, parseGrid, mapEntries} from './cubics.js';
 import {inside, duplicateCandidates, trashFile, preferLayout, layoutDuplicates} from './download-dir.js';
 import {chromium} from 'playwright';
@@ -111,6 +112,7 @@ export function openNotices() {
   for (const e of leaves) {
     if (clicked.length >= 100) break;
     if (clicked.some(c => c.contains(e) || e.contains(c))) continue;
+    e.dataset.saboroNotice = String(clicked.length);
     e.click();
     clicked.push(e);
   }
@@ -153,7 +155,32 @@ export function classInfo() {
         .filter(a => /\/file\//.test(a.getAttribute('href') || ''))
         .map(a => ({url: a.href, name: (a.textContent || '').trim(), text: (a.textContent || '').trim()}))
     : [];
-  return {syllabus, rows, notice, noticeFiles};
+  // お知らせの 1 件ずつ：openNotices が押した見出し（data-saboro-notice）から、その項目の入れ物（ほかの見出しを含まない最大の祖先）を取り、題名・本文・付いているファイルを分ける
+  const notices = [];
+  if (box)
+    for (const t of box.querySelectorAll('[data-saboro-notice]')) {
+      let item = t;
+      while (
+        item.parentElement &&
+        item.parentElement !== box &&
+        item.parentElement.querySelectorAll('[data-saboro-notice]').length === 1
+      )
+        item = item.parentElement;
+      // 押したのが [+] の画像などで文字がなければ、文字のある親（見出しの行）を題名にする
+      let te = t;
+      while (te !== item && !(te.innerText || te.textContent || '').trim()) te = te.parentElement;
+      const title = (te.innerText || te.textContent || '').trim().split('\n')[0].trim(),
+        text = (item.innerText || '').trim();
+      notices.push({
+        title,
+        text: text.startsWith(title) ? text.slice(title.length).trim() : text,
+        files: [...item.querySelectorAll('a[href]')]
+          .filter(a => /\/file\//.test(a.getAttribute('href') || ''))
+          .map(a => ({url: a.href, name: (a.textContent || '').trim()})),
+        links: [...item.querySelectorAll('a[href]')].map(a => a.href).filter(h => /^https?:/.test(h))
+      });
+    }
+  return {syllabus, rows, notice, noticeFiles, notices};
 }
 // ディレクトリ名・授業計画の行に【動画】などがある回をオンデマンドとする（manabo の表記の決まり）
 const ondemand = /【\s*動画\s*】|\[\s*動画\s*\]|（\s*動画\s*）|動画配信|オンデマンド/;
@@ -339,8 +366,20 @@ const promptOpen = async p =>
 export const AI_PENDING_ACTION =
   '回答を作成中です（SaBoRo課題サポート。通常 1 時間以内、遅くとも 24 時間以内に入力します）';
 export class Manabo {
-  constructor({root, work, credentials, state, save, ai, extract, ask, trash = trashFile, quarantine = null}) {
-    Object.assign(this, {baseRoot: root, work, credentials, state, ai, extract, ask, trash, quarantine});
+  constructor({
+    root,
+    work,
+    credentials,
+    state,
+    save,
+    ai,
+    extract,
+    ask,
+    trash = trashFile,
+    quarantine = null,
+    notify = null
+  }) {
+    Object.assign(this, {baseRoot: root, work, credentials, state, ai, extract, ask, trash, quarantine, notify});
     this.spareIds = new Set();
     this.held = new Map();
     this.promptTabs = new Map();
@@ -561,10 +600,17 @@ export class Manabo {
     for (const t of tasks) t.aiPolicy = this.aiPolicyOf(t, all);
   }
   // シラバス（授業計画）とお知らせは授業ページを開いた直後に読む（回ごとの予定 plannedModes に使う）
-  async readSyllabus(i, p) {
+  async readSyllabus(i, p, infoIssues = null) {
     const name = this.courses()[i].name,
       id = courseIdOf(i, this.state);
-    const page = p ? await this.syllabus(p, id).catch(() => null) : null;
+    const page = p
+      ? await this.syllabus(p, id).catch(e => {
+          infoIssues?.push(
+            `${name}：シラバス・お知らせを読めませんでした（${String(e.message).split('\n')[0].slice(0, 80)}）`
+          );
+          return null;
+        })
+      : null;
     if (page?.rows) this.state.syllabusRows = {...this.state.syllabusRows, [name]: page.rows};
     return page;
   }
@@ -715,7 +761,13 @@ export class Manabo {
           if (page && allowed(page.url())) {
             await page.waitForLoadState('domcontentloaded');
             await page.waitForLoadState('networkidle', {timeout: 10000}).catch(() => {});
-            info = {...info, ...(await page.evaluate(classInfo)), notice: info.notice, noticeFiles: info.noticeFiles};
+            info = {
+              ...info,
+              ...(await page.evaluate(classInfo)),
+              notice: info.notice,
+              noticeFiles: info.noticeFiles,
+              notices: info.notices
+            };
           } else if (!url) {
             await p
               .getByText('授業計画', {exact: true})
@@ -731,6 +783,7 @@ export class Manabo {
       }
     }
     this.noticeFiles = {...this.noticeFiles, [id]: info.noticeFiles || []};
+    this.noticeItems = {...this.noticeItems, [id]: info.notices || []};
     const scrub = t => scrubIds(t).trim();
     const out = [];
     if (info.syllabus) out.push({file: 'シラバス', text: scrub(info.syllabus).slice(0, 40000)});
@@ -1222,9 +1275,25 @@ export class Manabo {
     this.promptTabs.delete(name);
     this.clearPrompt(name);
     if (p.handedOver) throw Object.assign(new PromptHandOver(), {retry: true});
-    const work = this.crawlCourseOn(i, p, ctx);
+    const before = this.state.materials.length,
+      issuesBefore = ctx.infoIssues.length,
+      work = this.crawlCourseOn(i, p, ctx);
     work.catch(() => {});
-    const message = await Promise.race([work.then(() => null), watchPrompt(p)]);
+    let message;
+    try {
+      message = await Promise.race([work.then(() => null), watchPrompt(p)]);
+    } finally {
+      // この授業の今回の結果（画面の「n 件保存」と授業開始の通知に使う）
+      this.state.courseSummary = {
+        ...this.state.courseSummary,
+        [name]: {
+          at: new Date().toISOString(),
+          materials: this.state.materials.length - before,
+          notices: (this.state.notices?.[name] || []).length,
+          failures: ctx.infoIssues.length - issuesBefore
+        }
+      };
+    }
     if (message === null) return;
     this.promptTabs.set(name, p);
     this.notePrompt(name, i, message);
@@ -1239,6 +1308,9 @@ export class Manabo {
       ...this.state.prompts,
       [name]: {course: i, message: String(message || '').slice(0, 300), at: new Date().toISOString()}
     };
+    Promise.resolve(
+      this.notify?.('saboro', `${name}：出席コードの入力が出ています。SaBoRo の画面で入力できます`)
+    ).catch(() => {});
   }
   clearPrompt(name) {
     if (!this.state.prompts?.[name]) return;
@@ -1290,10 +1362,37 @@ export class Manabo {
     await p.goto(`${LMS}/class/${id}/`, {waitUntil: 'domcontentloaded'});
     await this.settled(p);
     await this.applyCalendar(p, id);
-    const syllabus = await this.readSyllabus(i, p);
-    // お知らせに付いているファイルも、その授業のフォルダに保存する
+    const syllabus = await this.readSyllabus(i, p, infoIssues);
+    // お知らせ：1 件ずつ読み（回・日付・Zoom・教室・休講）、新着を控え、休講を時間割の予定にする
+    const items = (this.noticeItems?.[id] || []).map(n => parseNotice(n, calendar.term));
+    this.state.notices = {...this.state.notices, [name]: items};
+    const keys = items.map(noticeKey),
+      seen = this.state.noticeSeen?.[name];
+    if (!seen) this.state.noticeSeen = {...this.state.noticeSeen, [name]: keys};
+    else {
+      const known = new Set([...seen, ...(this.state.newNotices || []).map(x => x.key)]);
+      const fresh = items.filter((n, k) => !known.has(keys[k]));
+      if (fresh.length)
+        this.state.newNotices = [
+          ...(this.state.newNotices || []),
+          ...fresh.map((n, k) => ({
+            key: noticeKey(n),
+            course: name,
+            title: n.title,
+            date: n.date,
+            at: new Date().toISOString()
+          }))
+        ];
+    }
+    this.state.noticeEvents = [
+      ...(this.state.noticeEvents || []).filter(e => e.course !== name),
+      ...noticeEvents(name, items)
+    ];
+    // お知らせに付いているファイルも、その授業のフォルダに保存する（回はお知らせの見出しから）
+    const roundOf = new Map();
+    for (const n of items) for (const f of n.files) if (n.round) roundOf.set(f.url, n.round);
     for (const e of this.wantedFiles(this.noticeFiles?.[id] || []))
-      await this.download(e, name).catch(err =>
+      await this.download(e, name, roundOf.get(e.url)).catch(err =>
         infoIssues.push(
           `${name}：お知らせのファイル「${e.name || e.url}」を保存できません（${String(err.message).slice(0, 80)}）`
         )
@@ -1322,7 +1421,13 @@ export class Manabo {
               this.state.tasks.filter(t => t.course === i),
               round
             );
-            if (full) for (const e of this.wantedFiles(entries)) await this.download(e, name);
+            if (full)
+              for (const e of this.wantedFiles(entries))
+                await this.download(e, name, round).catch(err =>
+                  infoIssues.push(
+                    `${name}：資料「${e.name || e.url}」を保存できません（${String(err.message).slice(0, 80)}）`
+                  )
+                );
             if (waiting.length) {
               const check = await this.ctx.newPage();
               try {
@@ -1362,7 +1467,12 @@ export class Manabo {
         const wanted = this.wantedFiles(entries);
         for (const entry of entries) {
           if (/\/file\//.test(entry.url)) {
-            if (wanted.includes(entry)) await this.download(entry, name);
+            if (wanted.includes(entry))
+              await this.download(entry, name, round).catch(err =>
+                infoIssues.push(
+                  `${name}：資料「${entry.name || entry.url}」を保存できません（${String(err.message).slice(0, 80)}）`
+                )
+              );
             continue;
           }
           if (hasRegular && isLate(entry)) continue;
@@ -1475,15 +1585,18 @@ export class Manabo {
       timing = {courses: {}};
     this.firstSync = !this.state.lastSync;
     const ended = calendarEnd() < new Date().toLocaleDateString('sv-SE', {timeZone: 'Asia/Tokyo'});
-    await this.trashDuplicates().catch(() => {});
-    await this.progress('manabo にログイン');
-    await this.login();
-    const p = await this.page(),
-      missing = new Map(),
+    const missing = new Map(),
       infoIssues = ended
         ? [`学年暦（${calendar.term}）の期間が終わっています。新しい学期の授業日は、時間割の画面で設定してください`]
         : [],
-      queue = [];
+      queue = [],
+      materialsBefore = this.state.materials.length;
+    await this.trashDuplicates().catch(e =>
+      infoIssues.push(`重複した資料の整理に失敗（${String(e.message).split('\n')[0].slice(0, 80)}）`)
+    );
+    await this.progress('manabo にログイン');
+    await this.login();
+    const p = await this.page();
     if (only === null)
       await this.discoverCourses(p).catch(e =>
         infoIssues.push(`manabo の授業一覧を読み取れません（${String(e.message).slice(0, 80)}）`)
@@ -1561,6 +1674,22 @@ export class Manabo {
       ...[...missing].map(([name, rounds]) => `${name}：授業日未設定（${roundRanges(rounds)}）`),
       ...infoIssues
     ];
+    // 今回の同期のまとめ（画面に「授業 n・資料 m 件保存・お知らせ k・失敗 j」と出す）
+    const synced =
+      only === null
+        ? this.courses()
+            .filter(c => !c.removed)
+            .map(c => c.name)
+        : [this.courses()[only].name];
+    this.state.syncSummary = {
+      at: new Date().toISOString(),
+      scope: only === null ? 'all' : synced[0],
+      courses: synced.length,
+      materials: this.state.materials.length - materialsBefore,
+      notices: synced.reduce((n, c) => n + (this.state.notices?.[c] || []).length, 0),
+      newNotices: (this.state.newNotices || []).length,
+      failures: found.length
+    };
     if (only === null) {
       this.state.issues = found;
       this.state.lastSync = new Date().toISOString();
@@ -1606,7 +1735,7 @@ export class Manabo {
       e => e.name || e.title || ''
     );
   }
-  async download(entry, course) {
+  async download(entry, course, round = 0) {
     const here = m => inside(m.path, this.root);
     if (this.state.materials.some(m => m.url === entry.url && here(m))) return;
     await this.page();
@@ -1650,6 +1779,7 @@ export class Manabo {
         path: file,
         sha256: h,
         textHash: hash(String(entry.text ?? entry.name ?? '')),
+        round: Number(round) || fileRound(entry.name || entry.text || name) || 0,
         downloadedAt: new Date().toISOString()
       }
     ];
