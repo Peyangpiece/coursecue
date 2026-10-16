@@ -135,3 +135,50 @@ test('今日の授業と時間割の回の画面にも manabo へのリンクを
   );
   assert.match(src('eslint.config.js'), /manaboLink: 'readonly'/);
 });
+test('ホーム画面に追加した saboro が自動でつながらないときの手段：接続用リンクをコピーして、未接続の画面に貼り付けて接続する。?connect= も読む', () => {
+  const app = src('dist/app.js');
+  assert.match(app, rx("connectKey=fragment.get('connect')??new URLSearchParams(location.search).get('connect');"));
+  assert.match(app, /<button class="btn" id="copylink">接続用リンクをコピー<\/button>/);
+  assert.match(app, rx("const url=location.origin+'/#connect='+key;try{await navigator.clipboard.writeText(url);"));
+  assert.match(app, /id="pastelink"/);
+  assert.match(app, rx("const k=keyIn(document.getElementById('pastelink')?.value);if(!k){toast("));
+  assert.match(app, rx('connectFrom(k);'));
+  assert.match(app, /ホーム画面に追加した saboro はまだ接続されていません。/);
+  assert.match(app, rx("const keyIn=text=>String(text||'').match(/[0-9a-f]{64}/i)?.[0].toLowerCase()||'';"));
+});
+import vm from 'node:vm';
+import QRCodeLib from 'qrcode';
+import {PNG} from 'pngjs';
+test('ホーム画面に追加した saboro からも接続できる：画面のカメラで QR コードを読み取る（同梱の jsQR）。PC が出す QR コードを jsQR が読めて、鍵を取り出せる', async () => {
+  const app = src('dist/app.js');
+  assert.match(app, /<button class="btn btn-primary" id="scanqr">QR コードを読み取って接続<\/button>/);
+  assert.match(app, rx("bind('scanqr',scanConnect);"));
+  assert.match(app, rx("const JSQR='/jsqr.js?v=1.4.0';"));
+  assert.match(
+    app,
+    rx("navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});"),
+    '背面カメラ'
+  );
+  assert.match(app, rx('const bmp=await createImageBitmap(f);'), '写真からも読む（blob: の URL は CSP で使えない）');
+  assert.match(
+    app,
+    rx('scanStop=()=>{clearInterval(timer);stream.getTracks().forEach(t=>t.stop());};'),
+    '閉じたらカメラを止める'
+  );
+  assert.match(
+    app,
+    rx('const found=text=>{const k=keyIn(text);if(!k)return false;close();connectFrom(k);return true;};')
+  );
+  assert.match(src('.prettierignore'), /dist\/jsqr\.js/);
+  assert.match(src('eslint.config.js'), /'dist\/jsqr\.js'/);
+  assert.match(src('dist/jsqr.LICENSE.txt'), /Apache License/);
+  assert.match(src('dist/jsqr.js'), /Apache License 2\.0/);
+  // PC の /qr.svg と同じ内容の QR コードを PNG にして jsQR で読む
+  const url = 'https://coursecue.hrk-6888.workers.dev/#connect=' + 'ab'.repeat(32);
+  const png = PNG.sync.read(await QRCodeLib.toBuffer(url, {type: 'png', margin: 1, width: 220}));
+  const ctx = {};
+  vm.runInNewContext(src('dist/jsqr.js'), ctx);
+  const r = ctx.jsQR(new Uint8ClampedArray(png.data), png.width, png.height, {inversionAttempts: 'dontInvert'});
+  assert.equal(r?.data, url);
+  assert.equal(String(r.data).match(/[0-9a-f]{64}/i)[0], 'ab'.repeat(32));
+});

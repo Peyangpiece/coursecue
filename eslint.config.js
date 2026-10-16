@@ -47,7 +47,7 @@ const rules = {
   'no-useless-escape': 'off'
 };
 export default [
-  {ignores: ['node_modules/', 'release/', 'dist/academic-calendar.json']},
+  {ignores: ['node_modules/', 'release/', 'dist/academic-calendar.json', 'dist/jsqr.js']},
   js.configs.recommended,
   {
     files: [

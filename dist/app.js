@@ -637,6 +637,7 @@ const pushSupported = () =>
   'Notification' in window;
 const standalone = () =>
   typeof window !== 'undefined' &&
+  typeof navigator !== 'undefined' &&
   (window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true);
 async function pushSubscription() {
   if (!pushSupported()) return null;
@@ -710,6 +711,108 @@ async function testPush() {
     toast(d.sent ? 'テスト通知を送りました' : '送れませんでした。もう一度「この端末で通知を受け取る」を押してください');
   } catch (e) {
     toast(e.message);
+  }
+}
+// 接続用リンクを貼り付けて接続する（スマホ・ホーム画面に追加した saboro 向け）。ホーム画面に追加した saboro は Safari と保存場所が別なので、
+// start_url の ?connect= で自動でつながらなかったときの手段。リンクの中の 64 桁の鍵を取り出して connectFrom（確認の画面つき）
+function pasteConnect() {
+  const alone = standalone();
+  return `${alone && !key ? '<div class="alert alert-warning">ホーム画面に追加した saboro はまだ接続されていません。下の「QR コードを読み取って接続」でパソコンの QR コードを読むか、接続用リンクを貼り付けて接続してください。</div>' : ''}<div class="actions" style="margin-top:15px"><button class="btn btn-primary" id="scanqr">QR コードを読み取って接続</button><span class="muted">パソコンの saboro の「スマホと連携（QR コード）」をこの画面のカメラで読みます。</span></div><details id="paste-details" style="margin-top:15px"${alone ? ' open' : ''}><summary>接続用リンクを貼り付けて接続する</summary><p class="muted" style="margin:8px 0">接続済みの saboro（Safari など）の設定 → manabo連携 の「接続用リンクをコピー」で写したリンクか、パソコンの QR コードのリンクを貼り付けてください。</p><div class="course-edit"><input class="form-control" id="pastelink" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…/#connect=…"><button class="btn btn-primary" id="pasteconnect">接続する</button></div></details>`;
+}
+const keyIn = text =>
+  String(text || '')
+    .match(/[0-9a-f]{64}/i)?.[0]
+    .toLowerCase() || '';
+// QR コードをこの画面のカメラで読み取って接続する（ホーム画面に追加した saboro など。カメラアプリで QR コードを読むと Safari が開いてしまい、追加した saboro にはつながらないため）。
+// 読み取りは同梱の jsQR（/jsqr.js。使うときだけ読み込む）。カメラを使えなければ「写真から読み取る」で撮った写真を読む
+const JSQR = '/jsqr.js?v=1.4.0';
+let scanStop = null;
+function loadScript(src) {
+  return new Promise((ok, ng) => {
+    if (window.jsQR) return ok();
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = ok;
+    s.onerror = () => ng(Error('読み取りの部品を読み込めませんでした'));
+    document.head.appendChild(s);
+  });
+}
+// 映像・画像を 1200px までに縮めて jsQR に渡す（大きな写真は遅いため）
+function decodeQr(source, w, h) {
+  const scale = Math.min(1, 1200 / Math.max(w, h)),
+    cw = Math.max(1, Math.round(w * scale)),
+    ch = Math.max(1, Math.round(h * scale));
+  const c = document.createElement('canvas');
+  c.width = cw;
+  c.height = ch;
+  const g = c.getContext('2d');
+  g.drawImage(source, 0, 0, cw, ch);
+  return window.jsQR(g.getImageData(0, 0, cw, ch).data, cw, ch, {inversionAttempts: 'dontInvert'})?.data || '';
+}
+async function scanConnect() {
+  if (dialogDone) return;
+  const d = document.getElementById('dialog');
+  d.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div class="modal-header" id="dialog-title">QR コードを読み取る</div><div class="modal-body"><p class="muted" id="scanstate" style="margin:0 0 8px">パソコンの saboro の「スマホと連携（QR コード）」を映してください。</p><video id="scanvideo" playsinline muted autoplay style="display:block;width:100%;max-height:60vh;background:#000;border-radius:4px"></video><p style="margin:8px 0 0"><label class="btn">写真から読み取る<input id="scanfile" type="file" accept="image/*" capture="environment" hidden></label></p></div><div class="modal-footer"><button class="btn" id="dialog-cancel">閉じる</button></div></div>`;
+  d.classList.add('open');
+  const close = () => {
+    scanStop?.();
+    scanStop = null;
+    d.classList.remove('open');
+    d.innerHTML = '';
+    dialogDone = null;
+  };
+  dialogDone = close;
+  document.getElementById('dialog-cancel').onclick = close;
+  d.onclick = e => {
+    if (e.target === d) close();
+  };
+  const found = text => {
+    const k = keyIn(text);
+    if (!k) return false;
+    close();
+    connectFrom(k);
+    return true;
+  };
+  const say = t => {
+    const el = document.getElementById('scanstate');
+    if (el) el.textContent = t;
+  };
+  document.getElementById('scanfile').onchange = async e => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try {
+      await loadScript(JSQR);
+      const bmp = await createImageBitmap(f);
+      if (!found(decodeQr(bmp, bmp.width, bmp.height)))
+        say('QR コードを読み取れませんでした。QR コード全体が入るように撮り直してください。');
+    } catch (e2) {
+      say(briefError(e2.message));
+    }
+  };
+  try {
+    await loadScript(JSQR);
+    const stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment'}, audio: false});
+    const video = document.getElementById('scanvideo');
+    if (!video) {
+      stream.getTracks().forEach(t => t.stop());
+      return;
+    }
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    const timer = setInterval(() => {
+      if (!video.videoWidth) return;
+      if (found(decodeQr(video, video.videoWidth, video.videoHeight))) clearInterval(timer);
+    }, 250);
+    scanStop = () => {
+      clearInterval(timer);
+      stream.getTracks().forEach(t => t.stop());
+    };
+  } catch (e) {
+    const v = document.getElementById('scanvideo');
+    if (v) v.hidden = true;
+    say(
+      `カメラを使えません（${briefError(e.message)}）。「写真から読み取る」で、カメラで撮った QR コードを読み取れます。`
+    );
   }
 }
 // 入力待ちの出席コード（PC の状態 state.prompts）。一度出した入力は、同じものをもう一度自動では出さない（ホームの「入力する」で出せる）
@@ -942,7 +1045,7 @@ function settingsConnected() {
   // 認証情報が未設定なら、それが先決なので manabo連携 を先頭に。保存済みなら一番下へ（接続解除と一緒に）
   const credPanel = panel(
     'manabo連携',
-    `<table class="table-default"><tr><th>認証情報</th><td>${state.credentialsConfigured ? (state.os === 'win32' ? '暗号化して保存済み' : 'キーチェーン保存済み') : '<span class="attn">未設定</span>'}</td></tr><tr><th>${state.runtime === 'desktop' ? 'アプリのバージョン' : dev() + ' サービスのバージョン'}</th><td>${state.runtime === 'desktop' ? `<code>${esc(state.version || '')}</code> <span class="muted">（アプリは自動で更新を確認します）</span>` : state.version ? `<code>${esc(state.version.slice(0, 7))}</code>${state.deployed ? (macOutdated() ? ` <span class="attn">公開バージョン <code>${esc(state.deployed.slice(0, 7))}</code> への更新待ち</span><small class="muted" style="display:block">${dev()} は処理の合間に自動で更新します。長く変わらないときは ${dev()} でサービスを再起動してください（npm start または install:agent）。</small>` : ' <span class="muted">（公開バージョンと同じ）</span>') : ''}` : '<span class="muted">未確認</span>'}</td></tr></table>${state.credentialsConfigured ? `<details id="cred-details" style="margin-top:15px"><summary>認証情報を変更する</summary>${credForm}</details><div class="actions"><button class="btn" id="logout">この端末の接続を解除</button></div>` : `<p class="muted" style="margin-top:10px">同期・自動回答には manabo の ID とパスワードが必要です。</p>${credForm}`}`
+    `<table class="table-default"><tr><th>認証情報</th><td>${state.credentialsConfigured ? (state.os === 'win32' ? '暗号化して保存済み' : 'キーチェーン保存済み') : '<span class="attn">未設定</span>'}</td></tr><tr><th>${state.runtime === 'desktop' ? 'アプリのバージョン' : dev() + ' サービスのバージョン'}</th><td>${state.runtime === 'desktop' ? `<code>${esc(state.version || '')}</code> <span class="muted">（アプリは自動で更新を確認します）</span>` : state.version ? `<code>${esc(state.version.slice(0, 7))}</code>${state.deployed ? (macOutdated() ? ` <span class="attn">公開バージョン <code>${esc(state.deployed.slice(0, 7))}</code> への更新待ち</span><small class="muted" style="display:block">${dev()} は処理の合間に自動で更新します。長く変わらないときは ${dev()} でサービスを再起動してください（npm start または install:agent）。</small>` : ' <span class="muted">（公開バージョンと同じ）</span>') : ''}` : '<span class="muted">未確認</span>'}</td></tr></table><div class="actions"><button class="btn" id="copylink">接続用リンクをコピー</button><span class="muted">ホーム画面に追加した saboro やほかの端末に貼り付けて、同じ接続先につなぎます。他の人に渡さないでください。</span></div>${state.credentialsConfigured ? `<details id="cred-details" style="margin-top:15px"><summary>認証情報を変更する</summary>${credForm}</details><div class="actions"><button class="btn" id="logout">この端末の接続を解除</button></div>` : `<p class="muted" style="margin-top:10px">同期・自動回答には manabo の ID とパスワードが必要です。</p>${credForm}`}`
   );
   let html = state.credentialsConfigured ? '' : credPanel;
   // 自動処理は下の「設定を保存」でまとめて保存。ダウンロード先は選ぶとすぐ反映するので別の枠にする
@@ -1227,7 +1330,7 @@ function render() {
   } else html += billingStatusPanel() + saboroAiPanel() + settingsConnected();
   // 未接続で授業もないときの最初の画面：manabo との接続を先に案内する（授業を手で追加するのは接続しないときだけ）
   if (!key && !courses.length && view !== 'settings')
-    html = `<div class="col-full">${panel('manabo と接続', `<p>manabo と接続すると、授業・課題・締切・資料を自動で集め、課題の自動回答まで動きます。デスクトップアプリ（Mac・Windows）を起動し、「はじめの設定」で manabo の ID とパスワードを保存して「saboroを接続」を押してください。</p><div class="actions"><a class="btn btn-primary" id="connectmanabo" href="${LOCAL}/setup">manabo と接続</a><a class="btn" href="https://github.com/Peyangpiece/SaBoRo/releases/latest" target="_blank" rel="noopener">アプリをダウンロード（Mac / Windows）</a></div><p class="muted" style="margin-top:10px">「manabo と接続」は、アプリが動いているこのパソコンでだけ開けます。まだ入れていなければ、先にアプリをダウンロードしてください。</p><details id="manual-details" style="margin-top:15px"><summary>manabo と接続せずに使う（授業を手で追加する）</summary>${addCourseForm()}</details>`)}</div>`;
+    html = `<div class="col-full">${panel('manabo と接続', `<p>manabo と接続すると、授業・課題・締切・資料を自動で集め、課題の自動回答まで動きます。デスクトップアプリ（Mac・Windows）を起動し、「はじめの設定」で manabo の ID とパスワードを保存して「saboroを接続」を押してください。</p><div class="actions"><a class="btn btn-primary" id="connectmanabo" href="${LOCAL}/setup">manabo と接続</a><a class="btn" href="https://github.com/Peyangpiece/SaBoRo/releases/latest" target="_blank" rel="noopener">アプリをダウンロード（Mac / Windows）</a></div><p class="muted" style="margin-top:10px">「manabo と接続」は、アプリが動いているこのパソコンでだけ開けます。まだ入れていなければ、先にアプリをダウンロードしてください。</p>${pasteConnect()}<details id="manual-details" style="margin-top:15px"><summary>manabo と接続せずに使う（授業を手で追加する）</summary>${addCourseForm()}</details>`)}</div>`;
   else html = `<div class="col-side${dirOpen ? ' open' : ''}">${directory()}</div><div class="col-main">${html}</div>`;
   // 15秒ごとの再描画で開いた <details> が閉じないよう、開いていたものを覚えて戻す
   const open = [...(document.querySelectorAll('#app details[id][open]') || [])].map(d => d.id);
@@ -1466,6 +1569,24 @@ function bindView() {
       toast('保存を予約しました。' + dev() + ' で処理します。');
     } catch {
       toast('保存できませんでした');
+    }
+  });
+  bind('scanqr', scanConnect);
+  bind('pasteconnect', () => {
+    const k = keyIn(document.getElementById('pastelink')?.value);
+    if (!k) {
+      toast('接続用リンク（#connect= か ?connect= のあとに 64 桁の鍵）が見つかりません');
+      return;
+    }
+    connectFrom(k);
+  });
+  bind('copylink', async () => {
+    const url = location.origin + '/#connect=' + key;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('接続用リンクをコピーしました。ホーム画面に追加した saboro に貼り付けてください');
+    } catch {
+      window.prompt('この接続用リンクをコピーしてください', url);
     }
   });
   bind('pushon', enablePush);
@@ -1819,8 +1940,9 @@ async function connectFrom(candidate) {
   load();
   probeLocal();
 }
+// 接続用リンク：#connect=（QR コード・PC の「saboroを接続」）か ?connect=（ホーム画面に追加した saboro の start_url）
 const fragment = new URLSearchParams(location.hash.slice(1)),
-  connectKey = fragment.get('connect');
+  connectKey = fragment.get('connect') ?? new URLSearchParams(location.search).get('connect');
 if (connectKey !== null) history.replaceState(null, '', location.pathname);
 pendingDrawer = readRoute();
 pushRoute(true);

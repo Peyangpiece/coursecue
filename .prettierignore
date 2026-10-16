@@ -13,3 +13,4 @@ site/public/
 *.swift
 *.sh
 *.webmanifest
+dist/jsqr.js

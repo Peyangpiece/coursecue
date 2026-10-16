@@ -311,7 +311,7 @@ test('画面：設定の「この端末への通知」で Service Worker を登�
   assert.match(sw, rx("self.addEventListener('notificationclick',e=>{e.notification.close();"));
   assert.doesNotMatch(sw, /caches\.|fetch/, '画面の内容は保存しない');
   assert.match(src('dist/_headers'), /\/sw\.js\n {2}Cache-Control: no-cache/);
-  assert.match(src('dist/index.html'), /app\.js\?v=sp-26/);
+  assert.match(src('dist/index.html'), /app\.js\?v=sp-27/);
   const schema = src('server/schema.sql');
   assert.match(schema, /CREATE TABLE IF NOT EXISTS push_keys \(id TEXT PRIMARY KEY, value TEXT NOT NULL\)/);
   assert.match(
@@ -344,7 +344,7 @@ test('ホーム画面に追加：接続キーつきのマニフェスト（/api/
   assert.equal(r.headers.get('Content-Type'), 'application/manifest+json');
   assert.equal(r.headers.get('Cache-Control'), 'no-store');
   const m = await r.json();
-  assert.equal(m.start_url, '/#connect=' + tok('a'));
+  assert.equal(m.start_url, '/?connect=' + tok('a'), '# ではなく ?（起動 URL で # が落ちる環境があるため）');
   assert.equal(m.display, 'standalone');
   assert.equal(m.name, 'saboro — 課題管理', '同梱のマニフェストの中身を引き継ぐ');
   assert.equal(
