@@ -19,6 +19,10 @@
     }
   ],
   "main": "server/worker.js",
+  // Workers のログ（console.error の request_failed・定期処理の記録）を Cloudflare に保存する（既定の保持期間）
+  "observability": {
+    "enabled": true
+  },
   // 毎日 9:05（日本時間）：SaBoRo の AI の Batch の受け取りと、無料分を超えた分の請求（server/ai.js）
   "triggers": {
     "crons": ["5 0 * * *"]
