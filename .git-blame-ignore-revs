@@ -1,2 +1,3 @@
-# git blame でこの整形だけのコミットを飛ばす：git config blame.ignoreRevsFile .git-blame-ignore-revs
-90508d4d3bb7f66cb80b56b7ddfd410c0125a7e9
+# git blame でこの整形のコミットを飛ばす：git config blame.ignoreRevsFile .git-blame-ignore-revs
+# #91 の squash（整形が大半。ESLint の導入とテストの書き換えも含む）
+4012943e9917b501ee82c1cabf9ac81d6d91b68b
