@@ -179,6 +179,14 @@ let state = emptyState(),
   lastFocus = null,
   dialogDone = null,
   key = localStorage.getItem('coursecue-owner') || '';
+// ホーム画面に追加するためのマニフェスト：接続しているときは接続キーつき（/api/manifest?connect=）にして、追加した saboro の start_url に接続用リンクが入るようにする。
+// iPhone の「ホーム画面に追加」した saboro は Safari と保存場所が別で接続キーを持たないため、これがないと初めて開いたときに未接続になる
+function applyManifest() {
+  const link = typeof document !== 'undefined' && document.querySelector?.('link[rel="manifest"]');
+  if (link?.setAttribute)
+    link.setAttribute('href', key ? '/api/manifest?connect=' + encodeURIComponent(key) : '/manifest.webmanifest');
+}
+applyManifest();
 // 画面の状態：Mac の記録を読めたか（loaded）、接続できない理由（offline）、処理中のボタン（busy）、ドロワーの未保存（dirty）、メニュー・ディレクトリの開閉
 let loaded = !key,
   offline = '',
@@ -949,7 +957,7 @@ function settingsConnected() {
   if (state.features?.includes('removecourse')) html += panel('授業の整理', courseManager());
   html += panel(
     'この端末への通知',
-    `<p class="muted" style="margin:0 0 8px">新しいお知らせ・出席コードの入力・締切が近い課題（毎朝）を、この端末に通知します（Web Push。端末ごとに設定します）。iPhone は Safari の共有メニューから「ホーム画面に追加」した saboro で設定してください。</p><p id="pushstate" class="muted">確認中…</p><div class="actions" style="margin-top:0"><button class="btn btn-primary" id="pushon">この端末で通知を受け取る</button><button class="btn" id="pushoff" hidden>通知を止める</button><button class="btn" id="pushtest" hidden>テスト通知を送る</button></div>`
+    `<p class="muted" style="margin:0 0 8px">新しいお知らせ・出席コードの入力・締切が近い課題（毎朝）を、この端末に通知します（Web Push。端末ごとに設定します）。iPhone は Safari の共有メニューから「ホーム画面に追加」した saboro で設定してください（追加はこの接続した画面から行い、初めて開くときに「接続する」を押します）。</p><p id="pushstate" class="muted">確認中…</p><div class="actions" style="margin-top:0"><button class="btn btn-primary" id="pushon">この端末で通知を受け取る</button><button class="btn" id="pushoff" hidden>通知を止める</button><button class="btn" id="pushtest" hidden>テスト通知を送る</button></div>`
   );
 
   return (
@@ -1476,6 +1484,7 @@ function bindView() {
     await disablePush();
     key = '';
     localStorage.removeItem('coursecue-owner');
+    applyManifest();
     courses = guestData?.courses || [];
     state = guestData?.state || emptyState();
     loaded = true;
@@ -1794,7 +1803,7 @@ async function connectFrom(candidate) {
   if (
     !(await ownedLocally(candidate)) &&
     !(await ask(
-      '別の接続先に切り替えようとしています。自分のパソコンの saboro の「saboroを接続」から開いた場合か、自分のパソコンに出した「スマホと連携」の QR コードを読んだ場合だけ「接続する」を押してください。他の人から送られたリンクなら切り替えないでください（manabo のパスワードを他人に渡してしまうおそれがあります）。',
+      '別の接続先に切り替えようとしています。自分のパソコンの saboro の「saboroを接続」から開いた場合、自分のパソコンに出した「スマホと連携」の QR コードを読んだ場合、ホーム画面に追加した saboro を初めて開いた場合だけ「接続する」を押してください。他の人から送られたリンクなら切り替えないでください（manabo のパスワードを他人に渡してしまうおそれがあります）。',
       '接続する',
       true
     ))
@@ -1805,6 +1814,7 @@ async function connectFrom(candidate) {
   key = candidate;
   loaded = false;
   localStorage.setItem('coursecue-owner', key);
+  applyManifest();
   render();
   load();
   probeLocal();

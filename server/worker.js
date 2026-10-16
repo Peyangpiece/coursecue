@@ -21,6 +21,25 @@ const KINDS = [
   'attcheck'
 ];
 const todayJst = () => new Date().toLocaleDateString('sv-SE', {timeZone: 'Asia/Tokyo'});
+// 同梱の manifest.webmanifest（静的な配信）を元に start_url だけ変える。読めなければ最小のもの
+export async function manifestFor(env, origin, connect) {
+  let base = null;
+  try {
+    const r = await env.ASSETS.fetch(new Request(origin + '/manifest.webmanifest'));
+    if (r.ok) base = await r.json();
+  } catch {}
+  base ??= {
+    name: 'saboro — 課題管理',
+    short_name: 'saboro',
+    scope: '/',
+    display: 'standalone',
+    lang: 'ja',
+    background_color: '#ffffff',
+    theme_color: '#005bac',
+    icons: [{src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any'}]
+  };
+  return {...base, start_url: connect ? '/#connect=' + connect : '/'};
+}
 // VAPID の sub（プッシュサービスへの連絡先。URL でよい）
 const pushSubject = env => env.VAPID_SUBJECT || DEFAULT_SUBJECT;
 const json = (data, status = 200, origin = '') =>
@@ -945,6 +964,18 @@ export async function handle(req, env, store, ctx) {
   if (req.method === 'OPTIONS') return json({}, 200, origin);
   try {
     // 学年暦（認証なし。PC と画面が新しい学期の授業日を受け取る）。管理者画面で保存したもの、なければ同梱のもの
+    // ホーム画面に追加するためのマニフェスト（認証なし）：接続キーつきで開くと start_url に #connect= を入れて返す。
+    // iPhone の「ホーム画面に追加」した saboro は Safari と保存場所が別で接続キーを持たないため、初めて開くときに start_url の接続用リンクで同じ接続先につなぐ
+    if (u.pathname === '/api/manifest' && req.method === 'GET') {
+      const connect = u.searchParams.get('connect') || '';
+      return new Response(
+        JSON.stringify(await manifestFor(env, u.origin, /^[0-9a-f]{64}$/.test(connect) ? connect : '')),
+        {
+          status: 200,
+          headers: {'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-store'}
+        }
+      );
+    }
     if (u.pathname === '/api/academic-calendar' && req.method === 'GET') {
       const {calendar} = await currentCalendar(env, store, u);
       return calendar ? json(calendar, 200, origin) : json({error: 'not_found'}, 404, origin);
