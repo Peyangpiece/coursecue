@@ -63,6 +63,36 @@ const markDone = t => {
   t.submissionIntent = null;
   t.submittedAt = t.submittedAt || new Date().toISOString();
 };
+// 授業ページ内で実行：お知らせ欄の折りたたまれた項目（[+] の見出し）を開く。クリックした数を返す
+// 見出しの作り（画像・リンク・onclick）は決め打ちせず、お知らせ欄の中の「押すと開く」要素だけを一度ずつ押す
+// （本物のリンク（ファイル・ページ）は押さない。入れ子の要素は内側だけ押す：外側の見出しの処理にも伝わる）
+export function openNotices() {
+  const vis = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+  const own = e => (e.textContent || '').replace(/\s+/g, '');
+  const head = [...document.querySelectorAll('h1,h2,h3,h4,h5,div,span,p')].find(
+    e => own(e) === 'お知らせ' && vis(e) && ![...e.children].some(c => own(c) === 'お知らせ')
+  );
+  const box = head && (head.closest('.panel,.card,section') || head.parentElement?.parentElement);
+  if (!box || box.querySelector('#div-class-directories')) return 0;
+  const realLink = e => {
+    const a = e.closest('a[href]');
+    return !!a && !/^(#|javascript:)/i.test(a.getAttribute('href') || '');
+  };
+  const all = [
+    ...box.querySelectorAll(
+      '[onclick],a[href^="#"],a[href^="javascript:"],a:not([href]),img[src*="plus" i],img[src*="open" i],img[src*="expand" i],[class*="plus" i],[class*="toggle" i],[class*="collapse" i],[class*="expand" i],[class*="accordion" i],[class*="open" i]'
+    )
+  ].filter(e => e !== head && !head.contains(e) && !realLink(e) && vis(e));
+  const leaves = all.filter(e => !all.some(o => o !== e && e.contains(o)));
+  const clicked = [];
+  for (const e of leaves) {
+    if (clicked.length >= 100) break;
+    if (clicked.some(c => c.contains(e) || e.contains(c))) continue;
+    e.click();
+    clicked.push(e);
+  }
+  return clicked.length;
+}
 // 授業ページ内で実行：シラバスの表（「授業計画」の欄がある表）・授業計画の各行・お知らせ欄を読む
 export function classInfo() {
   const vis = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
@@ -615,6 +645,7 @@ export class Manabo {
   // 授業ページのシラバス（授業計画の表）とお知らせを読む。シラバスが隠れていれば「シラバス」のリンク・ボタンで開く
   // 学生名などヘッダーの情報は読まない。読んだ本文は確認用に保存する
   async syllabus(p, id) {
+    await this.expandNotices(p);
     let info = await p.evaluate(classInfo);
     const cached = await this.cachedSyllabus(id),
       fromCache = !!cached;
@@ -691,6 +722,14 @@ export class Manabo {
       if (info.syllabus) this.state.syllabusTerm = {...this.state.syllabusTerm, [id]: calendar.term};
     }
     return {sources: out, rows: fromCache ? null : info.rows || []};
+  }
+  // お知らせ欄の折りたたまれた項目を開く（manabo のお知らせは [+] の見出しだけが出ていて、本文と付いているファイルは開くと出る）。開いたあと読み込みが落ち着くのを待つ
+  async expandNotices(p) {
+    const n = await p.evaluate(openNotices).catch(() => 0);
+    if (!n) return 0;
+    await p.waitForLoadState('networkidle', {timeout: 5000}).catch(() => {});
+    await p.waitForTimeout(300);
+    return n;
   }
   // 読んだシラバスの本文。シラバスは学期の最初の同期でだけ読み、同じ学期（学年暦の term）の間は保存したテキストを返す（別タブを開き直さない。お知らせは毎回授業ページから読む）
   async cachedSyllabus(id) {

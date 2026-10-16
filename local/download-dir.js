@@ -122,10 +122,14 @@ export async function trashFile(file, {home = homedir()} = {}) {
 }
 
 // 資料名の「4up」「2up」「4in1」「4アップ」「4スライド」などの印刷形式。1up や印なしは 1、印があればその数
+// 「2分割」「4分割バージョン」も 2up・4up と同じ印刷形式の印（「分割なし」は印なし＝1）
+const LAYOUT = /(?<![第\d])(\d{1,2})\s*(?:-?up|in\s*1|on\s*1|アップ|スライド|分割)(?![a-z])/i;
+const LAYOUT_ALL =
+  /(?<![第\d])\d{1,2}\s*(?:-?up|in\s*1|on\s*1|アップ|スライド|分割)(?![a-z])(?:なし)?(?:バージョン|版|ver\.?)?|分割なし(?:バージョン|版|ver\.?)?/gi;
 export function layoutOf(name) {
   const m = String(name || '')
     .normalize('NFKC')
-    .match(/(?<![第\d])(\d{1,2})\s*(?:-?up|in\s*1|on\s*1|アップ|スライド)(?![a-z])/i);
+    .match(LAYOUT);
   return m ? Number(m[1]) : 1;
 }
 // 印刷形式の印と拡張子・空白・括弧を除いた名前（同じ資料の形式違いをまとめる鍵）
@@ -133,7 +137,7 @@ export function layoutBase(name) {
   return String(name || '')
     .normalize('NFKC')
     .replace(/\.[^.]+$/, '')
-    .replace(/(?<![第\d])\d{1,2}\s*(?:-?up|in\s*1|on\s*1|アップ|スライド)(?![a-z])/gi, '')
+    .replace(LAYOUT_ALL, '')
     .replace(/[\s()（）\[\]【】_\-・]/g, '')
     .toLowerCase();
 }
