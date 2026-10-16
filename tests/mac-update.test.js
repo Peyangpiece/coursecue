@@ -17,7 +17,7 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {usedInstaller} from '../desktop/installer-cleanup.js';
 import {rx} from './source.js';
-// Mac：「ダウンロード」を押したらアプリ自身が新しい版の .dmg を落とす。名前は配布物と同じにして、入れ替えたあとの片付けの対象にする
+// Mac：「ダウンロード」を押したらアプリ自身が新しいバージョンの .dmg を落とす。名前は配布物と同じにして、入れ替えたあとの片付けの対象にする
 // 落としたものは Release の版の情報（latest-mac.yml）の sha512 で確かめる。確かめられない .dmg は使わない
 const sha = s => createHash('sha512').update(s).digest('base64');
 const body = chunks =>
@@ -242,14 +242,14 @@ test('失敗（見つからない・途中で切れた・sha512 が合わない�
   );
   assert.equal(fetched, 0, '確かめられないものは落とさない');
 });
-test('アプリ：新しい版の案内とメニューバーの「更新」は、その場でダウンロードし、書き込める場所なら終了して自動で入れ替える（できなければ .dmg を開いて案内）。版の情報の sha512 を落とすときと入れ替えのスクリプトに渡す', () => {
+test('アプリ：新しいバージョンの案内とメニューバーの「更新」は、その場でダウンロードし、書き込める場所なら終了して自動で入れ替える（できなければ .dmg を開いて案内）。版の情報の sha512 を落とすときと入れ替えのスクリプトに渡す', () => {
   const main = readFileSync('desktop/main.js', 'utf8');
   assert.match(
     main,
     rx("buttons:['今すぐ更新','あとで']", /[\s\S]{0,800}?/, 'if(r.response===0)downloadMacUpdate(version)'),
     '同じ確認の中で「今すぐ更新」を押したらダウンロードする'
   );
-  assert.match(main, rx('label:`新しい版 ${newer} に更新`,click:()=>downloadMacUpdate(newer)'));
+  assert.match(main, rx('label:`新しいバージョン ${newer} に更新`,click:()=>downloadMacUpdate(newer)'));
   assert.match(main, rx('updateFiles[v]=r.updateInfo.files'), '確認した版の配布物の情報を覚える');
   assert.match(main, rx('const sha512=installerDigest(updateFiles[version],macInstallerName(version,process.arch))'));
   assert.match(main, rx("downloadInstaller({version,arch:process.arch,downloads:app.getPath('downloads'),sha512,"));
@@ -362,7 +362,7 @@ const untouched = s => {
     '作業用のものは残さない'
   );
 };
-test('入れ替えのスクリプト：saboro の終了を待ってから、.dmg の sha512 を確かめ、同じ CFBundleIdentifier の saboro を新しい版に入れ替えて開き直す（作業用のものは残さない）', () => {
+test('入れ替えのスクリプト：saboro の終了を待ってから、.dmg の sha512 を確かめ、同じ CFBundleIdentifier の saboro を新しいバージョンに入れ替えて開き直す（作業用のものは残さない）', () => {
   const s = sandbox();
   const pid = execFileSync('/bin/sh', ['-c', 'sleep 1 >/dev/null 2>&1 & echo $!'], {encoding: 'utf8'}).trim();
   const t = Date.now();
@@ -383,7 +383,7 @@ test('入れ替えのスクリプト：.dmg の中身が別の版なら入れ替
   assert.throws(() => s.run(999999));
   untouched(s);
   assert.deepEqual(s.calls(), ['hdiutil attach', 'hdiutil detach', `open ${s.app}`]);
-  assert.match(s.log(), /ERROR\t書き出した版が 1\.0\.30 ではありません（1\.0\.28）/);
+  assert.match(s.log(), /ERROR\t書き出したバージョンが 1\.0\.30 ではありません（1\.0\.28）/);
 });
 test('入れ替えのスクリプト：.dmg の sha512 が配布物と合わなければ、つなぐ前に止めて元の saboro を開き直す（値がないときも同じ）', () => {
   let s = sandbox({dmgData: 'tampered'});
@@ -403,12 +403,12 @@ test('入れ替えのスクリプト：.dmg の中に同じ CFBundleIdentifier �
   untouched(s);
   assert.match(s.log(), /ERROR\t\.dmg の中に saboro（jp\.coursecue\.saboro）が見つかりません/);
 });
-test('入れ替えのスクリプト：いまの saboro が証明書で署名されていれば、別の証明書の新しい版には入れ替えない。同じ証明書なら入れ替える。ad-hoc どうしも入れ替える', () => {
+test('入れ替えのスクリプト：いまの saboro が証明書で署名されていれば、別の証明書の新しいバージョンには入れ替えない。同じ証明書なら入れ替える。ad-hoc どうしも入れ替える', () => {
   const a = 'Authority=saboro sign\nAuthority=saboro root';
   let s = sandbox({authority: a, newAuthority: 'Authority=someone else'});
   assert.throws(() => s.run(999999));
   untouched(s);
-  assert.match(s.log(), /ERROR\t新しい版の署名（証明書）がいまの saboro と違います/);
+  assert.match(s.log(), /ERROR\t新しいバージョンの署名（証明書）がいまの saboro と違います/);
   s = sandbox({authority: a, newAuthority: ''});
   assert.throws(() => s.run(999999));
   untouched(s);
@@ -420,7 +420,7 @@ test('入れ替えのスクリプト：いまの saboro が証明書で署名さ
   s.run(999999);
   assert.equal(s.version(), '1.0.30', 'ad-hoc → 証明書は可');
 });
-test('Mac の新しい版の案内：版ごとに 1 回出す（前の版の案内から 24 時間待たない）。saboro を前面に出してから出す（ほかのアプリの裏に隠れないように）', () => {
+test('Mac の新しいバージョンの案内：版ごとに 1 回出す（前の版の案内から 24 時間待たない）。saboro を前面に出してから出す（ほかのアプリの裏に隠れないように）', () => {
   const main = readFileSync('desktop/main.js', 'utf8'),
     fn = main.slice(main.indexOf('async function announce('));
   assert.match(fn, rx('if(!manual&&seen.version===version)return;'));

@@ -227,12 +227,12 @@ function refreshTray() {
         ? {label: `再起動して ${prepared} に更新`, click: () => installNow()}
         : downloading
           ? {
-              label: `新しい版 ${downloading.version} をダウンロード中…${downloading.pct == null ? '' : ` ${downloading.pct}%`}`,
+              label: `新しいバージョン ${downloading.version} をダウンロード中…${downloading.pct == null ? '' : ` ${downloading.pct}%`}`,
               enabled: false
             }
           : newer
-            ? {label: `新しい版 ${newer} に更新`, click: () => downloadMacUpdate(newer)}
-            : {label: '新しい版を確認', click: () => checkUpdate(true)},
+            ? {label: `新しいバージョン ${newer} に更新`, click: () => downloadMacUpdate(newer)}
+            : {label: '新しいバージョンを確認', click: () => checkUpdate(true)},
       {label: '更新の記録を開く', click: () => shell.openPath(updateLogFile)},
       {
         label: 'AI の使用量の記録を開く',
@@ -243,7 +243,7 @@ function refreshTray() {
       },
       {type: 'separator'},
       {label: status, enabled: false},
-      {label: `版 ${app.getVersion()}`, enabled: false},
+      {label: `バージョン ${app.getVersion()}`, enabled: false},
       {type: 'separator'},
       {label: '終了', click: () => app.quit()}
     ])
@@ -447,7 +447,7 @@ async function start() {
     showStatus('起動に失敗：' + String(e.message).slice(0, 120));
     dialog.showErrorBox('saboro を起動できません', String(e.message));
   }
-  // 新しい版の確認（起動時・1 時間ごと・画面を前に出したとき（前の確認から 10 分以上たっていれば）・メニューの「新しい版を確認」）。
+  // 新しいバージョンの確認（起動時・1 時間ごと・画面を前に出したとき（前の確認から 10 分以上たっていれば）・メニューの「新しいバージョンを確認」）。
   // Windows は裏でダウンロードし、終わったら再起動して更新するかを聞く。Mac は Apple の署名がないと入れ替えられないので、ダウンロードはせず知らせるだけにする
   try {
     const {default: updater} = await import('electron-updater'),
@@ -480,21 +480,21 @@ async function start() {
           else if (manual)
             dialog.showMessageBox({
               type: 'info',
-              message: `新しい版 ${v} をダウンロードしています`,
+              message: `新しいバージョン ${v} をダウンロードしています`,
               detail: 'ダウンロードが終わったら、再起動して更新するかをお聞きします。'
             });
         } else if (manual)
           dialog.showMessageBox({
             type: 'info',
-            message: 'saboro は最新の版です',
-            detail: `いまの版は ${app.getVersion()} です。`
+            message: 'saboro は最新のバージョンです',
+            detail: `いまのバージョンは ${app.getVersion()} です。`
           });
       } catch (e) {
-        console.error('saboro: 新しい版を確認できません', e.message);
+        console.error('saboro: 新しいバージョンを確認できません', e.message);
         if (manual)
           dialog.showMessageBox({
             type: 'warning',
-            message: '新しい版を確認できませんでした',
+            message: '新しいバージョンを確認できませんでした',
             detail: String(e.message || e)
               .split('\n')[0]
               .slice(0, 200)
@@ -522,7 +522,7 @@ function updateLog(level, ...parts) {
 // （入れ替えは画面つきで行う。閉じられないファイルがあるなどで失敗したとき、インストーラーの案内が見えるように）
 const expectFile = join(userData, 'update-expected.json');
 function expectUpdate(version) {
-  updateLog('INFO', `再起動して ${version} に入れ替えます（いまの版 ${app.getVersion()}）`);
+  updateLog('INFO', `再起動して ${version} に入れ替えます（いまのバージョン ${app.getVersion()}）`);
   try {
     writeFileSync(expectFile, JSON.stringify({from: app.getVersion(), to: version, at: new Date().toISOString()}));
   } catch {}
@@ -541,7 +541,7 @@ async function checkExpectedUpdate() {
     updateLog('INFO', `${app.getVersion()} に入れ替わりました`);
     return;
   }
-  updateLog('ERROR', `${e.to} に入れ替わっていません（いまの版 ${app.getVersion()}）`);
+  updateLog('ERROR', `${e.to} に入れ替わっていません（いまのバージョン ${app.getVersion()}）`);
   if (process.platform === 'darwin') {
     const dmg = join(app.getPath('downloads'), macInstallerName(e.to, process.arch)),
       has = existsSync(dmg);
@@ -550,8 +550,8 @@ async function checkExpectedUpdate() {
       buttons: [has ? '.dmg を開く' : 'ダウンロードのページを開く', '更新の記録を開く', '閉じる'],
       defaultId: 0,
       cancelId: 2,
-      message: `新しい版 ${e.to} に自動で入れ替えられませんでした`,
-      detail: `いまの版は ${app.getVersion()} のままです。${has ? '「.dmg を開く」を押し' : 'ダウンロードのページから新しい版の .dmg を落として開き'}、メニューバーの saboro から「終了」を選んでから、開いたウインドウで saboro を「アプリケーション」にドラッグして入れ替えてください。設定や資料はそのまま残ります。`
+      message: `新しいバージョン ${e.to} に自動で入れ替えられませんでした`,
+      detail: `いまのバージョンは ${app.getVersion()} のままです。${has ? '「.dmg を開く」を押し' : 'ダウンロードのページから新しいバージョンの .dmg を落として開き'}、メニューバーの saboro から「終了」を選んでから、開いたウインドウで saboro を「アプリケーション」にドラッグして入れ替えてください。設定や資料はそのまま残ります。`
     });
     if (r.response === 0) has ? shell.openPath(dmg) : shell.openExternal(macDownloadPage);
     else if (r.response === 1) shell.openPath(updateLogFile);
@@ -562,8 +562,8 @@ async function checkExpectedUpdate() {
     buttons: ['ダウンロードのページを開く', '更新の記録を開く', '閉じる'],
     defaultId: 0,
     cancelId: 2,
-    message: `新しい版 ${e.to} に入れ替えられませんでした`,
-    detail: `いまの版は ${app.getVersion()} のままです。画面右下の saboro のアイコンを右クリックして「終了」を選んでから、ダウンロードのページの saboro-${e.to}-win-x64.exe を実行してください。設定や資料はそのまま残ります。`
+    message: `新しいバージョン ${e.to} に入れ替えられませんでした`,
+    detail: `いまのバージョンは ${app.getVersion()} のままです。画面右下の saboro のアイコンを右クリックして「終了」を選んでから、ダウンロードのページの saboro-${e.to}-win-x64.exe を実行してください。設定や資料はそのまま残ります。`
   });
   if (r.response === 0) shell.openExternal(releasePage);
   else if (r.response === 1) shell.openPath(updateLogFile);
@@ -578,9 +578,9 @@ const isNewer = (a, b) => {
   }
   return false;
 };
-// 新しい版を知らせる：メニューバーに「新しい版 <版> に更新」を出し、案内の画面は版ごとに 1 回出す（続けて新しい版が出たら、その版の案内も出す）。
+// 新しいバージョンを知らせる：メニューバーに「新しいバージョン <版> に更新」を出し、案内の画面は版ごとに 1 回出す（続けて新しいバージョンが出たら、その版の案内も出す）。
 // 常駐アプリは前面にないため、そのまま出すと案内の画面がほかのアプリの裏に隠れることがある。saboro を前面に出してから出す
-// Mac：入れ終わった saboro の .dmg を取り出してゴミ箱に入れる（いまの版より新しいものは残す。結果は更新の記録へ）
+// Mac：入れ終わった saboro の .dmg を取り出してゴミ箱に入れる（いまのバージョンより新しいものは残す。結果は更新の記録へ）
 function cleanupMacInstallers() {
   const exec = promisify(execFile);
   cleanupInstallers({
@@ -611,12 +611,12 @@ async function announce(version, manual = false) {
     buttons: ['今すぐ更新', 'あとで'],
     defaultId: 0,
     cancelId: 1,
-    message: `saboro の新しい版 ${version} があります`,
-    detail: `いまの版は ${app.getVersion()} です。「今すぐ更新」を押すと、新しい版をダウンロードし、saboro をいったん終了して入れ替えてから、自動で開き直します（ダウンロードに数分かかることがあります）。設定や資料はそのまま残ります。あとで更新するときは、メニューバーの saboro から「新しい版 ${version} に更新」を選べます。`
+    message: `saboro の新しいバージョン ${version} があります`,
+    detail: `いまのバージョンは ${app.getVersion()} です。「今すぐ更新」を押すと、新しいバージョンをダウンロードし、saboro をいったん終了して入れ替えてから、自動で開き直します（ダウンロードに数分かかることがあります）。設定や資料はそのまま残ります。あとで更新するときは、メニューバーの saboro から「新しいバージョン ${version} に更新」を選べます。`
   });
   if (r.response === 0) downloadMacUpdate(version);
 }
-// Mac：「更新」を押したらすぐ、新しい版の .dmg を「ダウンロード」フォルダに落とし（進み具合はメニューバーに出す）、saboro を終了して自動で入れ替え、開き直す（mac-update.js）。
+// Mac：「更新」を押したらすぐ、新しいバージョンの .dmg を「ダウンロード」フォルダに落とし（進み具合はメニューバーに出す）、saboro を終了して自動で入れ替え、開き直す（mac-update.js）。
 // 「アプリケーション」以外の書き込めない場所で動いているときは、.dmg を開いて手動の入れ替えを案内する。落とせなければダウンロードのページを案内する
 const macFs = {
   exists: async f => existsSync(f),
@@ -663,15 +663,15 @@ async function downloadMacUpdate(version) {
     });
     updateLog('INFO', `${basename(file)} をダウンロードしました`);
   } catch (e) {
-    updateLog('ERROR', '新しい版をダウンロードできません', e?.message || e);
+    updateLog('ERROR', '新しいバージョンをダウンロードできません', e?.message || e);
     const r = await dialog.showMessageBox({
       type: 'warning',
       buttons: ['ダウンロードのページを開く', '閉じる'],
       defaultId: 0,
       cancelId: 1,
-      message: `新しい版 ${version} をダウンロードできませんでした`,
+      message: `新しいバージョン ${version} をダウンロードできませんでした`,
       detail:
-        'インターネットへの接続を確かめて、メニューバーの saboro から「新しい版をダウンロード」をもう一度お試しください。ダウンロードのページから入れることもできます。'
+        'インターネットへの接続を確かめて、メニューバーの saboro から「新しいバージョンをダウンロード」をもう一度お試しください。ダウンロードのページから入れることもできます。'
     });
     if (r.response === 0) shell.openExternal(macDownloadPage);
     return;
@@ -712,12 +712,12 @@ async function downloadMacUpdate(version) {
     buttons: ['saboro を終了する', 'あとで'],
     defaultId: 0,
     cancelId: 1,
-    message: `新しい版 ${version} をダウンロードしました`,
+    message: `新しいバージョン ${version} をダウンロードしました`,
     detail: `開いたウインドウで、saboro のアイコンを「Applications（アプリケーション）」にドラッグして入れ替えてください。入れ替えるには、先に saboro を終了します。設定や資料はそのまま残ります。ウインドウを閉じてしまったときは、「ダウンロード」フォルダの ${basename(file)} を開き直してください。`
   });
   if (r.response === 0) app.quit();
 }
-// Windows：新しい版のダウンロードが終わったら、メニューに「再起動して更新」を出し、今すぐ入れ替えるかを版ごとに 1 回だけ聞く
+// Windows：新しいバージョンのダウンロードが終わったら、メニューに「再起動して更新」を出し、今すぐ入れ替えるかを版ごとに 1 回だけ聞く
 // 「あとで」でも、終了するとき（メニューの「終了」）に入れ替わる。1 時間ごとの確認でもダウンロード済みとして届くので、2 回目からは聞かない
 async function offerInstall(version, manual = false) {
   if (!isNewer(version, app.getVersion())) return;
@@ -737,8 +737,8 @@ async function offerInstall(version, manual = false) {
     buttons: ['今すぐ再起動して更新', 'あとで'],
     defaultId: 0,
     cancelId: 1,
-    message: `新しい版 ${version} の準備ができました。今すぐ再起動して更新しますか？`,
-    detail: `いまの版は ${app.getVersion()} です。更新すると saboro がいったん閉じて、数秒後に自動で開き直します。設定や資料はそのまま残ります。あとで更新するときは、画面右下の saboro のアイコンを右クリックして「再起動して ${version} に更新」を選ぶか、「終了」を選んでください。`
+    message: `新しいバージョン ${version} の準備ができました。今すぐ再起動して更新しますか？`,
+    detail: `いまのバージョンは ${app.getVersion()} です。更新すると saboro がいったん閉じて、数秒後に自動で開き直します。設定や資料はそのまま残ります。あとで更新するときは、画面右下の saboro のアイコンを右クリックして「再起動して ${version} に更新」を選ぶか、「終了」を選んでください。`
   });
   if (r.response === 0) installNow();
 }
