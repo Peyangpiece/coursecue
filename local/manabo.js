@@ -92,7 +92,13 @@ export function classInfo() {
   );
   const box = head && (head.closest('.panel,.card,section') || head.parentElement?.parentElement);
   const notice = box && !box.querySelector('#div-class-directories') ? box.innerText : '';
-  return {syllabus, rows, notice};
+  // お知らせに付いているファイル（授業のフォルダに保存する）
+  const noticeFiles = box
+    ? [...box.querySelectorAll('a[href]')]
+        .filter(a => /\/file\//.test(a.getAttribute('href') || ''))
+        .map(a => ({url: a.href, name: (a.textContent || '').trim()}))
+    : [];
+  return {syllabus, rows, notice, noticeFiles};
 }
 // ディレクトリ名・授業計画の行に【動画】などがある回をオンデマンドとする（manabo の表記の決まり）
 const ondemand = /【\s*動画\s*】|\[\s*動画\s*\]|（\s*動画\s*）|動画配信|オンデマンド/;
@@ -240,16 +246,26 @@ export class PromptHandOver extends Error {
 // 回答欄（提出前のページにだけある入力欄・選択肢）
 const ANSWER_FIELDS =
   'input[name]:not([type=hidden]):not([type=submit]):not([type=button]),textarea[name],select[name]';
+// 出た入力（dialog）はそのまま持っておき（p.promptDialog）、SaBoRo の画面で入れた出席コードを answerPrompt で渡す。渡したら次の入力を待てるようにし直す
+const armPrompt = p => {
+  p.promptSeen = new Promise(r => {
+    p.promptResolve = r;
+  });
+};
 const watchPrompt = p => {
-  if (!p.promptSeen)
-    p.promptSeen = new Promise(r =>
-      p.on('dialog', d => {
-        if (d.type() !== 'prompt') return;
-        p.handedOver = true;
-        p.bringToFront().catch(() => {});
-        r(d.message());
-      })
-    );
+  if (!p.promptSeen) {
+    armPrompt(p);
+    p.on('dialog', d => {
+      if (d.type() !== 'prompt') return;
+      p.handedOver = true;
+      p.promptDialog = d;
+      p.promptMessage = d.message();
+      p.bringToFront().catch(() => {});
+      const resolve = p.promptResolve;
+      armPrompt(p);
+      resolve(d.message());
+    });
+  }
   return p.promptSeen;
 };
 // 渡したタブで出席コードの入力がまだ開いているか（開いている間はページの処理が止まり、2 秒で応答しない）
@@ -279,7 +295,7 @@ export class Manabo {
   }
   // 資料・授業フォルダの置き場所。設定欄で指定したフォルダ、なければ既定（2026秋学期 フォルダ）
   get root() {
-    return this.state.settings?.downloadDir || this.baseRoot;
+    return this.state.settings?.downloadDir || (typeof this.baseRoot === 'function' ? this.baseRoot() : this.baseRoot);
   }
   // manabo を読むブラウザ。同期などは画面に出さずに裏で動かし（headless）、本人の操作が要るとき（「manabo ブラウザを開く」）だけ画面に出す（visible）。どちらも同じ保存場所なのでログインは引き継ぐ
   async page() {
@@ -643,7 +659,7 @@ export class Manabo {
           if (page && allowed(page.url())) {
             await page.waitForLoadState('domcontentloaded');
             await page.waitForLoadState('networkidle', {timeout: 10000}).catch(() => {});
-            info = {...info, ...(await page.evaluate(classInfo)), notice: info.notice};
+            info = {...info, ...(await page.evaluate(classInfo)), notice: info.notice, noticeFiles: info.noticeFiles};
           } else if (!url) {
             await p
               .getByText('授業計画', {exact: true})
@@ -658,6 +674,7 @@ export class Manabo {
         }
       }
     }
+    this.noticeFiles = {...this.noticeFiles, [id]: info.noticeFiles || []};
     const scrub = t => scrubIds(t).trim();
     const out = [];
     if (info.syllabus) out.push({file: 'シラバス', text: scrub(info.syllabus).slice(0, 40000)});
@@ -1122,20 +1139,69 @@ export class Manabo {
     const name = this.courses()[i].name,
       open = this.promptTabs.get(name);
     if (open && (await promptOpen(open))) {
-      ctx.infoIssues.push(`${name}：出席コードの入力画面が開いています（manabo ブラウザで入力してください）`);
+      ctx.infoIssues.push(
+        `${name}：出席コードの入力画面が開いています（SaBoRo の画面か manabo ブラウザで入力してください）`
+      );
       return;
     }
     this.promptTabs.delete(name);
+    this.clearPrompt(name);
     if (p.handedOver) throw Object.assign(new PromptHandOver(), {retry: true});
     const work = this.crawlCourseOn(i, p, ctx);
     work.catch(() => {});
     const message = await Promise.race([work.then(() => null), watchPrompt(p)]);
     if (message === null) return;
     this.promptTabs.set(name, p);
+    this.notePrompt(name, i, message);
     ctx.infoIssues.push(
-      `${name}：出席コードの入力画面が出たため、今回は読みませんでした（manabo ブラウザで入力できます）`
+      `${name}：出席コードの入力画面が出たため、今回は読みませんでした（SaBoRo の画面か manabo ブラウザで入力できます）`
     );
     throw new PromptHandOver(message);
+  }
+  // 出席コードの入力画面が出たことを状態に残す（SaBoRo の画面に同じ入力を出すため）。入れたら消す
+  notePrompt(name, i, message) {
+    this.state.prompts = {
+      ...this.state.prompts,
+      [name]: {course: i, message: String(message || '').slice(0, 300), at: new Date().toISOString()}
+    };
+  }
+  clearPrompt(name) {
+    if (!this.state.prompts?.[name]) return;
+    const {[name]: _gone, ...rest} = this.state.prompts;
+    this.state.prompts = rest;
+  }
+  // SaBoRo の画面で入れた出席コードを、開いたままの入力画面（manabo の prompt）に渡す。渡したあとページの処理が終わるのを待ち、もう一度入力を求められなければタブを閉じる
+  async answerPrompt(name, code) {
+    const tab = this.promptTabs.get(name),
+      value = String(code ?? '').trim();
+    if (!value) throw Error('出席コードを入れてください');
+    if (!tab || tab.isClosed() || !tab.promptDialog)
+      throw Error(`${name} の出席コードの入力画面はもう開いていません（manabo で確かめてください）`);
+    const dialog = tab.promptDialog;
+    delete tab.promptDialog;
+    tab.handedOver = false;
+    await dialog.accept(value);
+    // もう一度入力を求められる（コードが違うなど）か、ページの処理が落ち着くまで待つ
+    await Promise.race([
+      tab.promptSeen,
+      tab
+        .waitForLoadState('networkidle', {timeout: 10000})
+        .catch(() => {})
+        .then(() => new Promise(r => setTimeout(r, 1000)))
+    ]);
+    if (tab.promptDialog) {
+      // もう一度求められた（コードが違うなど）：画面に出し直す
+      this.notePrompt(
+        name,
+        this.courses().findIndex(c => c.name === name),
+        tab.promptMessage
+      );
+      throw Error(`${name}：もう一度入力を求められました（${String(tab.promptMessage || '').slice(0, 80)}）`);
+    }
+    this.promptTabs.delete(name);
+    this.clearPrompt(name);
+    await tab.close().catch(() => {});
+    await this.save();
   }
   async crawlCourseOn(i, p, {missing, infoIssues, queue, timing}) {
     // 削除した授業は読まない
@@ -1150,6 +1216,8 @@ export class Manabo {
     await this.settled(p);
     await this.applyCalendar(p, id);
     const syllabus = await this.readSyllabus(i, p);
+    // お知らせに付いているファイルも、その授業のフォルダに保存する
+    for (const e of this.wantedFiles(this.noticeFiles?.[id] || [])) await this.download(e, name).catch(() => {});
     try {
       const dirs = await this.directories(p);
       this.state.plannedModes = {

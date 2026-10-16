@@ -1,4 +1,5 @@
-import {checkDownloadDir, pickFolder, openableMaterial} from './download-dir.js';
+import {checkDownloadDir, pickFolder, openableMaterial, defaultDownloadRoot, desktopDir} from './download-dir.js';
+import {dueClassSyncs, CAMPUSES} from './schedule.js';
 import {mergeTasks} from './task-identity.js';
 import {dropSpareTasks} from './content-resolution.js';
 import {updateToDeployed, shouldUpdate} from './auto-update.js';
@@ -27,12 +28,15 @@ import {
   createChatProfiler,
   detectProviders
 } from './generate.js';
-import {refreshCalendar} from './calendar.js';
+import {refreshCalendar, calendar} from './calendar.js';
 import {usageLog, addUsage} from './usage.js';
 import {applyTimetablePatch} from './timetable.js';
 const repo = dirname(dirname(fileURLToPath(import.meta.url))),
   root = process.env.COURSECUE_ROOT || dirname(repo),
   work = process.env.COURSECUE_WORK || join(root, 'tmp/coursecue');
+// 資料の置き場所の既定：デスクトップの「<西暦>_<学期名>」（学年暦の学期から。学期が変わると新しいフォルダ）。COURSECUE_ROOT で固定もできる
+const materialsRoot = () =>
+  process.env.COURSECUE_ROOT || defaultDownloadRoot({desktop: desktopDir(), term: calendar.term});
 await mkdir(work, {recursive: true, mode: 0o700});
 export const keychain = (op, name, value) =>
   op === 'get' ? platform.secrets.get(name) : platform.secrets.set(name, value);
@@ -129,7 +133,7 @@ async function save() {
   });
 }
 if (!state.courses) state.courses = LEGACY_COURSES.map(([name, id]) => ({name, id}));
-state.defaultDownloadDir = root;
+state.defaultDownloadDir = materialsRoot();
 state.features = ['pickfolder', 'attendance', 'removecourse', 'aipolicy']; // AI の使用量：1 回ごとに usage.jsonl に追記し、月ごとの集計を状態に持つ（画面に出す。料金を決めるための実測用）
 const usageFile = usageLog(join(work, 'usage.jsonl'));
 async function recordUsage(e) {
@@ -137,7 +141,7 @@ async function recordUsage(e) {
   await usageFile.record(e).catch(err => console.error('saboro: 使用量を記録できません', err.message));
 }
 const lms = new Manabo({
-  root,
+  root: materialsRoot,
   work,
   state,
   save,
@@ -363,10 +367,29 @@ async function run(job) {
     } else if (job.kind === 'timetable') {
       applyTimetablePatch(state, job.payload, courseNames(state));
       await save();
+    } else if (job.kind === 'prompt') {
+      // SaBoRo の画面で入れた出席コードを、開いたままの入力画面に渡す。入れたらその授業を読み直す
+      const name = String(job.payload?.course || ''),
+        i = courseNames(state).indexOf(name);
+      if (i < 0) throw Error('その授業は見つかりません');
+      await lms.answerPrompt(name, job.payload?.code);
+      await save();
+      try {
+        await lms.sync({course: i});
+      } catch (e) {
+        state.issues = [
+          ...(state.issues || []),
+          `${name}：出席コードのあとの同期に失敗（${String(e.message).slice(0, 80)}）`
+        ];
+      }
+      await save();
+      return {ok: true, message: `${name} の出席コードを入れました`};
     } else if (job.kind === 'settings') {
       const {
         time,
         autoGenerate,
+        campus,
+        classSync,
         profile,
         profileForm,
         style,
@@ -390,7 +413,7 @@ async function run(job) {
       }
       let {downloadDir} = job.payload;
       if (pickDownloadDir === true) {
-        const chosen = await (platform.pickFolder || pickFolder)(state.settings.downloadDir || root);
+        const chosen = await (platform.pickFolder || pickFolder)(state.settings.downloadDir || materialsRoot());
         if (!chosen) return {message: 'フォルダの選択を取り消しました'};
         downloadDir = chosen;
       }
@@ -411,7 +434,9 @@ async function run(job) {
         ...(typeof profile === 'string' ? {profile: profile.trim()} : {}),
         ...(typeof style === 'string' ? {style: style.trim()} : {}),
         ...(time ? {time} : {}),
-        ...(typeof autoGenerate === 'boolean' ? {autoGenerate} : {})
+        ...(typeof autoGenerate === 'boolean' ? {autoGenerate} : {}),
+        ...(CAMPUSES.includes(campus) ? {campus} : {}),
+        ...(typeof classSync === 'boolean' ? {classSync} : {})
       });
       if (schedules) state.schedules = schedules;
       await save();
@@ -713,11 +738,24 @@ async function tick() {
       const now = new Date(),
         day = now.toLocaleDateString('sv-SE', {timeZone: 'Asia/Tokyo'}),
         hm = now.toLocaleTimeString('en-GB', {timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit'}); // 支払いが必要な間（サーバーが知らせる）は、自動の同期もしない。支払いが済めば同じ日のうちに実行する
+      // 授業の開始時刻には、その授業だけを同期する（出席コードの入力が出れば SaBoRo の画面に出す）。同じ授業は 1 日 1 回
+      const due = !state.billingBlocked && state.settings?.classSync !== false ? dueClassSyncs(state, now) : [];
       if (hm >= state.settings.time && day !== lastDay && state.lastScheduledDay !== day && !state.billingBlocked) {
         lastDay = day;
         state.lastScheduledDay = day;
         try {
           await run({kind: 'sync'});
+        } catch (e) {
+          state.lastError = e.message;
+          state.lastErrorAt = new Date().toISOString();
+          state.connection = 'attention';
+          await save();
+        }
+      } else if (due.length) {
+        const s = due[0];
+        state.classSynced = {[day]: {...(state.classSynced?.[day] || {}), [s.name]: new Date().toISOString()}};
+        try {
+          await run({kind: 'sync', payload: {course: s.name}});
         } catch (e) {
           state.lastError = e.message;
           state.lastErrorAt = new Date().toISOString();

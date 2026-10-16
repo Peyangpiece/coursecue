@@ -33,12 +33,26 @@ import {createServer} from 'node:net';
 import {homedir} from 'node:os';
 import {randomBytes, createHash} from 'node:crypto';
 import {createReadStream} from 'node:fs';
+import {defaultDownloadRoot} from '../local/download-dir.js';
 const here = dirname(fileURLToPath(import.meta.url)),
   repo = dirname(here);
-const userData = app.getPath('userData'),
-  docs = app.getPath('documents');
-const root = join(docs, 'saboro'),
-  work = join(userData, 'work'),
+const userData = app.getPath('userData');
+// 資料の置き場所：本人が設定したフォルダ、なければデスクトップの「<西暦>_<学期名>」（local/bridge.js と同じ決め方。学年暦は作業フォルダの最新のもの、なければ同梱のもの）
+const materialsFolder = () => {
+  try {
+    const dir = JSON.parse(readFileSync(join(work, 'state.json'), 'utf8')).settings?.downloadDir;
+    if (dir) return dir;
+  } catch {}
+  let term = '';
+  for (const f of [join(work, 'academic-calendar.json'), join(repo, 'dist/academic-calendar.json')]) {
+    try {
+      term = JSON.parse(readFileSync(f, 'utf8')).term;
+      if (term) break;
+    } catch {}
+  }
+  return defaultDownloadRoot({desktop: app.getPath('desktop'), term});
+};
+const work = join(userData, 'work'),
   browsers = join(userData, 'pw-browsers');
 const apiBase = process.env.COURSECUE_API || 'https://coursecue.hrk-6888.workers.dev';
 const single = app.requestSingleInstanceLock();
@@ -94,7 +108,7 @@ async function register() {
 async function pickFolder(current) {
   const r = await dialog.showOpenDialog(win || undefined, {
     title: '資料のダウンロード先のフォルダ',
-    defaultPath: current || root,
+    defaultPath: current || materialsFolder(),
     properties: ['openDirectory', 'createDirectory']
   });
   return r.canceled ? null : r.filePaths[0];
@@ -207,7 +221,7 @@ function refreshTray() {
     Menu.buildFromTemplate([
       {label: 'saboro を開く', click: () => openWindow(home())},
       {label: '設定', click: () => openWindow('http://127.0.0.1:8766/setup')},
-      {label: '資料のフォルダを開く', click: () => shell.openPath(root)},
+      {label: '資料のフォルダを開く', click: () => shell.openPath(materialsFolder())},
       {type: 'separator'},
       prepared
         ? {label: `再起動して ${prepared} に更新`, click: () => installNow()}
@@ -410,7 +424,7 @@ async function start() {
   if (process.platform === 'darwin') setTimeout(cleanupMacInstallers, 5000);
   openWindow(page('<h1>saboro</h1><p>起動中…</p>'));
   Object.assign(process.env, {
-    COURSECUE_ROOT: root,
+    COURSECUE_DESKTOP: app.getPath('desktop'),
     COURSECUE_WORK: work,
     COURSECUE_AUTO_UPDATE: '0',
     COURSECUE_VERSION: app.getVersion(),
@@ -419,7 +433,6 @@ async function start() {
   });
   // Windows の import() は C:\ で始まるパスを受け付けないので file:// の URL にして読み込む。フォルダの作成もここで行い、失敗したら理由を出す
   try {
-    mkdirSync(root, {recursive: true});
     mkdirSync(work, {recursive: true});
     await stopOldAgent();
     await ensureBrowser();

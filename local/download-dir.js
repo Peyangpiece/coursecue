@@ -4,6 +4,14 @@ import {existsSync} from 'node:fs';
 import {resolve, relative, sep, join, basename, dirname, isAbsolute} from 'node:path';
 import {rename, access, mkdir} from 'node:fs/promises';
 // 資料のダウンロード先（画面の設定欄から変更できる）。ホームフォルダ内の、隠しフォルダ・ライブラリ以外に限る
+// 資料のダウンロード先の既定：デスクトップの「<西暦>_<学期名>」フォルダ（学年暦の term「2026 秋学期」→ 2026_秋学期）。学期が変わると新しいフォルダになる
+export const termFolder = term => {
+  const m = String(term || '').match(/(\d{4})\s*(.+)/);
+  return m ? `${m[1]}_${m[2].trim().replace(/[\\/:\x00-\x1f]/g, '_')}` : 'saboro';
+};
+// デスクトップの場所：アプリ（Electron）は app.getPath('desktop') を COURSECUE_DESKTOP で渡す（OneDrive などで移動している場合に対応）
+export const desktopDir = (home = homedir()) => process.env.COURSECUE_DESKTOP || join(home, 'Desktop');
+export const defaultDownloadRoot = ({desktop = desktopDir(), term} = {}) => join(desktop, termFolder(term));
 export function checkDownloadDir(input, home = homedir()) {
   const raw = String(input ?? '').trim();
   if (!raw) return '';

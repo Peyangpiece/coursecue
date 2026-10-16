@@ -361,6 +361,7 @@ async function load() {
     if (typeof reapplyPending === 'function') reapplyPending();
     render();
     if (first) restoreDrawer();
+    showPrompts();
   } catch (e) {
     if (offline !== e.message) toast(e.message);
     offline = e.message;
@@ -387,7 +388,9 @@ async function job(kind, task = null, payload = {}, buttonFor = null) {
               ? '保存しました'
               : kind === 'link'
                 ? '対応づけを予約しました。次の同期で締切・提出状況を確認します'
-                : '処理を予約しました'
+                : kind === 'prompt'
+                  ? '出席コードを送りました（' + dev() + ' が manabo に入れます）'
+                  : '処理を予約しました'
     );
     if (['generate', 'sync', 'settings', 'attendance'].includes(kind)) {
       const buttonId = buttonFor || (kind === 'sync' ? 'sync' : kind === 'settings' ? 'savesettings' : 'generate');
@@ -476,6 +479,62 @@ function ask(message, ok = 'OK', danger = false) {
     };
     document.getElementById('dialog-cancel').focus();
   });
+}
+// 出席コードの入力：PC の同期で manabo の授業ページに出た入力画面（prompt）を、この画面にも同じ形で出す。入れると PC が manabo の入力画面に渡す
+function promptCode(name, message) {
+  return new Promise(resolve => {
+    const d = document.getElementById('dialog'),
+      prev = document.activeElement;
+    d.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-text"><div class="modal-header" id="dialog-title">${esc(name)}：manabo の入力</div><div class="modal-body"><p id="dialog-text" style="margin:0 0 10px">${esc(message || '出席コードを入力してください')}</p><input class="form-control" id="dialog-input" inputmode="numeric" autocomplete="off" aria-label="出席コード"></div><div class="modal-footer"><button class="btn" id="dialog-cancel">あとで</button><button class="btn btn-primary" id="dialog-ok">OK</button></div></div>`;
+    d.classList.add('open');
+    const done = v => {
+      d.classList.remove('open');
+      d.innerHTML = '';
+      dialogDone = null;
+      prev?.focus?.();
+      resolve(v);
+    };
+    dialogDone = () => done(null);
+    const input = document.getElementById('dialog-input');
+    document.getElementById('dialog-ok').onclick = () => done(input.value.trim());
+    document.getElementById('dialog-cancel').onclick = () => done(null);
+    input.onkeydown = e => {
+      if (e.key === 'Enter') done(input.value.trim());
+    };
+    d.onclick = e => {
+      if (e.target === d) done(null);
+    };
+    input.focus();
+  });
+}
+// 入力待ちの出席コード（PC の状態 state.prompts）。一度出した入力は、同じものをもう一度自動では出さない（ホームの「入力する」で出せる）
+const promptShown = new Set();
+const pendingPrompts = () => Object.entries(state?.prompts || {}).map(([name, p]) => ({name, ...p}));
+let promptBusy = false;
+async function showPrompts(force = null) {
+  if (promptBusy || dialogDone) return;
+  const list = pendingPrompts().filter(p => (force ? p.name === force : !promptShown.has(p.name + p.at)));
+  if (!list.length) return;
+  promptBusy = true;
+  try {
+    for (const p of list) {
+      promptShown.add(p.name + p.at);
+      const code = await promptCode(p.name, p.message);
+      if (code) await job('prompt', null, {course: p.name, code});
+    }
+  } finally {
+    promptBusy = false;
+  }
+}
+function promptPanel() {
+  const list = pendingPrompts();
+  if (!list.length) return '';
+  return list
+    .map(
+      p =>
+        `<div class="alert alert-warning"><strong>${esc(p.name)}</strong>：manabo で出席コードの入力画面が出ています（${when(p.at)}）。<button class="btn btn-primary" data-prompt="${esc(p.name)}" style="margin-left:8px">入力する</button></div>`
+    )
+    .join('');
 }
 // ドロワー。route を渡すと履歴に積み、戻るで閉じられる。別のドロワーに置き換わるときは履歴を増やさない
 function openDrawer(title, body, focusId, route = '') {
@@ -669,7 +728,7 @@ function settingsConnected() {
   // 自動処理は下の「設定を保存」でまとめて保存。ダウンロード先は選ぶとすぐ反映するので別の枠にする
   html += panel(
     '自動処理',
-    `<div class="field"><label for="time">実行時刻（日本時間）</label><input class="form-control" style="max-width:160px" type="time" id="time" value="${esc(state.settings?.time || '16:30')}"></div><label class="check"><input type="checkbox" id="autogen" ${state.settings?.autoGenerate !== false ? 'checked' : ''}> レポートなどの回答を自動で作る</label><p class="muted">${state.aiMissing ? `この ${dev()} では SaBoRo課題サポートを使えないため、回答は作りません。` : 'クイズはこの設定にかかわらず常に自動で回答を入力します（提出は本人が manabo で）。'}</p><h3 class="sub">自分について（回答の作成に使います）</h3><p class="muted">当てはまるものを選んでください。</p><div id="pfwrap">${typeof ProfileForm === 'object' ? ProfileForm.profileFormHtml(state.settings?.profileForm) : ''}</div><div class="field"><label for="profile">そのほか自分について（自由記述・任意）</label><textarea class="form-control" id="profile" rows="5" maxlength="2000" placeholder="例：経営学部3年。飲食店のアルバイトを2年続けていて、新人の指導もしている。テニスサークルに所属。将来はマーケティングの仕事に就きたい。">${esc(state.settings?.profile || '')}</textarea><p class="muted">「あなたの考え」「自分の経験を踏まえて」など、自分について聞かれる設問の回答に使います。課題と一緒に、回答を作る AI へ送ります。経験・体験を問う課題では、ここに書いていないことを短い質問でたずねます。</p></div><div class="field"><label for="style">文体（回答をあなたの書き方に近づけます）</label><textarea class="form-control" id="style" rows="4" maxlength="1000" placeholder="過去のレポートから読み取ると入ります。自分で書いてもかまいません。">${esc(state.settings?.style || '')}</textarea><p class="muted">過去のレポートや ChatGPT・Claude の履歴から読み取るには、${dev()} の設定画面の「4. 過去のレポート」で選んでください。${setupLink}</p>${state.profileSuggestion?.text ? `<p class="attn">${esc(state.profileSuggestion.source)} の履歴から読み取った「自分について」の候補があります。${dev()} の設定画面で確かめて足してください。${setupLink}</p>` : state.chatImport ? `<p class="muted">${esc(state.chatImport.source)} の書き出しの zip を待っています（ダウンロードすると ${dev()} が自動で読み取ります）。</p>` : ''}</div><h3 class="sub">授業日（第1回の日付）</h3><p class="muted">曜日が分かる授業は学年暦から自動で設定します。${unset.length ? '曜日が分からない授業だけ入れてください。' : ''}</p>${unset.length ? unset.map(dateField).join('') : '<p class="muted">すべての授業の授業日が設定済みです。</p>'}${set.length ? `<details class="field" id="schedule-details"><summary>自動設定済みの授業（${set.length}件）の第1回を変える</summary><div style="margin-top:10px">${set.map(dateField).join('')}</div></details>` : ''}<div class="actions"><button class="btn btn-primary" id="savesettings">設定を保存</button><span class="muted save-scope">実行時刻・回答の自動作成・授業日を保存します</span></div>`
+    `<div class="field"><label for="time">実行時刻（日本時間）</label><input class="form-control" style="max-width:160px" type="time" id="time" value="${esc(state.settings?.time || '16:30')}"></div><label class="check"><input type="checkbox" id="autogen" ${state.settings?.autoGenerate !== false ? 'checked' : ''}> レポートなどの回答を自動で作る</label><label class="check"><input type="checkbox" id="classsync" ${state.settings?.classSync !== false ? 'checked' : ''}> 授業の開始時刻に、その授業を同期する（出席コードの入力が出たら、この画面にも出します）</label><div class="field"><label for="campus">キャンパス（授業の開始時刻）</label><select class="form-control" id="campus" style="max-width:200px">${['名古屋', '豊田'].map(c => `<option value="${c}"${(state.settings?.campus || '名古屋') === c ? ' selected' : ''}>${c}（1限 ${c === '豊田' ? '9:30' : '9:00'}〜）</option>`).join('')}</select></div><p class="muted">${state.aiMissing ? `この ${dev()} では SaBoRo課題サポートを使えないため、回答は作りません。` : 'クイズはこの設定にかかわらず常に自動で回答を入力します（提出は本人が manabo で）。'}</p><h3 class="sub">自分について（回答の作成に使います）</h3><p class="muted">当てはまるものを選んでください。</p><div id="pfwrap">${typeof ProfileForm === 'object' ? ProfileForm.profileFormHtml(state.settings?.profileForm) : ''}</div><div class="field"><label for="profile">そのほか自分について（自由記述・任意）</label><textarea class="form-control" id="profile" rows="5" maxlength="2000" placeholder="例：経営学部3年。飲食店のアルバイトを2年続けていて、新人の指導もしている。テニスサークルに所属。将来はマーケティングの仕事に就きたい。">${esc(state.settings?.profile || '')}</textarea><p class="muted">「あなたの考え」「自分の経験を踏まえて」など、自分について聞かれる設問の回答に使います。課題と一緒に、回答を作る AI へ送ります。経験・体験を問う課題では、ここに書いていないことを短い質問でたずねます。</p></div><div class="field"><label for="style">文体（回答をあなたの書き方に近づけます）</label><textarea class="form-control" id="style" rows="4" maxlength="1000" placeholder="過去のレポートから読み取ると入ります。自分で書いてもかまいません。">${esc(state.settings?.style || '')}</textarea><p class="muted">過去のレポートや ChatGPT・Claude の履歴から読み取るには、${dev()} の設定画面の「4. 過去のレポート」で選んでください。${setupLink}</p>${state.profileSuggestion?.text ? `<p class="attn">${esc(state.profileSuggestion.source)} の履歴から読み取った「自分について」の候補があります。${dev()} の設定画面で確かめて足してください。${setupLink}</p>` : state.chatImport ? `<p class="muted">${esc(state.chatImport.source)} の書き出しの zip を待っています（ダウンロードすると ${dev()} が自動で読み取ります）。</p>` : ''}</div><h3 class="sub">授業日（第1回の日付）</h3><p class="muted">曜日が分かる授業は学年暦から自動で設定します。${unset.length ? '曜日が分からない授業だけ入れてください。' : ''}</p>${unset.length ? unset.map(dateField).join('') : '<p class="muted">すべての授業の授業日が設定済みです。</p>'}${set.length ? `<details class="field" id="schedule-details"><summary>自動設定済みの授業（${set.length}件）の第1回を変える</summary><div style="margin-top:10px">${set.map(dateField).join('')}</div></details>` : ''}<div class="actions"><button class="btn btn-primary" id="savesettings">設定を保存</button><span class="muted save-scope">実行時刻・回答の自動作成・授業日を保存します</span></div>`
   );
   html += panel(
     `資料のダウンロード先（${dev()} のフォルダ）`,
@@ -858,6 +917,7 @@ function render() {
       ['soon', 'うち3日以内', state.tasks.filter(soon).length],
       ['done', '提出済み', state.tasks.filter(t => !pending(t)).length]
     ];
+    html += promptPanel();
     html += attentionPanel();
     if (typeof todayPanel === 'function') html += todayPanel();
     html += panel(
@@ -1182,6 +1242,8 @@ function bindView() {
     job('settings', null, {
       time: document.getElementById('time').value,
       autoGenerate: document.getElementById('autogen').checked,
+      classSync: !!document.getElementById('classsync')?.checked,
+      campus: document.getElementById('campus')?.value || '名古屋',
       schedules,
       ...(document.getElementById('profile') ? {profile: document.getElementById('profile').value} : {}),
       ...(typeof ProfileForm === 'object' && document.getElementById('pfwrap')
@@ -1202,6 +1264,7 @@ function bindView() {
         (e.onclick = () =>
           go(e.dataset.stat === 'needs' ? 'needs' : 'tasks', null, e.dataset.stat === 'needs' ? 'all' : e.dataset.stat))
     );
+  document.querySelectorAll('[data-prompt]').forEach(e => (e.onclick = () => showPrompts(e.dataset.prompt)));
   document.querySelectorAll('[data-filter]').forEach(
     e =>
       (e.onclick = () => {
