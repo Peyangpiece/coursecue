@@ -402,6 +402,7 @@ async function load() {
     render();
     if (first) restoreDrawer();
     showPrompts();
+    showMfa();
   } catch (e) {
     if (offline !== e.message) toast(e.message);
     offline = e.message;
@@ -535,11 +536,11 @@ function ask(message, ok = 'OK', danger = false) {
   });
 }
 // 出席コードの入力：PC の同期で manabo の授業ページに出た入力画面（prompt）を、この画面にも同じ形で出す。入れると PC が manabo の入力画面に渡す
-function promptCode(name, message) {
+function promptCode(name, message, {others = true, cancel = 'あとで'} = {}) {
   return new Promise(resolve => {
     const d = document.getElementById('dialog'),
       prev = document.activeElement;
-    d.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-text"><div class="modal-header" id="dialog-title">${esc(name)}：manabo の入力</div><div class="modal-body"><p id="dialog-text" style="margin:0 0 10px">${esc(message || '出席コードを入力してください')}</p><input class="form-control" id="dialog-input" inputmode="numeric" autocomplete="off" aria-label="出席コード"><div class="muted" id="dialog-others" style="margin-top:8px">他ユーザーの入力コード：確認中…</div></div><div class="modal-footer">${courses.indexOf(name) >= 0 ? manaboLink(courses.indexOf(name), 'manabo で自分で入れる', 'btn') : ''}<button class="btn" id="dialog-cancel">あとで</button><button class="btn btn-primary" id="dialog-ok">OK</button></div></div>`;
+    d.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-text"><div class="modal-header" id="dialog-title">${esc(name)}${others ? '：manabo の入力' : ''}</div><div class="modal-body"><p id="dialog-text" style="margin:0 0 10px">${esc(message || '出席コードを入力してください')}</p><input class="form-control" id="dialog-input" inputmode="numeric" autocomplete="${others ? 'off' : 'one-time-code'}" aria-label="${others ? '出席コード' : '認証コード'}">${others ? '<div class="muted" id="dialog-others" style="margin-top:8px">他ユーザーの入力コード：確認中…</div>' : ''}</div><div class="modal-footer">${courses.indexOf(name) >= 0 ? manaboLink(courses.indexOf(name), 'manabo で自分で入れる', 'btn') : ''}<button class="btn" id="dialog-cancel">${esc(cancel)}</button><button class="btn btn-primary" id="dialog-ok">OK</button></div></div>`;
     d.classList.add('open');
     const done = v => {
       d.classList.remove('open');
@@ -550,7 +551,7 @@ function promptCode(name, message) {
     };
     dialogDone = () => done(null);
     const input = document.getElementById('dialog-input');
-    otherCodes(name);
+    if (others) otherCodes(name);
     document.getElementById('dialog-ok').onclick = () => done(input.value.trim());
     document.getElementById('dialog-cancel').onclick = () => done(null);
     input.onkeydown = e => {
@@ -826,6 +827,31 @@ async function scanConnect() {
       `カメラを使えません（${briefError(e.message)}）。「写真から読み取る」で、カメラで撮った QR コードを読み取れます。`
     );
   }
+}
+// manabo の 2 段階認証（PC の状態 state.mfa）：ログインでメールの認証コードが必要になったら、同じ形の入力を出し、入れたコードをクラウド経由で PC に渡す（POST /api/mfa）。
+// 一度出した入力は、同じものをもう一度自動では出さない（ホームの「入力する」で出せる）
+const mfaShown = new Set();
+async function showMfa(force = false) {
+  const m = state?.mfa;
+  if (!m || dialogDone) return;
+  if (!force && mfaShown.has(m.at)) return;
+  mfaShown.add(m.at);
+  const code = await promptCode('manabo の 2 段階認証', m.message || 'メールに届いた認証コードを入力してください', {
+    others: false,
+    cancel: 'あとで'
+  });
+  if (!code) return;
+  try {
+    await api('/api/mfa', 'POST', {code});
+    toast('コードを送りました。' + dev() + ' がログインを続けます');
+  } catch (e) {
+    toast(e.message);
+  }
+}
+function mfaPanel() {
+  const m = state?.mfa;
+  if (!m) return '';
+  return `<div class="alert alert-warning"><strong>manabo の 2 段階認証</strong>：${esc(m.message || 'メールに届いた認証コードを入力してください')}（${when(m.at)}）。<button class="btn btn-primary" id="mfaenter" style="margin-left:8px">入力する</button></div>`;
 }
 // 入力待ちの出席コード（PC の状態 state.prompts）。一度出した入力は、同じものをもう一度自動では出さない（ホームの「入力する」で出せる）
 const promptShown = new Set();
@@ -1283,6 +1309,7 @@ function render() {
       ['soon', 'うち3日以内', state.tasks.filter(soon).length],
       ['done', '提出済み', state.tasks.filter(t => !pending(t)).length]
     ];
+    html += mfaPanel();
     html += promptPanel();
     html += noticePanel();
     html += attentionPanel();
@@ -1657,6 +1684,8 @@ function bindView() {
     );
   document.querySelectorAll('[data-prompt]').forEach(e => (e.onclick = () => showPrompts(e.dataset.prompt)));
   document.querySelectorAll('[data-attcheck]').forEach(e => (e.onclick = () => checkAttendance(+e.dataset.attcheck)));
+  const mfaBtn = document.getElementById('mfaenter');
+  if (mfaBtn) mfaBtn.onclick = () => showMfa(true);
   document.querySelectorAll('[data-seen]').forEach(e => (e.onclick = () => job('seen', null, {all: true})));
   document.querySelectorAll('[data-filter]').forEach(
     e =>

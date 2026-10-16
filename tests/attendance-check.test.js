@@ -146,7 +146,7 @@ test('PC：attcheck の仕事で確かめて結果を返し、prompt の仕事�
       "await api('/api/attendance-codes','POST',{course:courseIdOf(i,state)||name,code:String(job.payload?.code??'').trim()}).catch(()=>{});"
     )
   );
-  assert.match(bridge, /'aipolicy', 'attcheck'\]/, '画面に出す機能の印');
+  assert.match(bridge, /'aipolicy', 'attcheck', 'mfa'\]/, '画面に出す機能の印');
 });
 test('画面：授業ページの「出席確認」は attcheck の仕事を送って待ち、入力が出ていれば入力の画面、出ていなければ「現在、出席は受け付けておりません」。入力の画面に「他ユーザーの入力コード」を出す', () => {
   const app = src('dist/app.js');
@@ -172,7 +172,7 @@ test('画面：授業ページの「出席確認」は attcheck の仕事を送�
   assert.match(app, rx("'他ユーザーの入力コード：まだありません'"));
   assert.match(
     app,
-    rx("const input=document.getElementById('dialog-input');otherCodes(name);"),
+    rx("const input=document.getElementById('dialog-input');if(others)otherCodes(name);"),
     '入力の画面を出したら読む'
   );
 });

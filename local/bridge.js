@@ -151,7 +151,7 @@ if (!state.settings?.downloadDir && !state.rootAdopted) {
   state.rootAdopted = true;
 }
 state.defaultDownloadDir = materialsRoot();
-state.features = ['pickfolder', 'attendance', 'removecourse', 'aipolicy', 'attcheck']; // AI の使用量：1 回ごとに usage.jsonl に追記し、月ごとの集計を状態に持つ（画面に出す。料金を決めるための実測用）
+state.features = ['pickfolder', 'attendance', 'removecourse', 'aipolicy', 'attcheck', 'mfa']; // AI の使用量：1 回ごとに usage.jsonl に追記し、月ごとの集計を状態に持つ（画面に出す。料金を決めるための実測用）
 const usageFile = usageLog(join(work, 'usage.jsonl'));
 async function recordUsage(e) {
   state.usage = addUsage(state.usage, e);
@@ -165,6 +165,8 @@ const lms = new Manabo({
   trash: platform.trash,
   quarantine: platform.quarantine,
   notify: platform.notify || null,
+  // 2 段階認証：SaBoRo の画面で入れたコードをクラウドから受け取る（1 回取り出すと消える）
+  mfaCode: () => api('/api/agent/mfa', 'POST', {}).then(r => r?.code || null),
   credentials: async () => {
     const s = keychain('get', 'manabo');
     return s ? JSON.parse(s) : null;
