@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {chromium} from 'playwright';
 import {Manabo} from '../local/manabo.js';
-import {checkDownloadDir, pickFolder} from '../local/download-dir.js';
+import {checkDownloadDir, pickFolder, fileType, fileTypeOf} from '../local/download-dir.js';
 test('ダウンロード先はホームフォルダ内の通常のフォルダだけ指定できる', () => {
   const home = '/Users/u';
   assert.equal(checkDownloadDir('', home), '');
@@ -613,4 +613,49 @@ test('text のないファイル（お知らせの添付）も保存して記録
     ),
     'お知らせの保存の失敗は握りつぶさず要対応に出す'
   );
+});
+test('ファイルの種類は拡張子で決め、どれにも当たらないものは「その他」', () => {
+  assert.equal(fileType('第1回.PDF'), 'PDF');
+  assert.equal(fileType('レジュメ.docx'), 'Word');
+  assert.equal(fileType('データ.csv'), 'Excel');
+  assert.equal(fileType('スライド.pptx'), 'PowerPoint');
+  assert.equal(fileType('板書.jpeg'), '画像');
+  assert.equal(fileType('講義.mp4'), '動画・音声');
+  assert.equal(fileType('配布物.zip'), 'その他');
+  assert.equal(fileTypeOf('第1回 資料'), null, '拡張子がなければ分からない');
+  assert.equal(fileTypeOf('配布.pptx'), 'PowerPoint');
+});
+test('授業の設定で選んだ種類の資料だけ保存し、外した種類は覚えて次から取りに行かない（種類を足せば保存する）', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'coursecue-types-'));
+  t.after(() => rm(base, {recursive: true, force: true}));
+  const names = {1: '第1回_資料.pdf', 2: '第1回_スライド.pptx', 3: '第1回_板書.png'};
+  const state = {tasks: [], materials: [], settings: {}, timetable: {管理会計Ⅱ: {fileTypes: ['PDF']}}};
+  const {m} = fakeManabo(base, state);
+  let gets = 0;
+  m.ctx.request.get = async url => {
+    gets++;
+    const n = url.match(/file\/(\d+)/)[1];
+    return {
+      ok: () => true,
+      headers: () => ({
+        'content-type': 'application/octet-stream',
+        'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(names[n])}`
+      }),
+      body: async () => Buffer.from('data ' + n)
+    };
+  };
+  for (const n of [1, 2]) await m.download(entry(n), '管理会計Ⅱ');
+  await m.download({url: 'https://manabo.cnc.chukyo-u.ac.jp/file/3/', name: '第1回_板書.png'}, '管理会計Ⅱ');
+  assert.deepEqual(await readdir(join(base, '管理会計Ⅱ')), ['第1回_資料.pdf']);
+  assert.equal(gets, 2, '名前に拡張子がある資料は取りに行かずに決める');
+  assert.deepEqual(state.skippedFiles, {[entry(2).url]: 'PowerPoint'});
+  await m.download(entry(2), '管理会計Ⅱ');
+  assert.equal(gets, 2, '外した種類と分かった資料は取りに行かない');
+  state.timetable.管理会計Ⅱ.fileTypes = ['PDF', 'PowerPoint'];
+  await m.download(entry(2), '管理会計Ⅱ');
+  assert.deepEqual((await readdir(join(base, '管理会計Ⅱ'))).sort(), ['第1回_スライド.pptx', '第1回_資料.pdf']);
+  const other = {tasks: [], materials: [], settings: {}, timetable: {管理会計Ⅱ: {fileTypes: []}}};
+  const {m: none} = fakeManabo(join(base, 'none'), other);
+  await none.download(entry(1), '管理会計Ⅱ');
+  await assert.rejects(readdir(join(base, 'none', '管理会計Ⅱ')), undefined, 'すべて外したら授業フォルダも作らない');
 });

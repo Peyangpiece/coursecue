@@ -32,6 +32,10 @@ test('授業の設定と回ごとの記録を反映し、空の値は消す', ()
   assert.equal(s.sessions['経済原論Ⅱ']['3'], undefined);
   applyTimetablePatch(s, {course: '経済原論Ⅱ', values: {room: '', limit: null}}, courses);
   assert.deepEqual(s.timetable['経済原論Ⅱ'], {mode: '対面', weekday: '金', period: 2});
+  applyTimetablePatch(s, {course: '経済原論Ⅱ', values: {fileTypes: ['PDF', '動画・音声']}}, courses);
+  assert.deepEqual(s.timetable['経済原論Ⅱ'].fileTypes, ['PDF', '動画・音声']);
+  applyTimetablePatch(s, {course: '経済原論Ⅱ', values: {fileTypes: null}}, courses);
+  assert.equal(s.timetable['経済原論Ⅱ'].fileTypes, undefined, 'null はすべて保存（既定）に戻す');
 });
 test('不正な変更は反映しない', () => {
   const s = {};
@@ -41,7 +45,10 @@ test('不正な変更は反映しない', () => {
     {course: '経済原論Ⅱ', round: 3, values: {attendance: '寝坊'}},
     {course: '経済原論Ⅱ', round: 0, values: {note: 'x'}},
     {course: '経済原論Ⅱ', values: {limit: 99}},
-    {course: '経済原論Ⅱ', values: {password: 'x'}}
+    {course: '経済原論Ⅱ', values: {password: 'x'}},
+    {course: '経済原論Ⅱ', values: {fileTypes: ['exe']}},
+    {course: '経済原論Ⅱ', values: {fileTypes: ['PDF', 'PDF']}},
+    {course: '経済原論Ⅱ', values: {fileTypes: 'PDF'}}
   ])
     assert.throws(() => applyTimetablePatch(s, p, courses));
   assert.deepEqual(s, {});

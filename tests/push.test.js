@@ -311,7 +311,7 @@ test('画面：設定の「この端末への通知」で Service Worker を登�
   assert.match(sw, rx("self.addEventListener('notificationclick',e=>{e.notification.close();"));
   assert.doesNotMatch(sw, /caches\.|fetch/, '画面の内容は保存しない');
   assert.match(src('dist/_headers'), /\/sw\.js\n {2}Cache-Control: no-cache/);
-  assert.match(src('dist/index.html'), /app\.js\?v=sp-29/);
+  assert.match(src('dist/index.html'), /app\.js\?v=sp-30/);
   const schema = src('server/schema.sql');
   assert.match(schema, /CREATE TABLE IF NOT EXISTS push_keys \(id TEXT PRIMARY KEY, value TEXT NOT NULL\)/);
   assert.match(

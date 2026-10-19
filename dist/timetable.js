@@ -1,7 +1,9 @@
 // 時間割・出席管理（app.js の状態・描画を使う）
 const WEEKDAYS = ['月', '火', '水', '木', '金', '土'],
   MODES = ['対面', 'オンライン', 'オンデマンド', '休講'],
-  MARKS = ['出席', '遅刻', '欠席', '公欠'];
+  MARKS = ['出席', '遅刻', '欠席', '公欠'],
+  // 保存するファイルの種類（local/download-dir.js の FILE_TYPE_NAMES と同じ）
+  FILE_TYPES = ['PDF', 'Word', 'Excel', 'PowerPoint', '画像', '動画・音声', 'その他'];
 const modeClass = {対面: 'mode-face', オンライン: 'mode-online', オンデマンド: 'mode-demand', 休講: 'mode-off'},
   markClass = {出席: 'done', 遅刻: 'wait', 欠席: 'mode-off', 公欠: 'draft'};
 let academicRounds = {},
@@ -374,12 +376,17 @@ function openSession(i, r) {
   };
   document.getElementById('ss-course').onclick = () => openCourseConfig(i);
 }
+// 授業の設定で選んだ保存する種類。すべて選んでいれば null（既定＝すべて保存）
+function chosenFileTypes() {
+  const on = [...document.querySelectorAll('[data-filetype]')].filter(e => e.checked).map(e => e.dataset.filetype);
+  return on.length === FILE_TYPES.length ? null : on;
+}
 function openCourseConfig(i) {
   const own = state.timetable?.[courses[i]] || {},
     cfg = courseConfig(i);
   openDrawer(
     `${courses[i]} の設定`,
-    `${infoRows(i)}<h3>自分で設定する</h3><div class="field"><label for="cc-weekday">曜日</label><select class="form-control" id="cc-weekday">${options(WEEKDAYS, own.weekday, cfg.auto ? `${cfg.slotFrom} から取得（${cfg.weekday}曜）` : '未設定')}</select></div><div class="field"><label for="cc-period">時限</label><select class="form-control" id="cc-period"><option value="">${cfg.auto && cfg.period ? `${cfg.slotFrom} から取得（${cfg.period}限）` : '未設定'}</option>${[1, 2, 3, 4, 5, 6, 7].map(p => `<option value="${p}"${own.period === p ? ' selected' : ''}>${p}限</option>`).join('')}</select></div><div class="field"><label for="cc-room">教室</label><input class="form-control" id="cc-room" value="${esc(own.room || '')}" placeholder="例：0803"></div><div class="field"><label for="cc-mode">授業形式（既定）</label><select class="form-control" id="cc-mode">${options(MODES.slice(0, 3), own.mode, cfg.autoMode ? `自動（${cfg.autoMode}）` : '未設定')}</select><small>回ごとに違う場合は、時間割でその回を選んで変更します。</small></div><div class="field"><label for="cc-limit">欠席の上限（回）</label><input class="form-control" id="cc-limit" type="number" min="0" max="15" value="${own.limit ?? ''}" style="max-width:120px"><small>シラバスや初回の説明で確認した回数を入れると、出席状況で残りを表示します。</small></div>${state.features?.includes('aipolicy') ? `<div class="field"><label for="cc-ai">AI の利用</label><select class="form-control" id="cc-ai"><option value="">自動（回ごとに、その回の授業資料から判断）</option><option value="禁止"${own.ai === '禁止' ? ' selected' : ''}>全回 禁止（saboro から提出しない）</option><option value="許可"${own.ai === '許可' ? ' selected' : ''}>全回 許可（自動で作成・提出）</option></select></div>` : ''}<div class="actions"><button class="btn btn-primary" id="cc-save">保存</button></div>`,
+    `${infoRows(i)}<h3>自分で設定する</h3><div class="field"><label for="cc-weekday">曜日</label><select class="form-control" id="cc-weekday">${options(WEEKDAYS, own.weekday, cfg.auto ? `${cfg.slotFrom} から取得（${cfg.weekday}曜）` : '未設定')}</select></div><div class="field"><label for="cc-period">時限</label><select class="form-control" id="cc-period"><option value="">${cfg.auto && cfg.period ? `${cfg.slotFrom} から取得（${cfg.period}限）` : '未設定'}</option>${[1, 2, 3, 4, 5, 6, 7].map(p => `<option value="${p}"${own.period === p ? ' selected' : ''}>${p}限</option>`).join('')}</select></div><div class="field"><label for="cc-room">教室</label><input class="form-control" id="cc-room" value="${esc(own.room || '')}" placeholder="例：0803"></div><div class="field"><label for="cc-mode">授業形式（既定）</label><select class="form-control" id="cc-mode">${options(MODES.slice(0, 3), own.mode, cfg.autoMode ? `自動（${cfg.autoMode}）` : '未設定')}</select><small>回ごとに違う場合は、時間割でその回を選んで変更します。</small></div><div class="field"><label for="cc-limit">欠席の上限（回）</label><input class="form-control" id="cc-limit" type="number" min="0" max="15" value="${own.limit ?? ''}" style="max-width:120px"><small>シラバスや初回の説明で確認した回数を入れると、出席状況で残りを表示します。</small></div>${state.features?.includes('aipolicy') ? `<div class="field"><label for="cc-ai">AI の利用</label><select class="form-control" id="cc-ai"><option value="">自動（回ごとに、その回の授業資料から判断）</option><option value="禁止"${own.ai === '禁止' ? ' selected' : ''}>全回 禁止（saboro から提出しない）</option><option value="許可"${own.ai === '許可' ? ' selected' : ''}>全回 許可（自動で作成・提出）</option></select></div>` : ''}${state.features?.includes('filetypes') ? `<fieldset class="pf"><legend>保存するファイルの種類</legend><div class="pf-options">${FILE_TYPES.map((t, k) => `<label class="check"><input type="checkbox" id="cc-ft${k}" data-filetype="${esc(t)}"${!Array.isArray(own.fileTypes) || own.fileTypes.includes(t) ? ' checked' : ''}> ${esc(t)}</label>`).join('')}</div><small>同期で ${dev()} にダウンロードする資料の種類です（Word は .doc・.docx など、PowerPoint は .ppt・.pptx など、その他は zip など）。外した種類は次の同期から保存せず、課題の作成や授業情報の読み取りにも使いません。保存済みのファイルは消しません。</small></fieldset>` : ''}<div class="actions"><button class="btn btn-primary" id="cc-save">保存</button></div>`,
     'cc-room',
     `course:${i}`
   );
@@ -394,7 +401,8 @@ function openCourseConfig(i) {
         room: val('cc-room').trim(),
         mode: val('cc-mode'),
         limit: limit === '' ? null : Math.max(0, Math.min(15, Math.round(+limit))),
-        ...(document.getElementById('cc-ai') ? {ai: val('cc-ai')} : {})
+        ...(document.getElementById('cc-ai') ? {ai: val('cc-ai')} : {}),
+        ...(document.querySelector('[data-filetype]') ? {fileTypes: chosenFileTypes()} : {})
       }
     });
     close(true);

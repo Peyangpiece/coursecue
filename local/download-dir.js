@@ -138,6 +138,22 @@ export async function trashFile(file, {home = homedir()} = {}) {
   return target;
 }
 
+// 授業ごとに保存するファイルの種類（授業の設定の fileTypes）。拡張子から決め、どれにも当たらないものは「その他」。dist/timetable.js の FILE_TYPES と同じ
+export const FILE_TYPES = {
+  PDF: /\.pdf$/i,
+  Word: /\.(docx?|odt|rtf)$/i,
+  Excel: /\.(xlsx?|xlsm|csv|ods)$/i,
+  PowerPoint: /\.(pptx?|odp)$/i,
+  画像: /\.(png|jpe?g|gif|webp|heic|bmp|tiff?)$/i,
+  '動画・音声': /\.(mp4|mov|m4v|avi|wmv|webm|mp3|m4a|wav|aac)$/i
+};
+export const FILE_TYPE_NAMES = [...Object.keys(FILE_TYPES), 'その他'];
+export function fileType(name) {
+  return Object.keys(FILE_TYPES).find(k => FILE_TYPES[k].test(String(name || '').trim())) || 'その他';
+}
+// 名前に拡張子があるときだけ種類を返す（manabo の資料名は拡張子がないことが多い。そのときはダウンロードしてファイル名で決める）
+export const fileTypeOf = name => (/\.[a-z0-9]{1,5}$/i.test(String(name || '').trim()) ? fileType(name) : null);
+
 // 資料名の「4up」「2up」「4in1」「4アップ」「4スライド」などの印刷形式。1up や印なしは 1、印があればその数
 // 「2分割」「4分割バージョン」も 2up・4up と同じ印刷形式の印（「分割なし」は印なし＝1）
 const LAYOUT = /(?<![第\d])(\d{1,2})\s*(?:-?up|in\s*1|on\s*1|アップ|スライド|分割)(?![a-z])/i;

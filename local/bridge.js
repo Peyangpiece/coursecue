@@ -137,7 +137,8 @@ async function save() {
       submissionIntent: !!submissionIntent,
       hasDraft: !!draftPath
     })),
-    materials: state.materials.map(({path, ...m}) => m)
+    materials: state.materials.map(({path, ...m}) => m),
+    skippedFiles: undefined // 保存しない種類の資料の URL（Mac/PC の中だけで使う）
   });
 }
 if (!state.courses) state.courses = LEGACY_COURSES.map(([name, id]) => ({name, id}));
@@ -151,7 +152,7 @@ if (!state.settings?.downloadDir && !state.rootAdopted) {
   state.rootAdopted = true;
 }
 state.defaultDownloadDir = materialsRoot();
-state.features = ['pickfolder', 'attendance', 'removecourse', 'aipolicy', 'attcheck', 'mfa']; // AI の使用量：1 回ごとに usage.jsonl に追記し、月ごとの集計を状態に持つ（画面に出す。料金を決めるための実測用）
+state.features = ['pickfolder', 'attendance', 'removecourse', 'aipolicy', 'attcheck', 'mfa', 'filetypes']; // AI の使用量：1 回ごとに usage.jsonl に追記し、月ごとの集計を状態に持つ（画面に出す。料金を決めるための実測用）
 const usageFile = usageLog(join(work, 'usage.jsonl'));
 async function recordUsage(e) {
   state.usage = addUsage(state.usage, e);

@@ -9,7 +9,15 @@ import {weekdayOf, periodOf, scheduleFor, calendar, calendarEnd} from './calenda
 import {courseInfoPlan, mergeCourseInfo, quoteSource, fileRound, modeExcerpt} from './timetable.js';
 import {parseNotice, noticeKey, noticeEvents} from './notices.js';
 import {CUBICS_URL, extractGrid, parseGrid, mapEntries} from './cubics.js';
-import {inside, duplicateCandidates, trashFile, preferLayout, layoutDuplicates} from './download-dir.js';
+import {
+  inside,
+  duplicateCandidates,
+  trashFile,
+  preferLayout,
+  layoutDuplicates,
+  fileType,
+  fileTypeOf
+} from './download-dir.js';
 import {chromium} from 'playwright';
 import AdmZip from 'adm-zip';
 import {mkdir, readFile, writeFile, readdir, access, stat, rm} from 'node:fs/promises';
@@ -1930,16 +1938,17 @@ export class Manabo {
       e => e.name || e.title || ''
     );
   }
+  // 授業の設定で保存する種類を選んでいれば（fileTypes）、それ以外の種類は保存しない。種類はファイル名の拡張子で決め、
+  // 一度ダウンロードして種類が分かった保存しない資料は skippedFiles に URL ごとに覚えて、次の同期では取りに行かない（種類を足せば保存する）
   async download(entry, course, round = 0) {
     const here = m => inside(m.path, this.root);
     if (this.state.materials.some(m => m.url === entry.url && here(m))) return;
+    const types = this.state.timetable?.[course]?.fileTypes,
+      known = this.state.skippedFiles?.[entry.url] || fileTypeOf(entry.name) || fileTypeOf(entry.text);
+    if (Array.isArray(types) && known && !types.includes(known)) return;
     await this.page();
     const r = await this.ctx.request.get(validLms(entry.url));
     if (!r.ok() || r.headers()['content-type']?.includes('text/html')) return;
-    const data = await r.body(),
-      h = hash(data),
-      folder = await this.courseDir(course);
-    if (this.state.materials.some(m => m.sha256 === h && m.course === course && here(m))) return;
     const raw = r.headers()['content-disposition'] || '';
     let name;
     try {
@@ -1949,6 +1958,14 @@ export class Manabo {
     } catch {}
     if (!name) return;
     name = basename(name);
+    if (Array.isArray(types) && !types.includes(fileType(name))) {
+      this.state.skippedFiles = {...this.state.skippedFiles, [entry.url]: fileType(name)};
+      return;
+    }
+    const data = await r.body(),
+      h = hash(data),
+      folder = await this.courseDir(course);
+    if (this.state.materials.some(m => m.sha256 === h && m.course === course && here(m))) return;
     let file = join(folder, name),
       n = 2;
     while (true) {
