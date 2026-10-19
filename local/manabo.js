@@ -312,6 +312,9 @@ export const shortError = e => {
   if (/net::ERR_|ECONNRESET|ENOTFOUND|EAI_AGAIN/.test(m)) return 'manabo に接続できませんでした（ネットワーク）';
   return m.split('\n')[0].slice(0, 80);
 };
+// ログインボタンを押してから、ログイン後の画面・2 段階認証の画面が出るまで待つ時間。大学のログインから manabo へ戻る転送は、
+// 初めてのパソコンや遅い回線では 15 秒を超えることがあるので 30 秒
+const LOGIN_WAIT = 30 * 1000;
 // 2 段階認証：SaBoRo の画面からコードが届くのを待つ時間（メールのコードの有効期限に合わせて 10 分）
 const MFA_WAIT = 10 * 60 * 1000;
 // 認証コードの入力欄：名前・id・placeholder・ラベルに code／otp／認証／確認 などを含む見えている入力欄。なければ、本文に「認証コード」などがあり見えている文字の入力欄が 1 つだけのとき
@@ -347,6 +350,42 @@ async function mfaInput(p) {
   return null;
 }
 // 「30 日間はこの確認を表示しない」「このブラウザを記憶する」などのチェックを入れる（次の月までコードを求められないように）
+// 自動ログインが進まなかった理由：大学のログイン画面に残っていれば ID・パスワードの誤り（画面の知らせを添える）、
+// それ以外は止まった画面の名前を添える（どの画面を進められないのか分からず、直せなかったため）。学籍番号などの ID は除く（クラウドに残るため）
+export async function loginFailure(p) {
+  const text = await p
+      .locator('body')
+      .innerText()
+      .catch(() => ''),
+    lines = text
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean),
+    onForm =
+      (await p
+        .locator('input[type=password]')
+        .filter({visible: true})
+        .count()
+        .catch(() => 0)) > 0;
+  if (onForm) {
+    const said = lines.find(
+      s =>
+        s.length <= 100 &&
+        /違|誤り|正しくありません|一致しません|失敗|無効|ロック|incorrect|invalid|failed|locked/i.test(s)
+    );
+    return Error(
+      `manabo にログインできませんでした。ID・パスワードを確かめて、アプリの設定画面で保存し直してください${said ? `（大学の画面：${scrubIds(said)}）` : ''}`
+    );
+  }
+  const title = scrubIds((await p.title().catch(() => '')) || lines[0] || '').slice(0, 60);
+  let host = '';
+  try {
+    host = new URL(p.url()).hostname;
+  } catch {}
+  return Error(
+    `自動ログインに失敗。ログインのあとの画面${title ? `「${title}」` : ''}${host ? `（${host}）` : ''}を進められませんでした。アプリの「manabo ブラウザを開く」で一度ログインしてください`
+  );
+}
 async function trustDevice(p) {
   const boxes = p.locator('input[type=checkbox]').filter({visible: true});
   const labels = await boxes
@@ -440,7 +479,8 @@ export class Manabo {
     quarantine = null,
     notify = null,
     mfaCode = null,
-    mfaWait = MFA_WAIT
+    mfaWait = MFA_WAIT,
+    loginWait = LOGIN_WAIT
   }) {
     Object.assign(this, {
       baseRoot: root,
@@ -454,7 +494,8 @@ export class Manabo {
       quarantine,
       notify,
       mfaCode,
-      mfaWait
+      mfaWait,
+      loginWait
     });
     this.spareIds = new Set();
     this.held = new Map();
@@ -533,7 +574,7 @@ export class Manabo {
     await button.click();
     // ログインのあとに出るもの：ログイン後の要素（done）、「二段階認証でログイン」のボタン、メールの認証コードの入力欄のどれか
     const second = p.getByRole('button', {name: '二段階認証でログイン', exact: true});
-    const until = Date.now() + 15000;
+    const until = Date.now() + this.loginWait;
     let seen = '';
     while (!seen && Date.now() < until) {
       if (await done.isVisible().catch(() => false)) seen = 'done';
@@ -541,7 +582,7 @@ export class Manabo {
       else if (await mfaInput(p)) seen = 'mfa';
       else await new Promise(r => setTimeout(r, 300));
     }
-    if (!seen) throw Error('自動ログインに失敗。ID・パスワードまたは追加認証を確認してください。');
+    if (!seen) throw await loginFailure(p);
     if (seen === 'second') {
       const nextPassword = p.locator('input[type=password]').filter({visible: true});
       if ((await nextPassword.count()) === 1) await nextPassword.fill(c.password);
@@ -568,7 +609,7 @@ export class Manabo {
       delete this.state.mfa;
       await this.save();
     }
-    throw Error('自動ログインに失敗。ID・パスワードまたは追加認証を確認してください。');
+    throw await loginFailure(p);
   }
   // done が見えれば 'done'、認証コードの入力欄が見えれば 'mfa'、15 秒待っても出なければ ''
   async waitLoginOutcome(p, done) {

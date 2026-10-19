@@ -147,3 +147,38 @@ test('通知と画面：state.mfa が新しくなったら Web Push を送る。
   assert.match(src('local/bridge.js'), rx("mfaCode:()=>api('/api/agent/mfa','POST',{}).then(r=>r?.code||null),"));
   assert.match(src('local/bridge.js'), /'attcheck', 'mfa'\]/);
 });
+
+// 自動ログインが進まないとき：ID・パスワードの誤り（大学のログイン画面に戻る）と、知らない画面で止まったときを分けて知らせる
+test('ログインに失敗したら、ID・パスワードの誤りか、どの画面で止まったかを知らせる（学籍番号は除く）', async t => {
+  const browser = await chromium.launch({headless: true});
+  t.after(() => browser.close());
+  const failWith = async body => {
+    const page = await browser.newPage();
+    await page.route('**/*', route =>
+      route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: route.request().url().includes('/session') ? body : LOGIN
+      })
+    );
+    const m = new Manabo({
+      credentials: async () => ({username: 'u', password: 'p'}),
+      state: {},
+      save: async () => {},
+      loginWait: 1000
+    });
+    m.page = async () => page;
+    return m.login().then(
+      () => assert.fail('ログインできてしまった'),
+      e => e.message
+    );
+  };
+  const wrong = await failWith(`<p class="error">ユーザー名またはパスワードが正しくありません（T123456）</p>${LOGIN}`);
+  assert.match(wrong, /ID・パスワードを確かめて/);
+  assert.match(wrong, /大学の画面：ユーザー名またはパスワードが正しくありません/);
+  assert.doesNotMatch(wrong, /T123456/);
+  const stuck = await failWith(
+    '<title>認証方法の選択</title><p>認証方法を選んでください</p><button>メールで受け取る</button>'
+  );
+  assert.match(stuck, /ログインのあとの画面「認証方法の選択」/);
+  assert.match(stuck, /manabo ブラウザを開く/);
+});
