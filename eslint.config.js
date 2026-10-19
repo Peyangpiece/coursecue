@@ -12,6 +12,7 @@ const shared = {
   courses: 'writable',
   esc: 'readonly',
   savePersonal: 'readonly',
+  dev: 'readonly',
   job: 'readonly',
   removedCourse: 'readonly',
   panel: 'readonly',

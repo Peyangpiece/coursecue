@@ -427,3 +427,27 @@ test('設定の「自分について」はアンケートで選べ、選んだ�
   assert.match(html, /name="pf-year" value="3年">/, '答えていない質問は印なし');
   assert.match(html, /そのほか自分について（自由記述・任意）/);
 });
+test('授業の設定で保存するファイルの種類を選べ、授業の情報に選んだ種類を出す（古いアプリでは出さない）', () => {
+  const run = boot();
+  run(`key='k';${SET}state.features=['filetypes'];state.timetable={[courses[0]]:{fileTypes:['PDF','PowerPoint']}}`);
+  run(`openCourseConfig(0)`);
+  const html = run(`document.getElementById('drawer').innerHTML`);
+  assert.match(html, /保存するファイルの種類/);
+  assert.match(html, /data-filetype="PDF" checked/);
+  assert.match(html, /data-filetype="PowerPoint" checked/);
+  assert.doesNotMatch(html, /data-filetype="Word" checked/);
+  run(`openCourseConfig(1)`);
+  assert.equal(
+    (run(`document.getElementById('drawer').innerHTML`).match(/data-filetype="[^"]+" checked/g) || []).length,
+    7,
+    '未設定ならすべての種類を保存'
+  );
+  assert.match(run(`courseHeader(0)`), /保存する資料<\/th><td>PDF・PowerPoint/);
+  assert.match(run(`courseHeader(1)`), /すべての種類/);
+  run(`state.timetable={[courses[0]]:{fileTypes:[]}}`);
+  assert.match(run(`courseHeader(0)`), /保存しない/);
+  run(`state.features=[]`);
+  run(`openCourseConfig(0)`);
+  assert.doesNotMatch(run(`document.getElementById('drawer').innerHTML`), /保存するファイルの種類/);
+  assert.doesNotMatch(run(`courseHeader(0)`), /保存する資料/);
+});

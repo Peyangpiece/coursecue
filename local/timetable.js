@@ -1,5 +1,6 @@
 // 時間割・出席の記録と、ガイダンス資料から読み取った授業情報の検証
 import {createHash} from 'node:crypto';
+import {FILE_TYPE_NAMES} from './download-dir.js';
 const MODES = ['対面', 'オンライン', 'オンデマンド', '休講'],
   MARKS = ['出席', '遅刻', '欠席', '公欠'],
   WEEKDAYS = ['月', '火', '水', '木', '金', '土'];
@@ -130,7 +131,10 @@ const courseKeys = {
   room: v => typeof v === 'string' && v.length <= 50,
   mode: v => v === '' || MODES.slice(0, 3).includes(v),
   limit: v => v === null || (Number.isInteger(v) && v >= 0 && v <= 15),
-  ai: v => v === '' || v === '禁止' || v === '許可'
+  ai: v => v === '' || v === '禁止' || v === '許可',
+  // 保存するファイルの種類（null はすべて保存）
+  fileTypes: v =>
+    v === null || (Array.isArray(v) && v.every(x => FILE_TYPE_NAMES.includes(x)) && new Set(v).size === v.length)
 };
 const sessionKeys = {
   mode: v => v === '' || MODES.includes(v),

@@ -1022,7 +1022,11 @@ function courseHeader(i) {
       return banned.length
         ? `<span class="attn">禁止の回：${banned.map(r => `第${r}回`).join('、')}</span> <span class="muted">（その回の資料）</span>`
         : '<span class="muted">禁止の記載なし（その回の資料から判断）</span>';
-    })()}</td></tr><tr><th>次回</th><td>${next ? `第${next[0]}回 ${typeof dayLabel === 'function' ? dayLabel(next[1]) : next[1]}${next[1] === today ? ' <span class="label draft">今日</span>' : ''}` : '<span class="muted">予定なし</span>'}</td></tr>${s ? `<tr><th>出席</th><td>出席 ${s.出席}・遅刻 ${s.遅刻}・欠席 ${s.欠席}・公欠 ${s.公欠}${cfg.limit != null ? `（欠席の上限 ${cfg.limit}回）` : ''}${s.未記録 ? ` <span class="attn">未記録 ${s.未記録}</span>` : ''}</td></tr>` : ''}${attendanceCheckRow(i)}</table><div class="actions"><button class="btn btn-sm" data-coursecfg="${i}">授業の設定</button><button class="btn btn-sm" data-attendance="${i}">出席を記録</button><button class="btn btn-sm" data-view="timetable">時間割へ</button>${key ? `<button class="btn btn-sm" id="attcheck-${i}" data-attcheck="${i}">出席確認</button>` : ''}${key ? manaboLink(i) : ''}${key && state.features?.includes('removecourse') ? `<button class="btn btn-sm" id="removecourse-${i}" data-removecourse="${i}">この授業を削除</button>` : ''}</div>`
+    })()}</td></tr>${(() => {
+      if (!state.features?.includes('filetypes')) return '';
+      const types = state.timetable?.[courses[i]]?.fileTypes;
+      return `<tr><th>保存する資料</th><td>${!Array.isArray(types) ? '<span class="muted">すべての種類</span>' : types.length ? esc(types.join('・')) : '<span class="attn">保存しない</span>'}</td></tr>`;
+    })()}<tr><th>次回</th><td>${next ? `第${next[0]}回 ${typeof dayLabel === 'function' ? dayLabel(next[1]) : next[1]}${next[1] === today ? ' <span class="label draft">今日</span>' : ''}` : '<span class="muted">予定なし</span>'}</td></tr>${s ? `<tr><th>出席</th><td>出席 ${s.出席}・遅刻 ${s.遅刻}・欠席 ${s.欠席}・公欠 ${s.公欠}${cfg.limit != null ? `（欠席の上限 ${cfg.limit}回）` : ''}${s.未記録 ? ` <span class="attn">未記録 ${s.未記録}</span>` : ''}</td></tr>` : ''}${attendanceCheckRow(i)}</table><div class="actions"><button class="btn btn-sm" data-coursecfg="${i}">授業の設定</button><button class="btn btn-sm" data-attendance="${i}">出席を記録</button><button class="btn btn-sm" data-view="timetable">時間割へ</button>${key ? `<button class="btn btn-sm" id="attcheck-${i}" data-attcheck="${i}">出席確認</button>` : ''}${key ? manaboLink(i) : ''}${key && state.features?.includes('removecourse') ? `<button class="btn btn-sm" id="removecourse-${i}" data-removecourse="${i}">この授業を削除</button>` : ''}</div>`
   );
 }
 // 左のディレクトリ。スマホでは manabo と同じくボタンで開閉する
