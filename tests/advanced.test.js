@@ -60,6 +60,6 @@ test('画面：判定に合う課題（か途切れた課題）に「高度な�
   assert.match(src('dist/index.html'), /<script src="\.\/task-rules\.js\?v=sp-1"><\/script>/);
   assert.match(
     src('local/manabo.js'),
-    rx('let generated=t.generationKey===generationKey&&t.generation&&!advanced?t.generation:null;')
+    rx('let generated=advanced?null:t.generationKey===generationKey&&t.generation?t.generation:')
   );
 });

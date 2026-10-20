@@ -406,10 +406,15 @@ test('アプリ：Batch を待つ課題は 10 分ごとに出来上がりを確�
   assert.match(bridge, rx("run({kind:'generate',task:t.id,auto:true})"));
   assert.match(
     bridge,
-    rx('lms.process(t,false,{urgent:!job.auto,advanced:job.payload?.advanced===true,...personalOptions(job.payload)})')
+    rx(
+      'lms.process(target,false,{urgent:!job.auto,advanced:job.payload?.advanced===true,reveal:!job.auto,...personalOptions(job.payload)})'
+    )
   );
   assert.match(bridge, rx('createGenerator({', /[^}]*/, 'saboro})'));
-  assert.match(manabo, rx('if(!(e instanceof AiPending))throw e;t.aiPending=generationKey;t.action=AI_PENDING_ACTION'));
+  assert.match(
+    manabo,
+    rx('if(!(e instanceof AiPending))throw e;t.aiPending=generationKey;if(!hold)t.action=AI_PENDING_ACTION')
+  );
   assert.match(
     manabo,
     rx('if(e instanceof AiTruncated){delete t.aiPending;this.offerAdvanced(t,generationKey,e.advanced)'),

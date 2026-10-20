@@ -233,7 +233,7 @@ test('引用と資料本文の空白・全角半角の違いは不一致にし�
   m.page = async () => p;
   m.materials = async () => [{file: '第3回.pptx', text: '京浜工場から 技術者を送る \n ＪＳＷ'}];
   m.saveDraft = async () => {};
-  await m.process(task, false);
+  await m.process(task, false, {reveal: true});
   assert.equal(task.status, 'draft', '空白の違いだけなら引用は一致とみなす');
   assert.equal(task.action, '下書きを確認して提出');
   await rm(root, {recursive: true, force: true});

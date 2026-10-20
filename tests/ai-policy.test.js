@@ -95,7 +95,7 @@ test('その回の資料で禁止されたレポート：回答は参考とし�
   const {m, filled} = setup(state, banFiles);
   const t = task();
   state.tasks.push(t);
-  await m.processTask(t, false);
+  await m.processTask(t, false, {reveal: true});
   assert.equal(t.aiPolicy.forbidden, true);
   assert.equal(t.aiPolicy.file, '第3回_資料.pdf');
   assert.equal(t.answer, '参考の回答');
@@ -110,7 +110,7 @@ test('ほかの回の資料の禁止は関係しない（第4回の課題は第3
   const {m, filled} = setup(state, banFiles);
   const t = task({id: 'b', round: 4, title: '第4回レポート'});
   state.tasks.push(t);
-  await m.processTask(t, false).catch(() => {});
+  await m.processTask(t, false, {reveal: true}).catch(() => {});
   assert.equal(t.aiPolicy.forbidden, false);
   assert(filled.length > 0, 'これまでどおり入力する');
   assert.notEqual(t.action, AI_FORBIDDEN_ACTION);
@@ -175,11 +175,17 @@ test('資料で禁止の回は、参考例として作るよう AI に伝える�
   );
   assert.equal(calls[0].urgent, false, '同期の中の生成は急ぎではない（SaBoRo の AI なら Batch）');
   assert.match(calls[0].key, /^[0-9a-f]{64}$/, '同じ依頼の目印');
+  assert.equal(t.status, 'ready', '同期で作った回答は「課題を生成」を押すまで見せない');
+  assert.equal(t.answer, '');
+  assert.equal(t.prepared.key, calls[0].key);
+  await m.processTask(t, false, {reveal: true});
+  assert.equal(calls.length, 1, '押したときに内容が同じなら控えを使う');
   assert.equal(t.status, 'draft');
+  assert.equal(t.prepared, undefined);
   assert.deepEqual(filled, [], '入力しない');
   const t4 = task({id: 'd', round: 4, title: '第4回レポート'});
   state.tasks.push(t4);
-  await m.processTask(t4, false).catch(() => {});
+  await m.processTask(t4, false, {reveal: true}).catch(() => {});
   assert.equal(calls.length, 2);
   assert.equal(calls[1].reference, undefined, '禁止でない回は参考例の指示を付けない');
 });
