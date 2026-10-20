@@ -82,7 +82,7 @@ test('アプリ：裏で動くブラウザは画面を出さない設定で起�
     src,
     rx("this.visible?{headless:false,viewport:{width:1100,height:850}}:{headless:true,channel:'chromium'")
   );
-  assert.match(src, rx('async sync({course}={}){await this.hideBrowserIfIdle();'));
+  assert.match(src, rx('async sync({course,generate=true}={}){await this.hideBrowserIfIdle();'));
   const bridge = readFileSync('local/bridge.js', 'utf8');
   assert.match(bridge, rx("req.url==='/browser'){", /[^]*?/, 'if(running){res.writeHead(409'));
 });

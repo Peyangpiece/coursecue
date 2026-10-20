@@ -131,7 +131,8 @@ async function save() {
     credentialPublicKey: credentialKey.publicKey,
     deviceSeen: new Date().toISOString(),
     credentialsConfigured: !!keychain('get', 'manabo'),
-    tasks: state.tasks.map(({draftPath, submissionIntent, generation, ...t}) => ({
+    // prepared：同期で作って本人がまだ「課題を生成」を押していない回答（画面に見せないのでクラウドへ送らない）
+    tasks: state.tasks.map(({draftPath, submissionIntent, generation, prepared, ...t}) => ({
       ...t,
       generation,
       submissionIntent: !!submissionIntent,
@@ -512,9 +513,21 @@ async function run(job) {
         await save();
       } else if (job.kind === 'generate') {
         await lms.login();
-        await lms.process(t, false, {
+        // 本人が「課題を生成」を押したとき：同期のあとにその回へ新しい資料が上がっていないか、その授業を読み直してから作る
+        // （資料が変わっていれば同期で控えた回答は使わず作り直す。2 分以内に確かめていれば省く）。作った回答はここで初めて見せる
+        let target = t;
+        if (!job.auto && job.payload?.personal !== 'ask') {
+          const name = courseNames(state)[t.course],
+            last = [state.lastSync, state.courseSynced?.[name]].filter(Boolean).sort().at(-1);
+          if (!last || Date.now() - new Date(last).getTime() > 120e3) {
+            await lms.sync({course: t.course, generate: false});
+            target = state.tasks.find(x => x.id === t.id) || t;
+          }
+        }
+        await lms.process(target, false, {
           urgent: !job.auto,
           advanced: job.payload?.advanced === true,
+          reveal: !job.auto,
           ...personalOptions(job.payload)
         });
       } else if (job.kind === 'submit') {

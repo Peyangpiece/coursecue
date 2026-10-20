@@ -1624,7 +1624,8 @@ export class Manabo {
               this.state.tasks.filter(t => t.course === i),
               round
             );
-            if (full)
+            // 未提出の課題がある回は毎回の同期で新しい資料を確かめる（「課題を生成」のときに新しい資料で作り直せるように）
+            if (full || waiting.length)
               for (const e of this.wantedFiles(entries))
                 await this.download(e, name, round).catch(err =>
                   infoIssues.push(
@@ -1779,7 +1780,8 @@ export class Manabo {
     this.state.progress = {phase, ...extra, at: new Date().toISOString()};
     await this.save().catch(() => {});
   }
-  async sync({course} = {}) {
+  // generate：集めたあとに回答を作るか（「課題を生成」の前にその授業の資料を確かめるときは作らない）
+  async sync({course, generate = true} = {}) {
     await this.hideBrowserIfIdle();
     const only = course == null ? null : course;
     if (only !== null && (!Number.isInteger(only) || !this.courses()[only] || this.courses()[only].removed))
@@ -1909,7 +1911,7 @@ export class Manabo {
     const at = Date.now(); // AI が使えない端末では回答を作らない（毎回の失敗を出さず、画面には「この端末では AI を使えません」と 1 か所だけ出す）
     // クイズは設定にかかわらず常に自動で回答を入力する（提出は本人）。レポートなどは「回答を自動で作る」の設定に従う
     const todo =
-      this.aiAvailable !== false
+      this.aiAvailable !== false && generate
         ? queue.filter(t => t.status === 'ready' && (t.type === 'クイズ' || this.state.settings.autoGenerate !== false))
         : [];
     const st = only === null ? this.state.syncTiming : {generated: 0};
@@ -2293,9 +2295,13 @@ export class Manabo {
   async processTask(
     t,
     manualSubmit,
-    {urgent = false, advanced = false, personal = null, answers = null, saveProfile = false} = {}
+    {urgent = false, advanced = false, personal = null, answers = null, saveProfile = false, reveal = false} = {}
   ) {
     if (t.status === 'done') return;
+    // 同期（本人が頼んでいない生成）で作った回答は、本人が「課題を生成」を押すまで見せない：t.prepared に控えるだけにし、
+    // 下書き・回答・状態は変えず、manabo にも入力しない（クラウドへも送らない）。押したときに同じ内容（資料・設問・補足など）なら控えを使い、変わっていれば作り直す
+    // まだ何も見せていない課題（ready）だけが対象。経験を問う課題の質問・答えは本人の操作なので見せる。クイズは設定どおり同期で回答を入力する
+    const hold = !manualSubmit && !reveal && !personal && t.type !== 'クイズ' && t.status === 'ready';
     const forbidden = aiForbidden(this.state, t, this.courses()[t.course]?.name);
     if (manualSubmit && forbidden)
       throw Error('この回は AI の利用が禁止されているため、saboro からは提出しません。manabo で提出してください');
@@ -2407,7 +2413,13 @@ export class Manabo {
       ); // SaBoRo の AI は、急がない回答を Batch（半額）で作る。本人が頼んだとき・締切まで 24 時間以内ならすぐ作る。Batch の結果が出るまでは「作成中」で止め、結果が出たらアプリが同じ処理をやり直す
     const soon = !!t.dueAt && new Date(t.dueAt) - Date.now() < 24 * 3600e3;
     // 高度な生成は、同じ内容で作った回答があっても作り直す（高性能なモデルで作り直すのが目的のため）
-    let generated = t.generationKey === generationKey && t.generation && !advanced ? t.generation : null;
+    let generated = advanced
+      ? null
+      : t.generationKey === generationKey && t.generation
+        ? t.generation
+        : t.prepared?.key === generationKey
+          ? t.prepared.generation
+          : null;
     if (!generated) {
       try {
         generated = await this.ai({...t, questions, description: text}, source, supplement, {
@@ -2429,13 +2441,19 @@ export class Manabo {
         }
         if (!(e instanceof AiPending)) throw e;
         t.aiPending = generationKey;
-        t.action = AI_PENDING_ACTION;
+        if (!hold) t.action = AI_PENDING_ACTION;
         await this.save();
         return;
       }
     }
     delete t.aiPending;
     delete t.advancedOffer;
+    if (hold) {
+      t.prepared = {key: generationKey, generation: generated, at: new Date().toISOString()};
+      await this.save();
+      return;
+    }
+    delete t.prepared;
     const answer = cleanAnswer(generated, questions);
     if (manualSubmit && t.answerEdited) {
       const fields = questions.filter(q => !attendance(q.text));
