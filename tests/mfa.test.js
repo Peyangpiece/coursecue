@@ -145,5 +145,5 @@ test('通知と画面：state.mfa が新しくなったら Web Push を送る。
   assert.match(app, rx('showPrompts();showMfa();'));
   assert.match(app, /autocomplete="\$\{others \? 'off' : 'one-time-code'\}"/);
   assert.match(src('local/bridge.js'), rx("mfaCode:()=>api('/api/agent/mfa','POST',{}).then(r=>r?.code||null),"));
-  assert.match(src('local/bridge.js'), /'attcheck', 'mfa'[,\]]/);
+  assert.match(src('local/bridge.js'), /'attcheck',\s*'mfa'[,\]]/);
 });

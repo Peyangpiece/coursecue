@@ -351,9 +351,17 @@ function restoreDrawer() {
 // 処理中のボタン：再描画しても「同期中…」などの表示と無効化を保つ
 function setBusy(id, label) {
   if (label) busy[id] = label;
-  else delete busy[id];
+  else {
+    delete busy[id];
+    // 状態を出すだけの欄（data-idle）は、終わったら元の文に戻す
+    const e = document.getElementById(id);
+    if (e?.dataset.idle !== undefined) e.textContent = e.dataset.idle;
+  }
   applyBusy();
 }
+// 「課題を生成」の処理中の表示：PC の進み具合から、資料の確認中か回答の作成中かを出す
+const generatingText = p =>
+  p?.phase === '回答の作成' ? '回答を作成中…' : p?.phase ? '新しい資料を確認中…' : '回答中…';
 function applyBusy() {
   for (const [id, label] of Object.entries(busy)) {
     const b = document.getElementById(id);
@@ -459,11 +467,15 @@ async function job(kind, task = null, payload = {}, buttonFor = null) {
               ? dev() + ' に反映中…'
               : '開始待ち…'
       );
+      let ticks = 0;
       const poll = setInterval(async () => {
         try {
           const jobs = await api('/api/jobs');
           const current = jobs.find(j => j.id === queued.id);
           if (!current) return;
+          // 回答の作成中は 6 秒ごとに進み具合（資料の確認中・回答の作成中）を読み直す
+          if (kind === 'generate' && current.status === 'running' && ticks++ % 3 === 0)
+            state.progress = (await api('/api/state').catch(() => null))?.progress || state.progress;
           setBusy(
             buttonId,
             payload.pickDownloadDir
@@ -479,7 +491,7 @@ async function job(kind, task = null, payload = {}, buttonFor = null) {
                     ? '同期中…'
                     : kind === 'attendance'
                       ? '提出中…'
-                      : '回答中…'
+                      : generatingText(state.progress)
                   : '開始待ち…'
           );
           if (['done', 'waiting', 'failed'].includes(current.status)) {
@@ -1024,8 +1036,10 @@ function courseHeader(i) {
         : '<span class="muted">禁止の記載なし（その回の資料から判断）</span>';
     })()}</td></tr>${(() => {
       if (!state.features?.includes('filetypes')) return '';
-      const types = state.timetable?.[courses[i]]?.fileTypes;
-      return `<tr><th>保存する資料</th><td>${!Array.isArray(types) ? '<span class="muted">すべての種類</span>' : types.length ? esc(types.join('・')) : '<span class="attn">保存しない</span>'}</td></tr>`;
+      const own = state.timetable?.[courses[i]]?.fileTypes,
+        types = Array.isArray(own) ? own : state.settings?.fileTypes,
+        from = Array.isArray(own) ? '' : ' <span class="muted">（全授業の既定）</span>';
+      return `<tr><th>保存する資料</th><td>${!Array.isArray(types) ? '<span class="muted">すべての種類</span>' : (types.length ? esc(types.join('・')) : '<span class="attn">保存しない</span>') + from}</td></tr>`;
     })()}<tr><th>次回</th><td>${next ? `第${next[0]}回 ${typeof dayLabel === 'function' ? dayLabel(next[1]) : next[1]}${next[1] === today ? ' <span class="label draft">今日</span>' : ''}` : '<span class="muted">予定なし</span>'}</td></tr>${s ? `<tr><th>出席</th><td>出席 ${s.出席}・遅刻 ${s.遅刻}・欠席 ${s.欠席}・公欠 ${s.公欠}${cfg.limit != null ? `（欠席の上限 ${cfg.limit}回）` : ''}${s.未記録 ? ` <span class="attn">未記録 ${s.未記録}</span>` : ''}</td></tr>` : ''}${attendanceCheckRow(i)}</table><div class="actions"><button class="btn btn-sm" data-coursecfg="${i}">授業の設定</button><button class="btn btn-sm" data-attendance="${i}">出席を記録</button><button class="btn btn-sm" data-view="timetable">時間割へ</button>${key ? `<button class="btn btn-sm" id="attcheck-${i}" data-attcheck="${i}">出席確認</button>` : ''}${key ? manaboLink(i) : ''}${key && state.features?.includes('removecourse') ? `<button class="btn btn-sm" id="removecourse-${i}" data-removecourse="${i}">この授業を削除</button>` : ''}</div>`
   );
 }
@@ -1070,6 +1084,12 @@ function removedCourses() {
 }
 const addCourseForm = () =>
   `<div class="field"><label for="newcourse">授業名</label><div class="inline"><input class="form-control" id="newcourse" placeholder="例：経済原論Ⅱ"><button class="btn btn-primary" id="addcourse">追加</button></div></div>`;
+// 保存するファイルの種類（全授業の既定）。授業ごとの設定がない授業はこれに従う（FILE_TYPES は timetable.js）
+function defaultFileTypesField() {
+  if (!state.features?.includes('defaultfiletypes') || typeof FILE_TYPES === 'undefined') return '';
+  const own = state.settings?.fileTypes;
+  return `<fieldset class="pf"><legend>保存する資料の種類（全授業の既定）</legend><div class="pf-options">${FILE_TYPES.map(t => `<label class="check"><input type="checkbox" data-deftype="${esc(t)}"${!Array.isArray(own) || own.includes(t) ? ' checked' : ''}> ${esc(t)}</label>`).join('')}</div><small>授業ごとに変えるときは、授業のページの「授業の設定」で選びます。</small></fieldset>`;
+}
 // 設定の「授業の整理」：表示する授業ごとに削除、削除した授業は元に戻す（この端末のアカウントだけに反映）
 function courseManager() {
   const shown = courses.map((c, i) => ({c, i})).filter(({i}) => !removedCourse(i));
@@ -1093,7 +1113,7 @@ function settingsConnected() {
   // 自動処理は下の「設定を保存」でまとめて保存。ダウンロード先は選ぶとすぐ反映するので別の枠にする
   html += panel(
     '自動処理',
-    `<div class="field"><label for="time">実行時刻（日本時間）</label><input class="form-control" style="max-width:160px" type="time" id="time" value="${esc(state.settings?.time || '16:30')}"></div><label class="check"><input type="checkbox" id="autogen" ${state.settings?.autoGenerate !== false ? 'checked' : ''}> レポートなどの回答を同期のときに用意しておく（「課題を生成」を押すと、その授業の新しい資料を確かめてから表示します）</label><label class="check"><input type="checkbox" id="classsync" ${state.settings?.classSync !== false ? 'checked' : ''}> 授業の開始時刻に、その授業を同期する（出席コードの入力が出たら、この画面にも出します）</label><div class="field"><label for="campus">キャンパス（授業の開始時刻）</label><select class="form-control" id="campus" style="max-width:200px">${['名古屋', '豊田'].map(c => `<option value="${c}"${(state.settings?.campus || '名古屋') === c ? ' selected' : ''}>${c}（1限 ${c === '豊田' ? '9:30' : '9:00'}〜）</option>`).join('')}</select></div><p class="muted">${state.aiMissing ? `この ${dev()} では SaBoRo課題サポートを使えないため、回答は作りません。` : 'クイズはこの設定にかかわらず常に自動で回答を入力します（提出は本人が manabo で）。'}</p><h3 class="sub">自分について（回答の作成に使います）</h3><p class="muted">当てはまるものを選んでください。</p><div id="pfwrap">${typeof ProfileForm === 'object' ? ProfileForm.profileFormHtml(state.settings?.profileForm) : ''}</div><div class="field"><label for="profile">そのほか自分について（自由記述・任意）</label><textarea class="form-control" id="profile" rows="5" maxlength="2000" placeholder="例：経営学部3年。飲食店のアルバイトを2年続けていて、新人の指導もしている。テニスサークルに所属。将来はマーケティングの仕事に就きたい。">${esc(state.settings?.profile || '')}</textarea><p class="muted">「あなたの考え」「自分の経験を踏まえて」など、自分について聞かれる設問の回答に使います。課題と一緒に、回答を作る AI へ送ります。経験・体験を問う課題では、ここに書いていないことを短い質問でたずねます。</p></div><div class="field"><label for="style">文体（回答をあなたの書き方に近づけます）</label><textarea class="form-control" id="style" rows="4" maxlength="1000" placeholder="過去のレポートから読み取ると入ります。自分で書いてもかまいません。">${esc(state.settings?.style || '')}</textarea><p class="muted">過去のレポートや ChatGPT・Claude の履歴から読み取るには、${dev()} の設定画面の「5. 過去のレポート」で選んでください。${setupLink}</p>${state.profileSuggestion?.text ? `<p class="attn">${esc(state.profileSuggestion.source)} の履歴から読み取った「自分について」の候補があります。${dev()} の設定画面で確かめて足してください。${setupLink}</p>` : state.chatImport ? `<p class="muted">${esc(state.chatImport.source)} の書き出しの zip を待っています（ダウンロードすると ${dev()} が自動で読み取ります）。</p>` : ''}</div><h3 class="sub">授業日（第1回の日付）</h3><p class="muted">曜日が分かる授業は学年暦から自動で設定します。${unset.length ? '曜日が分からない授業だけ入れてください。' : ''}</p>${unset.length ? unset.map(dateField).join('') : '<p class="muted">すべての授業の授業日が設定済みです。</p>'}${set.length ? `<details class="field" id="schedule-details"><summary>自動設定済みの授業（${set.length}件）の第1回を変える</summary><div style="margin-top:10px">${set.map(dateField).join('')}</div></details>` : ''}<div class="actions"><button class="btn btn-primary" id="savesettings">設定を保存</button><span class="muted save-scope">実行時刻・回答の自動作成・授業日を保存します</span></div>`
+    `<div id="autosettings"><div class="field"><label for="time">実行時刻（日本時間）</label><input class="form-control" style="max-width:160px" type="time" id="time" value="${esc(state.settings?.time || '16:30')}"></div><label class="check"><input type="checkbox" id="autogen" ${state.settings?.autoGenerate !== false ? 'checked' : ''}> レポートなどの回答を同期のときに用意しておく（「課題を生成」を押すと、その授業の新しい資料を確かめてから表示します）</label><label class="check"><input type="checkbox" id="classsync" ${state.settings?.classSync !== false ? 'checked' : ''}> 授業の開始時刻に、その授業を同期する（出席コードの入力が出たら、この画面にも出します）</label><div class="field"><label for="campus">キャンパス（授業の開始時刻）</label><select class="form-control" id="campus" style="max-width:200px">${['名古屋', '豊田'].map(c => `<option value="${c}"${(state.settings?.campus || '名古屋') === c ? ' selected' : ''}>${c}（1限 ${c === '豊田' ? '9:30' : '9:00'}〜）</option>`).join('')}</select></div><p class="muted">${state.aiMissing ? `この ${dev()} では SaBoRo課題サポートを使えないため、回答は作りません。` : 'クイズは常に自動で回答を入力します（提出は本人）。'}</p>${defaultFileTypesField()}<h3 class="sub">自分について（回答の作成に使います）</h3><p class="muted">当てはまるものを選んでください。</p><div id="pfwrap">${typeof ProfileForm === 'object' ? ProfileForm.profileFormHtml(state.settings?.profileForm) : ''}</div><div class="field"><label for="profile">そのほか自分について（自由記述・任意）</label><textarea class="form-control" id="profile" rows="5" maxlength="2000" placeholder="例：経営学部3年。飲食店のアルバイトを2年続けていて、新人の指導もしている。テニスサークルに所属。将来はマーケティングの仕事に就きたい。">${esc(state.settings?.profile || '')}</textarea><p class="muted">自分の考えや経験を聞かれる設問の回答に使います（回答を作る AI へ送ります）。</p></div><div class="field"><label for="style">文体（回答をあなたの書き方に近づけます）</label><textarea class="form-control" id="style" rows="4" maxlength="1000" placeholder="過去のレポートから読み取ると入ります。自分で書いてもかまいません。">${esc(state.settings?.style || '')}</textarea><p class="muted">過去のレポートなどから読み取るときは ${dev()} の設定画面の「5. 過去のレポート」へ。${setupLink}</p>${state.profileSuggestion?.text ? `<p class="attn">${esc(state.profileSuggestion.source)} の履歴から読み取った「自分について」の候補があります。${dev()} の設定画面で確かめて足してください。${setupLink}</p>` : state.chatImport ? `<p class="muted">${esc(state.chatImport.source)} の書き出しの zip を待っています（ダウンロードすると ${dev()} が自動で読み取ります）。</p>` : ''}</div><h3 class="sub">授業日（第1回の日付）</h3><p class="muted">曜日が分かる授業は学年暦から自動で設定します。${unset.length ? '曜日が分からない授業だけ入れてください。' : ''}</p>${unset.length ? unset.map(dateField).join('') : '<p class="muted">すべての授業の授業日が設定済みです。</p>'}${set.length ? `<details class="field" id="schedule-details"><summary>自動設定済みの授業（${set.length}件）の第1回を変える</summary><div style="margin-top:10px">${set.map(dateField).join('')}</div></details>` : ''}</div><p class="muted autosave" id="savesettings" data-idle="変更はすぐに保存します">変更はすぐに保存します</p>`
   );
   html += panel(
     `資料のダウンロード先（${dev()} のフォルダ）`,
@@ -1102,7 +1122,7 @@ function settingsConnected() {
   if (state.features?.includes('removecourse')) html += panel('授業の整理', courseManager());
   html += panel(
     'この端末への通知',
-    `<p class="muted" style="margin:0 0 8px">新しいお知らせ・出席コードの入力・締切が近い課題（毎朝）を、この端末に通知します（Web Push。端末ごとに設定します）。iPhone は Safari の共有メニューから「ホーム画面に追加」した saboro で設定してください（追加はこの接続した画面から行い、初めて開くときに「接続する」を押します）。</p><p id="pushstate" class="muted">確認中…</p><div class="actions" style="margin-top:0"><button class="btn btn-primary" id="pushon">この端末で通知を受け取る</button><button class="btn" id="pushoff" hidden>通知を止める</button><button class="btn" id="pushtest" hidden>テスト通知を送る</button></div>`
+    `<p class="muted" style="margin:0 0 8px">新しいお知らせ・出席コードの入力・締切が近い課題（毎朝）をこの端末に通知します。iPhone は「ホーム画面に追加」した saboro で設定してください。</p><p id="pushstate" class="muted">確認中…</p><div class="actions" style="margin-top:0"><button class="btn btn-primary" id="pushon">この端末で通知を受け取る</button><button class="btn" id="pushoff" hidden>通知を止める</button><button class="btn" id="pushtest" hidden>テスト通知を送る</button></div>`
   );
 
   return (
@@ -1658,10 +1678,22 @@ function bindView() {
     pushRoute(true);
     render();
   });
-  // 実行時刻・自動生成・授業日を一度に保存する（ダウンロード先は別：押した時点で反映）
-  bind('savesettings', async () => {
+  // 自動処理の欄は変えるとすぐ保存する（まとめて 1 回。文章の欄は入力を終えて欄を離れたとき）
+  const auto = document.getElementById('autosettings');
+  if (auto) {
+    let timer;
+    auto.onchange = () => {
+      clearTimeout(timer);
+      timer = setTimeout(saveSettings, 600);
+    };
+  }
+  async function saveSettings() {
     const schedules = await schedulesFromInputs();
+    const types = [...document.querySelectorAll('[data-deftype]')];
     job('settings', null, {
+      ...(types.length
+        ? {fileTypes: types.every(e => e.checked) ? null : types.filter(e => e.checked).map(e => e.dataset.deftype)}
+        : {}),
       time: document.getElementById('time').value,
       autoGenerate: document.getElementById('autogen').checked,
       classSync: !!document.getElementById('classsync')?.checked,
@@ -1673,7 +1705,7 @@ function bindView() {
         : {}),
       ...(document.getElementById('style') ? {style: document.getElementById('style').value} : {})
     });
-  });
+  }
   bind('pickdir', () => job('settings', null, {pickDownloadDir: true}, 'pickdir'));
   bind('resetdir', async () => {
     if (await ask('資料のダウンロード先を既定のフォルダに戻しますか？', '戻す'))
@@ -1734,7 +1766,7 @@ function detail(id) {
     body += `<details class="drawer-section" open><summary>manabo の課題と対応づける <span class="label wait">要選択</span></summary><p class="muted" style="margin:8px 0">同じ回に課題が複数あり、どれがこの課題か特定できませんでした。選ぶと次の同期から締切・提出状況を確認します。</p><div class="field"><label for="linkcandidate">manabo の課題</label><select class="form-control" id="linkcandidate">${t.candidates.map(c => `<option value="${esc(c.url)}">${esc(c.title)}</option>`).join('')}</select></div><div class="actions" style="margin-top:0"><button class="btn btn-primary" id="linktask">この課題に対応づける</button></div></details>`;
   body += `<h3><label for="answer">回答・下書き</label></h3><textarea class="form-control" id="answer">${esc(t.answer)}</textarea>`;
   if (key)
-    body += `<details class="drawer-section"${t.status === 'wait' || t.supplement ? ' open' : ''}><summary><label for="supplement">本人の経験・補足</label>${t.status === 'wait' ? ' <span class="label wait">要入力</span>' : ''}</summary><textarea class="form-control" id="supplement">${esc(t.supplement || '')}</textarea><small class="muted" style="display:block;margin-top:5px">資料だけで書けない内容（自分の経験など）を書くと、生成に反映します。</small></details>${t.status === 'code' && !state.features?.includes('attendance') ? '<p class="muted">出席コードはアプリ（Mac/PC）を新しいバージョンにすると、ここから入れて提出できます。いまは「待機中のブラウザ」で入れてください。</p>' : ''}${aiRule(t).forbidden ? aiNotice(aiRule(t), quiz) : ''}${t.status === 'code' && state.features?.includes('attendance') && !aiRule(t).forbidden ? `<div class="drawer-section" id="attendance"><div class="field"><label for="attcode">出席コード</label><div class="course-edit"><input class="form-control" id="attcode" inputmode="numeric" autocomplete="off" placeholder="授業で示された出席コード"><button class="btn btn-primary" id="attsubmit">出席コードを入れて提出</button></div><small>出席コード以外の回答は入力済みです。出席コードを選び、入力済みの回答と一緒に manabo に提出します。</small></div></div>` : ''}${personalSection(t)}<div class="actions sticky">${personalTask(t) ? '<button class="btn btn-primary" id="personalask">質問に答えて生成</button>' : `<button class="btn btn-primary" id="generate">${quiz ? '回答開始・自動回答' : '課題を生成'}</button>`}${advancedLeft(t) ? `<button class="btn" id="advanced">${advancedLabel(t)}</button>` : ''}<button class="btn" id="save">保存</button>${t.url ? `<a class="btn" href="${esc(t.url)}" target="_blank" rel="noopener">manaboで開く</a>` : ''}${['code', 'answered'].includes(t.status) || (quiz && t.generation) ? '<a class="btn" href="http://127.0.0.1:8766/browser" target="_blank" rel="noopener">待機中のブラウザ</a>' : ''}<button class="btn" id="download">ダウンロード</button>${!['done', 'code', 'unknown', 'answered'].includes(t.status) && !quiz && !aiRule(t).forbidden ? '<button class="btn btn-danger submit-btn" id="submit" title="提出すると取り消せません">manaboに提出…</button>' : ''}</div>`;
+    body += `<details class="drawer-section"${t.status === 'wait' || t.supplement ? ' open' : ''}><summary><label for="supplement">本人の経験・補足</label>${t.status === 'wait' ? ' <span class="label wait">要入力</span>' : ''}</summary><textarea class="form-control" id="supplement">${esc(t.supplement || '')}</textarea><small class="muted" style="display:block;margin-top:5px">資料だけで書けない内容（自分の経験など）を書くと、生成に反映します。</small></details>${t.status === 'code' && !state.features?.includes('attendance') ? '<p class="muted">出席コードはアプリ（Mac/PC）を新しいバージョンにすると、ここから入れて提出できます。いまは「待機中のブラウザ」で入れてください。</p>' : ''}${aiRule(t).forbidden ? aiNotice(aiRule(t), quiz) : ''}${t.status === 'code' && state.features?.includes('attendance') && !aiRule(t).forbidden ? `<div class="drawer-section" id="attendance"><div class="field"><label for="attcode">出席コード</label><div class="course-edit"><input class="form-control" id="attcode" inputmode="numeric" autocomplete="off" placeholder="授業で示された出席コード"><button class="btn btn-primary" id="attsubmit">出席コードを入れて提出</button></div><small>出席コード以外の回答は入力済みです。出席コードを選び、入力済みの回答と一緒に manabo に提出します。</small></div></div>` : ''}${personalSection(t)}<div class="actions sticky">${personalTask(t) ? '<button class="btn btn-primary" id="personalask">質問に答えて生成</button>' : `<button class="btn btn-primary" id="generate">${quiz ? '回答開始・自動回答' : '課題を生成'}</button>`}${advancedLeft(t) ? `<button class="btn" id="advanced">${advancedLabel(t)}</button>` : ''}<button class="btn" id="save">保存</button><details class="more-actions"><summary class="btn">その他</summary><div class="more-menu">${t.url ? `<a class="btn" href="${esc(t.url)}" target="_blank" rel="noopener">manaboで開く</a>` : ''}${['code', 'answered'].includes(t.status) || (quiz && t.generation) ? '<a class="btn" href="http://127.0.0.1:8766/browser" target="_blank" rel="noopener">待機中のブラウザ</a>' : ''}<button class="btn" id="download">ダウンロード</button></div></details>${!['done', 'code', 'unknown', 'answered'].includes(t.status) && !quiz && !aiRule(t).forbidden ? '<button class="btn btn-danger submit-btn" id="submit" title="提出すると取り消せません">manaboに提出…</button>' : ''}</div>`;
   else
     body += `<details class="drawer-section"><summary>課題情報を変更する</summary><div class="field"><label for="edit-title">課題名</label><input class="form-control" id="edit-title" value="${esc(t.title)}"></div><div class="field"><label for="edit-course">授業</label><select class="form-control" id="edit-course">${courses.map((c, i) => (removedCourse(i) && i !== t.course ? '' : `<option value="${i}"${i === t.course ? ' selected' : ''}>${esc(c)}</option>`)).join('')}</select></div><div class="field"><label for="edit-type">種類</label><select class="form-control" id="edit-type">${[...new Set([...taskTypes, t.type || '課題'])].map(v => `<option${v === (t.type || '課題') ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select></div><div class="field"><label for="edit-due">締切</label><input class="form-control" id="edit-due" type="datetime-local" value="${localInput(t.dueAt)}"></div></details><div class="actions sticky"><button class="btn btn-primary" id="save">保存</button><button class="btn" id="togglestatus">${pending(t) ? '提出済みにする' : '未提出に戻す'}</button><button class="btn" id="download">ダウンロード</button><button class="btn" id="deletetask">削除</button></div><p class="muted" style="margin-top:10px">自動回答・課題生成はmanabo連携時に利用できます。</p>`;
   openDrawer(t.title, body, undefined, 'task:' + id);

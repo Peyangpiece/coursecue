@@ -148,6 +148,9 @@ export const FILE_TYPES = {
   '動画・音声': /\.(mp4|mov|m4v|avi|wmv|webm|mp3|m4a|wav|aac)$/i
 };
 export const FILE_TYPE_NAMES = [...Object.keys(FILE_TYPES), 'その他'];
+// 保存する種類の指定として正しいか（既知の種類の重複のない配列。空はどれも保存しない）
+export const validFileTypes = v =>
+  Array.isArray(v) && v.every(x => FILE_TYPE_NAMES.includes(x)) && new Set(v).size === v.length;
 export function fileType(name) {
   return Object.keys(FILE_TYPES).find(k => FILE_TYPES[k].test(String(name || '').trim())) || 'その他';
 }
