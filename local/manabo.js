@@ -1945,7 +1945,8 @@ export class Manabo {
   async download(entry, course, round = 0) {
     const here = m => inside(m.path, this.root);
     if (this.state.materials.some(m => m.url === entry.url && here(m))) return;
-    const types = this.state.timetable?.[course]?.fileTypes,
+    // 授業ごとの指定がなければ、設定の「全授業の既定」
+    const types = this.state.timetable?.[course]?.fileTypes ?? this.state.settings?.fileTypes,
       known = this.state.skippedFiles?.[entry.url] || fileTypeOf(entry.name) || fileTypeOf(entry.text);
     if (Array.isArray(types) && known && !types.includes(known)) return;
     await this.page();

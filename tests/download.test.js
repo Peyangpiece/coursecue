@@ -659,3 +659,26 @@ test('授業の設定で選んだ種類の資料だけ保存し、外した種�
   await none.download(entry(1), '管理会計Ⅱ');
   await assert.rejects(readdir(join(base, 'none', '管理会計Ⅱ')), undefined, 'すべて外したら授業フォルダも作らない');
 });
+test('授業ごとの指定がない授業は、設定の「全授業の既定」の種類だけ保存する', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'coursecue-deftypes-'));
+  t.after(() => rm(base, {recursive: true, force: true}));
+  const state = {
+    tasks: [],
+    materials: [],
+    settings: {fileTypes: ['PowerPoint']},
+    timetable: {意思決定論: {fileTypes: ['PDF']}}
+  };
+  const {m, gets} = fakeManabo(base, state);
+  await m.download(entry(1), '管理会計Ⅱ');
+  assert.equal(gets(), 1);
+  await assert.rejects(readdir(join(base, '管理会計Ⅱ')), undefined, '既定に PDF がないので保存しない');
+  await m.download(entry(2), '意思決定論');
+  assert.deepEqual(await readdir(join(base, '意思決定論')), ['第2回_資料.pdf'], '授業ごとの指定が優先');
+  const {src, rx} = await import('./source.js');
+  assert.match(
+    src('local/bridge.js'),
+    rx(
+      "if(fileTypes!==undefined&&fileTypes!==null&&!validFileTypes(fileTypes))throw Error('保存するファイルの種類が不正です');"
+    )
+  );
+});

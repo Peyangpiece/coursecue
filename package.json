@@ -37,7 +37,7 @@
     "playwright": "^1.64.0",
     "qrcode": "^1.5.4"
   },
-  "version": "1.0.50",
+  "version": "1.0.51",
   "description": "saboro デスクトップ：授業・課題・提出状況・出席を管理する",
   "main": "desktop/main.js",
   "build": {

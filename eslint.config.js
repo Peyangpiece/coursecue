@@ -36,6 +36,7 @@ const shared = {
   timetableView: 'readonly',
   attendanceView: 'readonly',
   bindTimetable: 'readonly',
+  FILE_TYPES: 'readonly',
   // profile-form.js
   ProfileForm: 'readonly'
 };

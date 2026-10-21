@@ -451,3 +451,45 @@ test('授業の設定で保存するファイルの種類を選べ、授業の�
   assert.doesNotMatch(run(`document.getElementById('drawer').innerHTML`), /保存するファイルの種類/);
   assert.doesNotMatch(run(`courseHeader(0)`), /保存する資料/);
 });
+test('課題の詳細：よく使う操作（生成・保存・提出）だけを並べ、manabo で開く・ダウンロードなどは「その他」にまとめる', () => {
+  const run = boot();
+  const html = run(
+    `key='k';${SET}state.features=['attendance'];state.tasks=[{id:'a',course:0,round:3,title:'第3回課題',type:'レポート',status:'draft',answer:'回答',generation:{draft:'回答'},url:'https://manabo.cnc.chukyo-u.ac.jp/content/1/report/tok/'}];detail('a');document.getElementById('drawer').innerHTML`
+  );
+  const bar = html.slice(html.indexOf('class="actions sticky"'));
+  const more = bar.slice(bar.indexOf('class="more-actions"'), bar.indexOf('</details>'));
+  assert.match(more, /id="download"/);
+  assert.match(more, /manaboで開く/);
+  assert.doesNotMatch(more, /id="generate"|id="save"|id="submit"/);
+  assert.match(bar, /id="generate"/);
+  assert.match(bar.slice(bar.indexOf('</details>')), /id="submit"/, '提出は「その他」の外に分けて置く');
+});
+test('「課題を生成」の処理中は、資料の確認中か回答の作成中かを出す', () => {
+  const run = boot();
+  assert.equal(run(`generatingText({phase:'新しい資料の確認'})`), '新しい資料を確認中…');
+  assert.equal(run(`generatingText({phase:'授業','done':1})`), '新しい資料を確認中…', '授業の読み直しの途中');
+  assert.equal(run(`generatingText({phase:'回答の作成'})`), '回答を作成中…');
+  assert.equal(run(`generatingText(null)`), '回答中…');
+});
+test('設定の自動処理は変えるとすぐ保存し（保存ボタンはない）、保存する資料の種類の全授業の既定を選べる', () => {
+  const run = boot();
+  const html = run(
+    `key='k';${SET}state.features=['filetypes','defaultfiletypes'];state.settings={fileTypes:['PDF']};view='settings';render();document.getElementById('app').innerHTML`
+  );
+  assert.doesNotMatch(html, /<button[^>]*id="savesettings"/);
+  assert.match(html, /id="autosettings"/);
+  assert.match(html, /変更はすぐに保存します/);
+  assert.match(html, /保存する資料の種類（全授業の既定）/);
+  assert.match(html, /data-deftype="PDF" checked/);
+  assert.doesNotMatch(html, /data-deftype="Word" checked/);
+  assert.match(run(`courseHeader(0)`), /保存する資料<\/th><td>PDF <span class="muted">（全授業の既定）/);
+  run(`state.timetable={[courses[0]]:{fileTypes:['Word']}}`);
+  assert.match(run(`courseHeader(0)`), /保存する資料<\/th><td>Word<\/td>/, '授業ごとの指定が優先');
+  run(`openCourseConfig(1)`);
+  const drawer = run(`document.getElementById('drawer').innerHTML`);
+  assert.match(drawer, /id="cc-ftdefault" checked/);
+  assert.match(drawer, /data-filetype="PDF" checked/);
+  assert.doesNotMatch(drawer, /data-filetype="Word" checked/, '既定に従う授業は既定の種類に印');
+  run(`state.features=['filetypes'];view='settings';render()`);
+  assert.doesNotMatch(run(`document.getElementById('app').innerHTML`), /全授業の既定/, '古いアプリでは出さない');
+});

@@ -4,7 +4,8 @@ import {
   openableMaterial,
   defaultDownloadRoot,
   desktopDir,
-  adoptMaterialsRoot
+  adoptMaterialsRoot,
+  validFileTypes
 } from './download-dir.js';
 import {dueClassSyncs, CAMPUSES} from './schedule.js';
 import {mergeTasks} from './task-identity.js';
@@ -153,7 +154,16 @@ if (!state.settings?.downloadDir && !state.rootAdopted) {
   state.rootAdopted = true;
 }
 state.defaultDownloadDir = materialsRoot();
-state.features = ['pickfolder', 'attendance', 'removecourse', 'aipolicy', 'attcheck', 'mfa', 'filetypes']; // AI の使用量：1 回ごとに usage.jsonl に追記し、月ごとの集計を状態に持つ（画面に出す。料金を決めるための実測用）
+state.features = [
+  'pickfolder',
+  'attendance',
+  'removecourse',
+  'aipolicy',
+  'attcheck',
+  'mfa',
+  'filetypes',
+  'defaultfiletypes'
+]; // AI の使用量：1 回ごとに usage.jsonl に追記し、月ごとの集計を状態に持つ（画面に出す。料金を決めるための実測用）
 const usageFile = usageLog(join(work, 'usage.jsonl'));
 async function recordUsage(e) {
   state.usage = addUsage(state.usage, e);
@@ -446,6 +456,7 @@ async function run(job) {
         style,
         schedules,
         pickDownloadDir,
+        fileTypes,
         removeCourse: remove,
         restoreCourse: restore
       } = job.payload;
@@ -480,6 +491,11 @@ async function run(job) {
         throw Error('「自分について」は 2000 字以内で入力してください');
       if (style !== undefined && (typeof style !== 'string' || style.length > 1000))
         throw Error('「文体」は 1000 字以内で入力してください');
+      // 保存するファイルの種類（全授業の既定）。null はすべて保存
+      if (fileTypes !== undefined && fileTypes !== null && !validFileTypes(fileTypes))
+        throw Error('保存するファイルの種類が不正です');
+      if (fileTypes === null) delete state.settings.fileTypes;
+      else if (fileTypes) state.settings.fileTypes = fileTypes;
       Object.assign(state.settings, {
         ...(profileForm !== undefined ? {profileForm: globalThis.ProfileForm.cleanProfileForm(profileForm)} : {}),
         ...(typeof profile === 'string' ? {profile: profile.trim()} : {}),
@@ -520,10 +536,12 @@ async function run(job) {
           const name = courseNames(state)[t.course],
             last = [state.lastSync, state.courseSynced?.[name]].filter(Boolean).sort().at(-1);
           if (!last || Date.now() - new Date(last).getTime() > 120e3) {
+            await lms.progress('新しい資料の確認');
             await lms.sync({course: t.course, generate: false});
             target = state.tasks.find(x => x.id === t.id) || t;
           }
         }
+        await lms.progress('回答の作成');
         await lms.process(target, false, {
           urgent: !job.auto,
           advanced: job.payload?.advanced === true,

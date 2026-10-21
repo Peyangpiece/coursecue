@@ -376,21 +376,34 @@ function openSession(i, r) {
   };
   document.getElementById('ss-course').onclick = () => openCourseConfig(i);
 }
-// 授業の設定で選んだ保存する種類。すべて選んでいれば null（既定＝すべて保存）
+// 授業の設定で選んだ保存する種類。「全授業の既定に従う」なら null。既定がない古いアプリでは、すべて選んでいれば null（すべて保存）
 function chosenFileTypes() {
+  if (document.getElementById('cc-ftdefault')?.checked) return null;
   const on = [...document.querySelectorAll('[data-filetype]')].filter(e => e.checked).map(e => e.dataset.filetype);
-  return on.length === FILE_TYPES.length ? null : on;
+  return on.length === FILE_TYPES.length && !document.getElementById('cc-ftdefault') ? null : on;
 }
 function openCourseConfig(i) {
   const own = state.timetable?.[courses[i]] || {},
-    cfg = courseConfig(i);
+    cfg = courseConfig(i),
+    defaults = state.features?.includes('defaultfiletypes'),
+    types = Array.isArray(own.fileTypes) ? own.fileTypes : defaults ? state.settings?.fileTypes : null;
   openDrawer(
     `${courses[i]} の設定`,
-    `${infoRows(i)}<h3>自分で設定する</h3><div class="field"><label for="cc-weekday">曜日</label><select class="form-control" id="cc-weekday">${options(WEEKDAYS, own.weekday, cfg.auto ? `${cfg.slotFrom} から取得（${cfg.weekday}曜）` : '未設定')}</select></div><div class="field"><label for="cc-period">時限</label><select class="form-control" id="cc-period"><option value="">${cfg.auto && cfg.period ? `${cfg.slotFrom} から取得（${cfg.period}限）` : '未設定'}</option>${[1, 2, 3, 4, 5, 6, 7].map(p => `<option value="${p}"${own.period === p ? ' selected' : ''}>${p}限</option>`).join('')}</select></div><div class="field"><label for="cc-room">教室</label><input class="form-control" id="cc-room" value="${esc(own.room || '')}" placeholder="例：0803"></div><div class="field"><label for="cc-mode">授業形式（既定）</label><select class="form-control" id="cc-mode">${options(MODES.slice(0, 3), own.mode, cfg.autoMode ? `自動（${cfg.autoMode}）` : '未設定')}</select><small>回ごとに違う場合は、時間割でその回を選んで変更します。</small></div><div class="field"><label for="cc-limit">欠席の上限（回）</label><input class="form-control" id="cc-limit" type="number" min="0" max="15" value="${own.limit ?? ''}" style="max-width:120px"><small>シラバスや初回の説明で確認した回数を入れると、出席状況で残りを表示します。</small></div>${state.features?.includes('aipolicy') ? `<div class="field"><label for="cc-ai">AI の利用</label><select class="form-control" id="cc-ai"><option value="">自動（回ごとに、その回の授業資料から判断）</option><option value="禁止"${own.ai === '禁止' ? ' selected' : ''}>全回 禁止（saboro から提出しない）</option><option value="許可"${own.ai === '許可' ? ' selected' : ''}>全回 許可（自動で作成・提出）</option></select></div>` : ''}${state.features?.includes('filetypes') ? `<fieldset class="pf"><legend>保存するファイルの種類</legend><div class="pf-options">${FILE_TYPES.map((t, k) => `<label class="check"><input type="checkbox" id="cc-ft${k}" data-filetype="${esc(t)}"${!Array.isArray(own.fileTypes) || own.fileTypes.includes(t) ? ' checked' : ''}> ${esc(t)}</label>`).join('')}</div><small>同期で ${dev()} にダウンロードする資料の種類です（Word は .doc・.docx など、PowerPoint は .ppt・.pptx など、その他は zip など）。外した種類は次の同期から保存せず、課題の作成や授業情報の読み取りにも使いません。保存済みのファイルは消しません。</small></fieldset>` : ''}<div class="actions"><button class="btn btn-primary" id="cc-save">保存</button></div>`,
+    `${infoRows(i)}<h3>自分で設定する</h3><div class="field"><label for="cc-weekday">曜日</label><select class="form-control" id="cc-weekday">${options(WEEKDAYS, own.weekday, cfg.auto ? `${cfg.slotFrom} から取得（${cfg.weekday}曜）` : '未設定')}</select></div><div class="field"><label for="cc-period">時限</label><select class="form-control" id="cc-period"><option value="">${cfg.auto && cfg.period ? `${cfg.slotFrom} から取得（${cfg.period}限）` : '未設定'}</option>${[1, 2, 3, 4, 5, 6, 7].map(p => `<option value="${p}"${own.period === p ? ' selected' : ''}>${p}限</option>`).join('')}</select></div><div class="field"><label for="cc-room">教室</label><input class="form-control" id="cc-room" value="${esc(own.room || '')}" placeholder="例：0803"></div><div class="field"><label for="cc-mode">授業形式（既定）</label><select class="form-control" id="cc-mode">${options(MODES.slice(0, 3), own.mode, cfg.autoMode ? `自動（${cfg.autoMode}）` : '未設定')}</select><small>回ごとに違う場合は、時間割でその回を選んで変更します。</small></div><div class="field"><label for="cc-limit">欠席の上限（回）</label><input class="form-control" id="cc-limit" type="number" min="0" max="15" value="${own.limit ?? ''}" style="max-width:120px"><small>シラバスや初回の説明で確認した回数を入れると、出席状況で残りを表示します。</small></div>${state.features?.includes('aipolicy') ? `<div class="field"><label for="cc-ai">AI の利用</label><select class="form-control" id="cc-ai"><option value="">自動（回ごとに、その回の授業資料から判断）</option><option value="禁止"${own.ai === '禁止' ? ' selected' : ''}>全回 禁止（saboro から提出しない）</option><option value="許可"${own.ai === '許可' ? ' selected' : ''}>全回 許可（自動で作成・提出）</option></select></div>` : ''}${state.features?.includes('filetypes') ? `<fieldset class="pf"><legend>保存するファイルの種類</legend>${defaults ? `<label class="check"><input type="checkbox" id="cc-ftdefault"${Array.isArray(own.fileTypes) ? '' : ' checked'}> 全授業の既定に従う（設定で変えられます）</label>` : ''}<div class="pf-options">${FILE_TYPES.map((t, k) => `<label class="check"><input type="checkbox" id="cc-ft${k}" data-filetype="${esc(t)}"${!Array.isArray(types) || types.includes(t) ? ' checked' : ''}> ${esc(t)}</label>`).join('')}</div><small>同期で ${dev()} にダウンロードする資料の種類です（Word は .doc・.docx など、PowerPoint は .ppt・.pptx など、その他は zip など）。外した種類は次の同期から保存せず、課題の作成や授業情報の読み取りにも使いません。保存済みのファイルは消しません。</small></fieldset>` : ''}<div class="actions"><button class="btn btn-primary" id="cc-save">保存</button></div>`,
     'cc-room',
     `course:${i}`
   );
   const val = id => document.getElementById(id).value;
+  // 種類を選び直したら「既定に従う」を外し、「既定に従う」にしたら既定の種類に戻す
+  const follow = document.getElementById('cc-ftdefault'),
+    boxes = [...document.querySelectorAll('[data-filetype]')];
+  boxes.forEach(e => (e.onchange = () => follow && (follow.checked = false)));
+  if (follow)
+    follow.onchange = () => {
+      if (!follow.checked) return;
+      const d = state.settings?.fileTypes;
+      boxes.forEach(e => (e.checked = !Array.isArray(d) || d.includes(e.dataset.filetype)));
+    };
   document.getElementById('cc-save').onclick = () => {
     const limit = val('cc-limit');
     saveTimetable({
